@@ -1,0 +1,8 @@
+# 標準の FAT12 で、IPL が LOADER.SYS のクラスタをたどって読む。
+# LOADER.SYS がとびとびのクラスタにあっても起動する（イメージの作り方は Makefile の FRAG_IMG）
+image build/vibeos-frag.img
+timeout 15
+wait-serial VIBEOS LOADER
+wait-serial kernel loaded, bytes:
+wait-serial VIBEOS READY
+serial-absent LOADER ERROR

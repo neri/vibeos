@@ -12,6 +12,8 @@ BUILD   := build
 IMG     := $(BUILD)/vibeos.img
 # テスト用イメージ: カーネルを qemu-test 機能付きでビルドしたもの（起動後にカーネル内テストを実行して終了する）
 TEST_IMG := $(BUILD)/vibeos-test.img
+# LOADER.SYS がとびとびのクラスタに置かれたイメージ（ブートセクタが FAT をたどれるかのテスト用）
+FRAG_IMG := $(BUILD)/vibeos-frag.img
 QEMU    ?= qemu-system-i386
 CARGO   ?= cargo
 NASM    ?= nasm
@@ -26,7 +28,7 @@ TEST_KERNEL_ELF := target/test/i486-vibeos/release/kernel
 VIBE_RUN   := target/release/vibe-run
 SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
-LOADER_MAX_BYTES := 32256   # 予約領域 LBA 1〜63
+LOADER_MAX_BYTES := 32256   # 0x8000 に読み込む。中継バッファ（0x10000）の手前まで
 
 .PHONY: all run debug bochs test test-host test-qemu test-bochs screenshots clean FORCE
 
@@ -62,15 +64,19 @@ $(BUILD)/test/kernel.sys: $(TEST_KERNEL_ELF)
 	$(OBJCOPY) -O binary $< $@
 
 # --- イメージ ---------------------------------------------------------------
-# FAT12 / 1.44MB / 予約セクタ 64（LBA 1〜63 に 2nd ステージを置く）。
+# 標準の FAT12 / 1.44MB（予約セクタ 1）。2nd ステージは LOADER.SYS というファイルにし、
+# ルートディレクトリの先頭に置く（ブートセクタが FAT をたどって読む）。
 # ボリュームシリアルを固定して、同じ入力なら同じイメージになるようにする。
-# BPB は boot.asm にも同じ値で書いてあり、boot.bin で上書きする。
+# BPB は boot.asm にも同じ値で書いてあり、mkfs.fat の BPB（オフセット 11〜61）と
+# 一致することを確かめてから boot.bin で上書きする。
 # $(1) = 出力イメージ, $(2) = kernel.sys
 define make-image
 	rm -f $(1).tmp
-	mkfs.fat -C -F 12 -R 64 -i 56494245 -n VIBEOS $(1).tmp 1440 >/dev/null
+	mkfs.fat -C -F 12 -R 1 -i 56494245 -n VIBEOS $(1).tmp 1440 >/dev/null
+	@cmp -s -i 11 -n 51 $(1).tmp $(BUILD)/boot.bin || { \
+		echo "BPB in boot/boot.asm differs from mkfs.fat"; rm -f $(1).tmp; exit 1; }
 	dd if=$(BUILD)/boot.bin of=$(1).tmp conv=notrunc bs=512 count=1 status=none
-	dd if=$(BUILD)/loader.bin of=$(1).tmp conv=notrunc bs=512 seek=1 status=none
+	mcopy -i $(1).tmp $(BUILD)/loader.bin ::LOADER.SYS
 	mcopy -i $(1).tmp $(2) ::KERNEL.SYS
 	mcopy -s -i $(1).tmp rootfs/* ::/
 	mcopy -s -i $(1).tmp $(GEN_ROOTFS)/* ::/
@@ -113,6 +119,19 @@ $(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(BUILD)/kerne
 $(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/test/kernel.sys $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
 	$(call make-image,$@,$(BUILD)/test/kernel.sys)
 
+# 先頭の LOADER.SYS を消し、空いた所に 1 クラスタのファイルを並べて 1 つおきに消してから
+# 置き直す。LOADER.SYS は 1 クラスタずつの飛び地と、後ろの空き領域の連続した塊に分かれる
+$(FRAG_IMG): $(IMG)
+	cp $< $@.tmp
+	mdel -i $@.tmp ::LOADER.SYS
+	head -c 512 /dev/zero > $(BUILD)/pad.tmp
+	for i in 1 2 3 4 5 6 7 8; do mcopy -i $@.tmp $(BUILD)/pad.tmp ::PAD$$i.TMP || exit 1; done
+	for i in 2 4 6 8; do mdel -i $@.tmp ::PAD$$i.TMP || exit 1; done
+	mcopy -i $@.tmp $(BUILD)/loader.bin ::LOADER.SYS
+	rm $(BUILD)/pad.tmp
+	fsck.fat -n $@.tmp >/dev/null
+	mv $@.tmp $@
+
 # --- 実行 -------------------------------------------------------------------
 run: $(IMG)
 	$(QEMU) $(QEMU_FLAGS) -serial stdio
@@ -134,10 +153,10 @@ test-host:
 $(VIBE_RUN): FORCE
 	$(CARGO) build --release -p vibe-run
 
-test-qemu: $(IMG) $(TEST_IMG) $(VIBE_RUN)
+test-qemu: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --img $(IMG) --out $(BUILD)/test-out $(SCENARIOS)
 
-test-bochs: $(IMG) $(TEST_IMG) $(VIBE_RUN)
+test-bochs: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --bochs --img $(IMG) --out $(BUILD)/test-out-bochs $(SCENARIOS)
 
 # --- スクリーンショット（README 用。docs/images/ に置く）----------------------

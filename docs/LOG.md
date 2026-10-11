@@ -258,3 +258,10 @@
 
 - オーナーの依頼で、Phase 16 以降の候補のうち 2 つの計画書を作った: [ネットワーク](plans/network.md)（NE2000 + 自作の TCP/IP、N1〜N6）と [デスクトップの改良とアプリの拡充](plans/desktop.md)（端末を何個でも・メニュー・部品のライブラリ・アプリ、D1〜D6）。どちらもオーナーの確認待ち
 - 下調べ: QEMU に `ne2k_isa` / `ne2k_pci` / `rtl8139`、Bochs に `ne2k` と slirp があるので、ネットワークも両方で自動テストできる見込み
+
+## 2026-10-12 標準の FAT12 の配置へ
+
+- オーナーの指摘で、予約セクタ 64 の配置をやめて標準の 1.44MB FAT12（予約セクタ 1）にした（DECISIONS.md D-023）。指摘の時点のイメージも `fsck.fat` は通っていたが、FAT が LBA 64 からで、決め打ちで読む相手には FAT に見えなかった
+- `boot/boot.asm`: ルートディレクトリから `LOADER.SYS` を探し、FAT12 のクラスタをたどって `0x8000` に読む。番号が続くクラスタはまとめて読む。読み込み先が 64KB をまたぐ（FAT が壊れている）ときは IVT を上書きする前に止まる。2nd ステージが CPU を確かめる前なので 386 の命令は使わない。512 バイト中 442 バイト
+- Makefile: `mkfs.fat -R 1`、`LOADER.SYS` をルートの先頭に `mcopy`。boot.asm の BPB が mkfs.fat の BPB と同じかを `cmp` で確かめるようにした（ずれると BPB を上書きしたときに FAT が壊れる）
+- テスト: `31-loader-fragmented`（`LOADER.SYS` を 1 クラスタずつの飛び地 + 連続した塊に置いたイメージ `build/vibeos-frag.img` で起動する）。QEMU 32 本・Bochs 20 本が通る

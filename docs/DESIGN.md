@@ -174,26 +174,28 @@ Rust には i686 のベアメタル用の組み込みターゲットが無い（
 
 ## 4. ブートプロセス
 
-### 4.1 フロッピーイメージのレイアウト（FAT12 + 予約セクタ方式）
+### 4.1 フロッピーイメージのレイアウト（標準の FAT12）
 
-1.44MB = 80 シリンダ × 2 ヘッド × 18 セクタ = 2,880 セクタ（512B/セクタ）。
+1.44MB = 80 シリンダ × 2 ヘッド × 18 セクタ = 2,880 セクタ（512B/セクタ）。DOS や `mkfs.fat` が作る 1.44MB のフロッピーと同じ配置にする（BPB を見ずに決め打ちで読む OS・機器でも壊さないように。DECISIONS.md D-023）。
 
 ```
-LBA 0        : ブートセクタ（正しい BPB 付き IPL）
-LBA 1〜63    : 予約領域 = 2nd ステージ LOADER（最大 31.5KB）※BPB の ReservedSectors=64
-LBA 64〜     : FAT ×2, ルートディレクトリ, データ領域
-               KERNEL.SYS, アプリ, データファイル を通常ファイルとして配置
+LBA 0        : ブートセクタ（正しい BPB 付き IPL）※BPB の ReservedSectors=1
+LBA 1〜18    : FAT ×2（9 セクタずつ）
+LBA 19〜32   : ルートディレクトリ（224 エントリ）
+LBA 33〜     : データ領域
+               LOADER.SYS（2nd ステージ, ルートの先頭）, KERNEL.SYS, アプリ, データファイル
+               をすべて通常ファイルとして配置
 ```
 
-- ブートセクタは FAT を解析せず、予約領域を CHS 指定で読むだけ（512B に収めやすい）
+- ブートセクタがルートディレクトリから `LOADER.SYS` を探し、FAT のクラスタをたどって読む（続いているクラスタはまとめて読む）。ファイルがとびとびに置かれていても読める
 - 2nd ステージが FAT12 を解析して `KERNEL.SYS` を探す
-- 普通の FAT12 なので、Linux から `mcopy` でファイル追加・`mdir` で確認できる
+- 普通の FAT12 なので、Linux から `mcopy` でファイル追加・`mdir` で確認できる。`LOADER.SYS` を消すと起動しなくなる
 
 作成手順（Makefile で自動化）:
 ```
-mkfs.fat -C -F 12 -R 64 -n VIBEOS vibeos.img 1440
-dd if=boot.bin   of=vibeos.img conv=notrunc bs=512 count=1   # BPB は mkfs と同じ値を boot.asm に持たせる
-dd if=loader.bin of=vibeos.img conv=notrunc bs=512 seek=1
+mkfs.fat -C -F 12 -R 1 -n VIBEOS vibeos.img 1440
+dd if=boot.bin of=vibeos.img conv=notrunc bs=512 count=1   # BPB は mkfs と同じ値を boot.asm に持たせる（Makefile で照合）
+mcopy -i vibeos.img loader.bin ::LOADER.SYS
 mcopy -i vibeos.img kernel.sys ::KERNEL.SYS
 ```
 
@@ -203,7 +205,9 @@ mcopy -i vibeos.img kernel.sys ::KERNEL.SYS
 2. **IPL（boot.asm）**
    - 先頭で `CS:IP` を `0000:7C00` に正規化（far jmp）、DS/ES/SS を明示的に 0 に設定、SP = `0x7C00`
    - DL を保存（実機では `0x00` 以外のこともある。USB フロッピーなど）
-   - `int 13h AH=02h` で LBA 1〜63 を `0x8000` に読み込み。**トラック単位で読み、失敗時は `AH=00h` でリセットして最大 3 回リトライ** → それでも駄目ならエラー表示して停止
+   - BPB から FAT・ルートディレクトリ・データ領域の位置を求め、ルートディレクトリ → FAT（1 つ目）の順に `0x1000` へ読み、`LOADER.SYS` のクラスタをたどって `0x8000` に読み込む
+   - `int 13h AH=02h` は **トラック単位で読み、失敗時は `AH=00h` でリセットして最大 3 回リトライ** → それでも駄目ならエラー表示して停止。ファイルが無い・FAT が壊れている（予約のクラスタ番号、読み込み先が 64KB をまたぐ）ときも表示して停止
+   - 2nd ステージが CPU を確かめるまでは 386 以降の命令を使わない
    - `0x0000:0x8000` へジャンプ
 3. **2nd ステージ（loader.asm）**
    1. COM1 を初期化。以降の進み具合はシリアルと画面（BIOS テレタイプ）の両方に出す。CPU が 486 以降か（EFLAGS.AC を変えられるか）確かめ、386 なら理由を表示して止まる（カーネルは 486 向けにコンパイルしているので、386 では自分で確かめる前に止まる）
