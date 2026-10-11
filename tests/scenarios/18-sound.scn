@@ -1,0 +1,16 @@
+# Phase 11: PC スピーカー（QEMU の音声を WAV に書き出して、音が出ていることを確かめる）
+qemu-arg -audiodev
+qemu-arg wav,id=snd0,path=build/test-out/18-sound.wav
+qemu-arg -machine
+qemu-arg pc,pcspk-audiodev=snd0
+timeout 20
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type beep 440 500
+key ret
+sleep 800
+type echo done
+key ret
+wait-serial done
+quit
+expect-wav-sound build/test-out/18-sound.wav

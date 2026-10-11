@@ -5,6 +5,7 @@
 //! エントリ（LFN）は読み飛ばす。
 //!
 //! パスは「/」区切りの名前の並び（`.` や `..` の解決は呼び出し側で済ませておく）。
+//! 書き込み（作成・書き込み・切り詰め・削除・ディレクトリ作成）は `write.rs`。
 
 #![cfg_attr(not(test), no_std)]
 
@@ -38,6 +39,13 @@ pub enum FsError {
     NotFound,
     NotADirectory,
     IsADirectory,
+    /// 空きが無い（ディスク・ルートディレクトリ）
+    NoSpace,
+    AlreadyExists,
+    /// 8.3 形式にできない名前
+    InvalidName,
+    /// 空でないディレクトリは消せない
+    NotEmpty,
 }
 
 impl From<IoError> for FsError {
@@ -54,6 +62,10 @@ impl fmt::Display for FsError {
             FsError::NotFound => write!(f, "not found"),
             FsError::NotADirectory => write!(f, "not a directory"),
             FsError::IsADirectory => write!(f, "is a directory"),
+            FsError::NoSpace => write!(f, "no space left"),
+            FsError::AlreadyExists => write!(f, "already exists"),
+            FsError::InvalidName => write!(f, "invalid name (use 8.3 names)"),
+            FsError::NotEmpty => write!(f, "directory not empty"),
         }
     }
 }
@@ -81,6 +93,13 @@ pub enum Dir {
     Cluster(u32),
 }
 
+/// ディレクトリエントリがディスク上のどこにあるか
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntryLoc {
+    pub lba: u32,
+    pub offset: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirEntry {
     /// "NAME.EXT" 形式（大文字）
@@ -88,6 +107,8 @@ pub struct DirEntry {
     pub attr: u8,
     pub size: u32,
     pub first_cluster: u32,
+    /// ディスク上の位置（ルートディレクトリそのものを表すエントリは None）
+    pub loc: Option<EntryLoc>,
 }
 
 impl DirEntry {
@@ -107,9 +128,9 @@ impl DirEntry {
 #[derive(Debug, Clone, Copy)]
 struct Layout {
     sectors_per_cluster: u32,
-    #[allow(dead_code)] // 書き込みを実装するときに使う
     fat_start: u32,
     fat_sectors: u32,
+    num_fats: u32,
     root_start: u32,
     root_entries: u32,
     data_start: u32,
@@ -173,6 +194,7 @@ impl<D: BlockDevice> FatFs<D> {
             sectors_per_cluster: spc,
             fat_start: reserved,
             fat_sectors,
+            num_fats,
             root_start,
             root_entries,
             data_start,
@@ -196,11 +218,6 @@ impl<D: BlockDevice> FatFs<D> {
 
     pub fn total_clusters(&self) -> u32 {
         self.layout.clusters
-    }
-
-    #[allow(dead_code)]
-    fn fat_sectors(&self) -> u32 {
-        self.layout.fat_sectors
     }
 
     fn fat_entry(&self, cluster: u32) -> u32 {
@@ -249,30 +266,41 @@ impl<D: BlockDevice> FatFs<D> {
         Ok(())
     }
 
-    /// ディレクトリの中身（"." と ".." は含まない）
-    pub fn read_dir(&self, dir: Dir) -> Result<Vec<DirEntry>> {
-        let raw = match dir {
-            Dir::Root => {
-                let mut buf = vec![0u8; self.layout.root_entries as usize * DIR_ENTRY_SIZE];
-                let sectors = buf.len().div_ceil(SECTOR_SIZE);
-                buf.resize(sectors * SECTOR_SIZE, 0);
-                self.dev.read_blocks(self.layout.root_start, &mut buf)?;
-                buf
-            }
-            Dir::Cluster(first) => {
-                let chain = self.chain(first)?;
-                let cb = self.cluster_bytes();
-                let mut buf = vec![0u8; chain.len() * cb];
-                for (i, &c) in chain.iter().enumerate() {
-                    self.read_cluster(c, &mut buf[i * cb..(i + 1) * cb])?;
-                }
-                buf
+    /// ディレクトリの全スロット（32 バイトずつ）とその位置
+    fn dir_slots(&self, dir: Dir) -> Result<Vec<([u8; DIR_ENTRY_SIZE], EntryLoc)>> {
+        let mut out = Vec::new();
+        let push_sectors = |out: &mut Vec<_>, first_lba: u32, buf: &[u8]| {
+            for (i, e) in buf.chunks_exact(DIR_ENTRY_SIZE).enumerate() {
+                let byte = i * DIR_ENTRY_SIZE;
+                let loc = EntryLoc { lba: first_lba + (byte / SECTOR_SIZE) as u32, offset: (byte % SECTOR_SIZE) as u16 };
+                out.push((e.try_into().unwrap(), loc));
             }
         };
+        match dir {
+            Dir::Root => {
+                let sectors = (self.layout.root_entries as usize * DIR_ENTRY_SIZE).div_ceil(SECTOR_SIZE);
+                let mut buf = vec![0u8; sectors * SECTOR_SIZE];
+                self.dev.read_blocks(self.layout.root_start, &mut buf)?;
+                buf.truncate(self.layout.root_entries as usize * DIR_ENTRY_SIZE);
+                push_sectors(&mut out, self.layout.root_start, &buf);
+            }
+            Dir::Cluster(first) => {
+                let mut buf = vec![0u8; self.cluster_bytes()];
+                for c in self.chain(first)? {
+                    self.read_cluster(c, &mut buf)?;
+                    push_sectors(&mut out, self.cluster_lba(c), &buf);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// ディレクトリの中身（"." と ".." は含まない）
+    pub fn read_dir(&self, dir: Dir) -> Result<Vec<DirEntry>> {
         let mut out = Vec::new();
-        for e in raw.chunks_exact(DIR_ENTRY_SIZE) {
+        for (e, loc) in self.dir_slots(dir)? {
             match e[0] {
-                0x00 => break,   // 以降は未使用
+                0x00 => break,    // 以降は未使用
                 0xE5 => continue, // 削除済み
                 _ => {}
             }
@@ -284,14 +312,14 @@ impl<D: BlockDevice> FatFs<D> {
             if name == "." || name == ".." {
                 continue;
             }
-            out.push(DirEntry { name, attr, size: le32(e, 28), first_cluster: le16(e, 26) });
+            out.push(DirEntry { name, attr, size: le32(&e, 28), first_cluster: le16(&e, 26), loc: Some(loc) });
         }
         Ok(out)
     }
 
     /// パス（名前の並び）を探す。空ならルートを表すエントリを返す
     pub fn lookup<'a>(&self, path: impl IntoIterator<Item = &'a str>) -> Result<DirEntry> {
-        let mut cur = DirEntry { name: String::from("/"), attr: ATTR_DIRECTORY, size: 0, first_cluster: 0 };
+        let mut cur = DirEntry { name: String::from("/"), attr: ATTR_DIRECTORY, size: 0, first_cluster: 0, loc: None };
         for part in path {
             let dir = cur.as_dir()?;
             cur = self
@@ -340,6 +368,10 @@ impl<D: BlockDevice> FatFs<D> {
     pub fn device(&self) -> &D {
         &self.dev
     }
+
+    pub fn device_mut(&mut self) -> &mut D {
+        &mut self.dev
+    }
 }
 
 /// ディレクトリエントリの 11 バイトの名前を "NAME.EXT" にする
@@ -360,6 +392,8 @@ fn format_name(raw: &[u8]) -> String {
     }
     name
 }
+
+mod write;
 
 #[cfg(test)]
 mod tests;

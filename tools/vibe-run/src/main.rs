@@ -5,6 +5,11 @@
 //!
 //! シナリオファイルは 1 行 1 コマンド（`#` 以降はコメント）:
 //!   image PATH            起動するイメージ（既定は --img の値）
+//!   writable              イメージの写し（OUT/NAME.img）を書き込み可能で使う（既定は書き込みを捨てる）
+//!   expect-disk-file PATH TEXT  ディスクのファイル PATH に TEXT が含まれる（mtools で読む。writable のとき）
+//!   expect-disk-clean     ディスクに FAT の不整合が無い（fsck.fat -n。writable のとき）
+//!   quit                  QEMU を終了させる（WAV など終了時に書かれるものを確かめる前に）
+//!   expect-wav-sound PATH  WAV ファイルに無音でない部分がある
 //!   qemu-arg ARG          QEMU に渡す追加引数（起動前に集められる）
 //!   timeout SECS          以降の待ち系コマンドのタイムアウト（既定 10 秒）
 //!   wait-serial TEXT      シリアル出力に TEXT が現れるまで待つ（前回一致した位置より後ろを探す）
@@ -113,18 +118,26 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path) -> Resu
     let steps = parse_scenario(path)?;
     let mut img = default_img.to_path_buf();
     let mut extra = Vec::new();
+    let mut writable = false;
     for s in &steps {
         match s.cmd.as_str() {
             "image" => img = PathBuf::from(&s.arg),
             "qemu-arg" => extra.push(s.arg.clone()),
+            "writable" => writable = true,
             _ => {}
         }
     }
     if !img.exists() {
         return Err(format!("image not found: {}", img.display()));
     }
+    if writable {
+        let copy = out.join(format!("{name}.img"));
+        fs::copy(&img, &copy).map_err(|e| format!("copy image: {e}"))?;
+        img = copy;
+    }
 
-    let mut vm = Vm::start(&img, &extra, out, name)?;
+    let mut vm = Vm::start(&img, &extra, out, name, !writable)?;
+    vm.disk = img.clone();
     let result = run_steps(&mut vm, &steps, name, out);
     if result.is_err() {
         let _ = vm.screendump(&out.join(format!("{name}-fail.png")));
@@ -144,7 +157,45 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
     for s in steps {
         let at = |e: String| format!("line {} `{} {}`: {e}", s.line, s.cmd, s.arg);
         match s.cmd.as_str() {
-            "image" | "qemu-arg" => {}
+            "image" | "qemu-arg" | "writable" => {}
+            "expect-disk-file" => {
+                let (path, text) = s.arg.split_once(' ').ok_or_else(|| at("expected PATH TEXT".into()))?;
+                let out = Command::new("mtype")
+                    .arg("-i")
+                    .arg(&vm.disk)
+                    .arg(format!("::{path}"))
+                    .output()
+                    .map_err(|e| at(e.to_string()))?;
+                let content = String::from_utf8_lossy(&out.stdout);
+                if !out.status.success() || !content.contains(text) {
+                    return Err(at(format!(
+                        "disk file {path} does not contain the text (mtype: {}{})",
+                        content.trim_end(),
+                        String::from_utf8_lossy(&out.stderr).trim_end()
+                    )));
+                }
+            }
+            "quit" => {
+                if let Ok(q) = vm.qmp() {
+                    let _ = q.execute("quit", json!({}));
+                }
+                vm.wait_exit(Duration::from_secs(5)).map_err(at)?;
+            }
+            "expect-wav-sound" => {
+                let data = fs::read(&s.arg).map_err(|e| at(format!("{}: {e}", s.arg)))?;
+                // 44 バイトの見出しの後ろが 16bit の標本（符号付き）
+                let samples = data.get(44..).unwrap_or(&[]);
+                let loud = samples.chunks_exact(2).filter(|c| i16::from_le_bytes([c[0], c[1]]).unsigned_abs() > 1000).count();
+                if loud < 100 {
+                    return Err(at(format!("no sound in {} ({} loud samples)", s.arg, loud)));
+                }
+            }
+            "expect-disk-clean" => {
+                let out = Command::new("fsck.fat").arg("-n").arg(&vm.disk).output().map_err(|e| at(e.to_string()))?;
+                if !out.status.success() {
+                    return Err(at(format!("fsck.fat found problems:\n{}", String::from_utf8_lossy(&out.stdout))));
+                }
+            }
             "timeout" => timeout = Duration::from_secs_f32(s.arg.parse().map_err(|_| at("bad number".into()))?),
             "wait-serial" => vm.wait_serial(&s.arg, timeout).map_err(at)?,
             "serial-absent" => {
@@ -247,6 +298,8 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
 
 struct Vm {
     child: Child,
+    /// 起動したイメージ（writable のときは写し）
+    disk: PathBuf,
     qmp: Option<Qmp>,
     serial: Arc<Mutex<Vec<u8>>>,
     serial_pos: usize,
@@ -255,14 +308,14 @@ struct Vm {
 }
 
 impl Vm {
-    fn start(img: &Path, extra: &[String], out: &Path, name: &str) -> Result<Vm> {
+    fn start(img: &Path, extra: &[String], out: &Path, name: &str, snapshot: bool) -> Result<Vm> {
         let sock = std::env::temp_dir().join(format!("vibe-run-{}-{name}.qmp", std::process::id()));
         let _ = fs::remove_file(&sock);
         let qemu = std::env::var("QEMU").unwrap_or_else(|_| "qemu-system-i386".into());
         let mut cmd = Command::new(&qemu);
         cmd.args(["-m", "32M", "-cpu", "pentium2"])
             .arg("-drive")
-            .arg(format!("file={},format=raw,if=floppy,snapshot=on", img.display()))
+            .arg(format!("file={},format=raw,if=floppy,snapshot={}", img.display(), if snapshot { "on" } else { "off" }))
             .args(["-boot", "a", "-vga", "std", "-nic", "none", "-display", "none", "-serial", "stdio", "-monitor", "none"])
             .arg("-qmp")
             .arg(format!("unix:{},server=on,wait=off", sock.display()))
@@ -292,7 +345,7 @@ impl Vm {
             }
         });
 
-        let mut vm = Vm { child, qmp: None, serial, serial_pos: 0, sock, exit_code: None };
+        let mut vm = Vm { child, disk: img.to_path_buf(), qmp: None, serial, serial_pos: 0, sock, exit_code: None };
         vm.qmp = Some(Qmp::connect(&vm.sock, Duration::from_secs(5))?);
         Ok(vm)
     }

@@ -30,6 +30,13 @@ const COMMANDS: &[Command] = &[
     Command { name: "ls", usage: "ls [dir]", help: "list a directory", run: ls },
     Command { name: "cat", usage: "cat file...", help: "print files", run: cat },
     Command { name: "hexdump", usage: "hexdump file", help: "dump a file in hex", run: hexdump },
+    Command { name: "write", usage: "write file text...", help: "write text to a file (replaces it)", run: write },
+    Command { name: "append", usage: "append file text...", help: "add a line of text to a file", run: append },
+    Command { name: "cp", usage: "cp from to", help: "copy a file", run: cp },
+    Command { name: "rm", usage: "rm path", help: "remove a file or an empty directory", run: rm },
+    Command { name: "mkdir", usage: "mkdir dir", help: "make a directory", run: mkdir },
+    Command { name: "df", usage: "df", help: "disk space and unsaved changes", run: df },
+    Command { name: "sync", usage: "sync", help: "save changes to the floppy disk", run: sync },
     Command { name: "cd", usage: "cd [dir]", help: "change directory", run: cd },
     Command { name: "pwd", usage: "pwd", help: "print current directory", run: pwd },
     Command { name: "mem", usage: "mem", help: "memory usage", run: mem },
@@ -38,6 +45,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "sleep", usage: "sleep [ms]", help: "sleep (default 500ms, checks timing)", run: sleep },
     Command { name: "history", usage: "history", help: "command history", run: history },
     Command { name: "demo", usage: "demo", help: "3 threads draw counters for 5s", run: demo },
+    Command { name: "beep", usage: "beep [hz] [ms]", help: "sound the PC speaker", run: beep },
     Command { name: "reboot", usage: "reboot", help: "restart the computer", run: reboot },
     Command { name: "divzero", usage: "divzero", help: "test: divide by zero", run: divzero },
     Command { name: "nullptr", usage: "nullptr", help: "test: read address 0", run: nullptr },
@@ -157,6 +165,89 @@ fn hexdump(_: &mut Shell, args: &[&str]) {
     let _ = fs::close(fd);
 }
 
+fn write(_: &mut Shell, args: &[&str]) {
+    let Some(path) = args.get(1) else {
+        kprintln!("usage: write file text...");
+        return;
+    };
+    let mut text = args[2..].join(" ");
+    text.push('\n');
+    if let Err(e) = fs::write_file(path, text.as_bytes()) {
+        kprintln!("write: {path}: {e}");
+    }
+}
+
+fn append(_: &mut Shell, args: &[&str]) {
+    let Some(path) = args.get(1) else {
+        kprintln!("usage: append file text...");
+        return;
+    };
+    let mut text = args[2..].join(" ");
+    text.push('\n');
+    let r = fs::open_with(path, fs::OPEN_WRITE | fs::OPEN_CREATE | fs::OPEN_APPEND).and_then(|fd| {
+        let r = fs::write(fd, text.as_bytes());
+        fs::close(fd)?;
+        r
+    });
+    if let Err(e) = r {
+        kprintln!("append: {path}: {e}");
+    }
+}
+
+fn cp(_: &mut Shell, args: &[&str]) {
+    let [_, from, to] = args else {
+        kprintln!("usage: cp from to");
+        return;
+    };
+    match fs::read_file(from) {
+        Ok(data) => {
+            if let Err(e) = fs::write_file(to, &data) {
+                kprintln!("cp: {to}: {e}");
+            }
+        }
+        Err(e) => kprintln!("cp: {from}: {e}"),
+    }
+}
+
+fn rm(_: &mut Shell, args: &[&str]) {
+    let Some(path) = args.get(1) else {
+        kprintln!("usage: rm path");
+        return;
+    };
+    if let Err(e) = fs::remove(path) {
+        kprintln!("rm: {path}: {e}");
+    }
+}
+
+fn mkdir(_: &mut Shell, args: &[&str]) {
+    let Some(path) = args.get(1) else {
+        kprintln!("usage: mkdir dir");
+        return;
+    };
+    if let Err(e) = fs::mkdir(path) {
+        kprintln!("mkdir: {path}: {e}");
+    }
+}
+
+fn df(_: &mut Shell, _: &[&str]) {
+    match fs::space() {
+        Ok((free, total)) => kprintln!("{} KB free of {} KB", free / 1024, total / 1024),
+        Err(e) => kprintln!("df: {e}"),
+    }
+    let dirty = fs::dirty_sectors();
+    if dirty > 0 {
+        kprintln!("{dirty} sectors not saved (use sync)");
+    }
+}
+
+fn sync(_: &mut Shell, _: &[&str]) {
+    match fs::sync() {
+        Ok(0) => kprintln!("sync: nothing to save"),
+        Ok(n) => kprintln!("sync: saved {n} sectors"),
+        Err(e) => kprintln!("sync: {e}"),
+    }
+}
+
 fn cd(_: &mut Shell, args: &[&str]) {
     let path = args.get(1).copied().unwrap_or("/");
     if let Err(e) = fs::chdir(path) {
@@ -252,6 +343,13 @@ fn demo(_: &mut Shell, _: &[&str]) {
         klog!("demo finished");
     });
     kprintln!("demo started");
+}
+
+fn beep(_: &mut Shell, args: &[&str]) {
+    let freq = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(880);
+    let ms = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
+    crate::drivers::speaker::play(freq, ms);
+    pit::sleep_ms(ms);
 }
 
 fn reboot(_: &mut Shell, _: &[&str]) {

@@ -43,6 +43,12 @@ fn fs_errno(e: fs::VfsError) -> i32 {
         fs::VfsError::Fs(FsError::NotFound) => err::ENOENT,
         fs::VfsError::Fs(FsError::NotADirectory) => err::ENOTDIR,
         fs::VfsError::Fs(FsError::IsADirectory) => err::EISDIR,
+        fs::VfsError::Fs(FsError::NoSpace) => err::ENOSPC,
+        fs::VfsError::Fs(FsError::AlreadyExists) => err::EEXIST,
+        fs::VfsError::Fs(FsError::InvalidName) => err::EINVAL,
+        fs::VfsError::Fs(FsError::NotEmpty) => err::ENOTEMPTY,
+        fs::VfsError::NotWritable => err::EBADF,
+        fs::VfsError::NoDevice => err::EROFS,
         fs::VfsError::BadFd => err::EBADF,
         fs::VfsError::TooManyFiles => err::EMFILE,
         _ => err::EIO,
@@ -168,6 +174,7 @@ pub fn wait(id: TaskId) -> Result<i32, i32> {
 
 /// 今のプロセスを終える。戻らないので、呼ぶ側はヒープや Arc を持ったまま呼ばないこと
 pub fn exit_current(code: i32) -> ! {
+    crate::drivers::speaker::off();
     if let Some(user) = sched::current_user() {
         close_display(&mut user.lock());
     }

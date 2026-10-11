@@ -14,6 +14,15 @@ pub const USER_STACK_SIZE: u32 = 64 * 1024;
 
 pub const SYSCALL_VECTOR: u8 = 0x80;
 
+/// open のフラグ
+pub const OPEN_WRITE: u32 = 1;
+/// 無ければ作る
+pub const OPEN_CREATE: u32 = 2;
+/// 0 バイトにしてから書く
+pub const OPEN_TRUNCATE: u32 = 4;
+/// いつも終わりに書き足す
+pub const OPEN_APPEND: u32 = 8;
+
 /// gfx_open のフラグ: マウスカーソルを表示する
 pub const GFX_CURSOR: u32 = 1;
 
@@ -33,7 +42,7 @@ pub mod nr {
     pub const WRITE: u32 = 2;
     /// read(fd, buf, len) -> 読んだバイト数（0 = 終わり）。fd 0 はキーボードから 1 行
     pub const READ: u32 = 3;
-    /// open(path, path_len) -> fd（読み込み専用）
+    /// open(path, path_len, flags) -> fd。flags は OPEN_*（0 なら読み込み専用）
     pub const OPEN: u32 = 4;
     /// close(fd) -> 0
     pub const CLOSE: u32 = 5;
@@ -55,6 +64,14 @@ pub mod nr {
     pub const STAT: u32 = 13;
     /// readdir(path, path_len, &mut [DirEntry], count) -> 書いた数
     pub const READDIR: u32 = 14;
+    /// mkdir(path, path_len) -> 0
+    pub const MKDIR: u32 = 15;
+    /// remove(path, path_len) -> 0（ファイルか空のディレクトリ）
+    pub const REMOVE: u32 = 22;
+    /// sync() -> 書き戻したセクタ数。RAM ディスクの変更をフロッピーに書き戻す
+    pub const SYNC: u32 = 23;
+    /// sound(freq, ms) -> 0。PC スピーカーで鳴らす（待たない）。freq 0 で止める
+    pub const SOUND: u32 = 24;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -83,6 +100,10 @@ pub mod err {
     pub const ENOEXEC: i32 = 8;
     pub const ECHILD: i32 = 10;
     pub const ENOSYS: i32 = 38;
+    pub const EEXIST: i32 = 17;
+    pub const ENOSPC: i32 = 28;
+    pub const EROFS: i32 = 30;
+    pub const ENOTEMPTY: i32 = 39;
 
     pub fn name(e: i32) -> &'static str {
         match e {
@@ -98,6 +119,10 @@ pub mod err {
             ENOEXEC => "not an executable",
             ECHILD => "no such process",
             ENOSYS => "not implemented",
+            EEXIST => "already exists",
+            ENOSPC => "no space left",
+            EROFS => "read-only",
+            ENOTEMPTY => "directory not empty",
             _ => "error",
         }
     }

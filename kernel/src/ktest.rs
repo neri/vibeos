@@ -39,6 +39,8 @@ const TESTS: &[(&str, fn())] = &[
     ("process_exit_codes", process_exit_codes),
     ("process_spawn_errors", process_spawn_errors),
     ("process_reclaims_memory", process_reclaims_memory),
+    ("fdc_read_matches_ramdisk", fdc_read_matches_ramdisk),
+    ("fs_write_and_sync", fs_write_and_sync),
 ];
 
 pub fn run_all() -> ! {
@@ -333,4 +335,36 @@ fn process_reclaims_memory() {
     task::yield_now();
     let (after, _) = pmm::stats();
     assert_eq!(before, after, "pages leaked by processes");
+}
+
+/// フロッピーから直接読んだ中身が、起動時に RAM ディスクへ読み込まれた中身と同じ
+fn fdc_read_matches_ramdisk() {
+    use crate::drivers::fdc;
+    assert!(fdc::present(), "no floppy drive");
+    let info = crate::bootinfo::get();
+    // 先頭の 2 トラックと、途中のトラックの一部（トラックをまたぐ読み込み）
+    for (lba, count) in [(0u32, 36usize), (700, 30)] {
+        let mut buf = vec![0u8; count * 512];
+        fdc::read(lba, &mut buf).unwrap();
+        // SAFETY: RAM ディスクの範囲の中
+        let ram = unsafe { core::slice::from_raw_parts((info.ramdisk_addr + lba * 512) as *const u8, count * 512) };
+        assert!(buf == ram, "sectors {lba}+{count} differ");
+    }
+}
+
+/// 書いたファイルが sync でフロッピーに届く（フロッピーから読み直して確かめる）
+fn fs_write_and_sync() {
+    use crate::drivers::fdc;
+    fs::write_file("/KTEST.TXT", b"written by ktest").unwrap();
+    assert_eq!(fs::read_file("/ktest.txt").unwrap(), b"written by ktest");
+    assert!(fs::dirty_sectors() > 0);
+    let n = fs::sync().unwrap();
+    assert!(n > 0);
+    assert_eq!(fs::dirty_sectors(), 0);
+    // フロッピーのデータ領域を読み直して、書いた文字列があるか
+    let mut disk = vec![0u8; 2880 * 512];
+    fdc::read(0, &mut disk).unwrap();
+    assert!(disk.windows(16).any(|w| w == b"written by ktest"), "data not on the floppy");
+    fs::remove("/KTEST.TXT").unwrap();
+    fs::sync().unwrap();
 }

@@ -47,7 +47,25 @@ pub fn read(fd: i32, buf: &mut [u8]) -> i32 {
 }
 
 pub fn open(path: &str) -> i32 {
-    syscall(nr::OPEN, path.as_ptr() as u32, path.len() as u32, 0, 0, 0)
+    open_with(path, 0)
+}
+
+/// flags は vibe_abi::OPEN_*
+pub fn open_with(path: &str, flags: u32) -> i32 {
+    syscall(nr::OPEN, path.as_ptr() as u32, path.len() as u32, flags, 0, 0)
+}
+
+pub fn mkdir(path: &str) -> i32 {
+    syscall(nr::MKDIR, path.as_ptr() as u32, path.len() as u32, 0, 0, 0)
+}
+
+pub fn remove(path: &str) -> i32 {
+    syscall(nr::REMOVE, path.as_ptr() as u32, path.len() as u32, 0, 0, 0)
+}
+
+/// RAM ディスクの変更をフロッピーに書き戻す。書き戻したセクタ数
+pub fn sync() -> i32 {
+    syscall(nr::SYNC, 0, 0, 0, 0, 0)
 }
 
 pub fn close(fd: i32) -> i32 {
@@ -118,4 +136,9 @@ pub fn getkey(nonblock: bool) -> Option<vibe_abi::KeyEvent> {
 pub fn mouse() -> Option<MouseState> {
     let mut m = MouseState::default();
     (syscall(nr::MOUSE, &mut m as *mut MouseState as u32, 0, 0, 0, 0) == 1).then_some(m)
+}
+
+/// PC スピーカーで `freq` Hz を `ms` ミリ秒鳴らす（待たない）。freq 0 で止める
+pub fn sound(freq: u32, ms: u32) {
+    syscall(nr::SOUND, freq, ms, 0, 0, 0);
 }

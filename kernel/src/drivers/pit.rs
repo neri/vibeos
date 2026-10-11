@@ -28,7 +28,8 @@ pub fn init() {
 }
 
 fn on_tick() {
-    TICKS.fetch_add(1, Ordering::Relaxed);
+    let now = TICKS.fetch_add(1, Ordering::Relaxed) + 1;
+    super::speaker::on_tick(now);
     TIMER_WAIT.notify_all();
     crate::task::sched::on_tick();
 }

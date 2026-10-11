@@ -114,6 +114,8 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     // SAFETY: IDT・PIC・各ハンドラ・スケジューラの準備ができた
     unsafe { arch::cpu::enable_interrupts() };
     klog!("interrupts enabled");
+    // フロッピーの初期化は割り込みを待つので、割り込みを許可してから
+    drivers::fdc::init();
 
     klog!("VIBEOS READY");
 

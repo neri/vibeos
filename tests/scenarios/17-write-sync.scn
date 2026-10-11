@@ -1,0 +1,41 @@
+# Phase 11: ファイルの書き込みと、フロッピーへの書き戻し（sync）
+writable
+timeout 40
+wait-serial fdc: drive A ready
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type write note.txt hello disk
+key ret
+type append note.txt second line
+key ret
+type cat note.txt
+key ret
+wait-serial hello disk
+wait-serial second line
+type mkdir work
+key ret
+type cp hello.txt work/copy.txt
+key ret
+type ls work
+key ret
+wait-serial COPY.TXT
+type rm work
+key ret
+wait-serial directory not empty
+type fstest
+key ret
+wait-serial fstest: all ok
+type df
+key ret
+wait-serial sectors not saved
+type sync
+key ret
+wait-serial sync: saved
+# フロッピーのイメージ（ホスト側）に書き込まれていて、FAT に不整合が無い
+expect-disk-file NOTE.TXT second line
+expect-disk-file WORK/COPY.TXT Hello from the floppy!
+expect-disk-clean
+type sync
+key ret
+wait-serial sync: nothing to save
+serial-absent PANIC

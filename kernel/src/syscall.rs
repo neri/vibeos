@@ -49,7 +49,14 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
         nr::READ => sys_read(user, a, b, c),
         nr::OPEN => {
             let path = user_str(user, a, b)?;
-            fs::open(&path).map(|fd| fd as u32 + FIRST_FILE_FD).map_err(process::errno_of)
+            fs::open_with(&path, c).map(|fd| fd as u32 + FIRST_FILE_FD).map_err(process::errno_of)
+        }
+        nr::MKDIR => fs::mkdir(&user_str(user, a, b)?).map(|_| 0).map_err(process::errno_of),
+        nr::REMOVE => fs::remove(&user_str(user, a, b)?).map(|_| 0).map_err(process::errno_of),
+        nr::SYNC => fs::sync().map_err(process::errno_of),
+        nr::SOUND => {
+            crate::drivers::speaker::play(a, b);
+            Ok(0)
         }
         nr::CLOSE => {
             if a < FIRST_FILE_FD {
@@ -176,15 +183,17 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
 }
 
 fn sys_write(user: &UserRef, fd: u32, buf: u32, len: u32) -> SysResult {
+    check_user(user, buf, len, false)?;
+    // ファイルに書く間に待つことがあるので、いったんカーネルに写す
+    // SAFETY: 上で確かめた
+    let bytes = unsafe { core::slice::from_raw_parts(buf as *const u8, len as usize) }.to_vec();
     match fd {
         1 | 2 => {
-            check_user(user, buf, len, false)?;
-            // SAFETY: 上で確かめた
-            let bytes = unsafe { core::slice::from_raw_parts(buf as *const u8, len as usize) };
-            kprint!("{}", String::from_utf8_lossy(bytes));
+            kprint!("{}", String::from_utf8_lossy(&bytes));
             Ok(len)
         }
-        _ => Err(err::EBADF),
+        0 => Err(err::EBADF),
+        _ => fs::write((fd - FIRST_FILE_FD) as usize, &bytes).map(|n| n as u32).map_err(process::errno_of),
     }
 }
 

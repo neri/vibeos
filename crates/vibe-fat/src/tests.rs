@@ -146,3 +146,136 @@ fn mounts_fat16() {
 fn rejects_garbage() {
     assert!(matches!(FatFs::mount(MemDisk(vec![0u8; 1440 * 1024])), Err(FsError::BadFormat(_))));
 }
+
+// --- 書き込み ---------------------------------------------------------------
+
+/// イメージを一時ファイルに書き出して fsck.fat で検査し、mtype でファイルの中身を読む
+fn host_check(fs: &FatFs<MemDisk>, files: &[(&str, &[u8])]) {
+    static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("vibe-fat-check-{}-{seq}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let img = dir.join("check.img");
+    std::fs::write(&img, &fs.device().0).unwrap();
+    let out = Command::new("fsck.fat").arg("-n").arg(&img).output().unwrap();
+    assert!(out.status.success(), "fsck.fat found problems:\n{}", String::from_utf8_lossy(&out.stdout));
+    for (path, want) in files {
+        let out = Command::new("mtype").arg("-i").arg(&img).arg(format!("::{path}")).output().unwrap();
+        assert!(out.status.success(), "mtype {path}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(&out.stdout, want, "content of {path} as seen by mtools");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn create_and_write_small_file() {
+    let mut fs = floppy(&[]);
+    let mut f = fs.create(Dir::Root, "note.txt").unwrap();
+    assert_eq!(f.name, "NOTE.TXT");
+    fs.write(&mut f, 0, b"hello").unwrap();
+    fs.write(&mut f, 5, b", world\n").unwrap();
+    let e = fs.lookup(["NOTE.TXT"]).unwrap();
+    assert_eq!(fs.read_to_vec(&e).unwrap(), b"hello, world\n");
+    host_check(&fs, &[("NOTE.TXT", b"hello, world\n")]);
+}
+
+#[test]
+fn write_multi_cluster_overwrite_and_gap() {
+    let mut fs = floppy(&[]);
+    let free_before = fs.free_clusters();
+    let mut f = fs.create(Dir::Root, "BIG.BIN").unwrap();
+    let mut data = pattern(3000);
+    fs.write(&mut f, 0, &data).unwrap();
+    assert_eq!(fs.free_clusters(), free_before - 6);
+    // 途中を上書き（クラスタの境界をまたぐ）
+    fs.write(&mut f, 1000, &[0xAA; 100]).unwrap();
+    data[1000..1100].fill(0xAA);
+    // 終わりより後ろに書くと間は 0
+    fs.write(&mut f, 4000, b"END").unwrap();
+    data.resize(4000, 0);
+    data.extend_from_slice(b"END");
+    assert_eq!(fs.read_to_vec(&fs.lookup(["BIG.BIN"]).unwrap()).unwrap(), data);
+    host_check(&fs, &[("BIG.BIN", &data)]);
+}
+
+#[test]
+fn truncate_and_remove_free_clusters() {
+    let mut fs = floppy(&[("OLD.TXT", pattern(5000))]);
+    let free0 = fs.free_clusters();
+    let mut f = fs.lookup(["OLD.TXT"]).unwrap();
+    fs.truncate(&mut f, 600).unwrap();
+    assert_eq!(fs.free_clusters(), free0 + 8);
+    assert_eq!(fs.read_to_vec(&fs.lookup(["OLD.TXT"]).unwrap()).unwrap(), &pattern(5000)[..600]);
+    host_check(&fs, &[("OLD.TXT", &pattern(5000)[..600])]);
+    fs.truncate(&mut f, 0).unwrap();
+    assert_eq!(fs.free_clusters(), free0 + 10);
+    let f = fs.lookup(["OLD.TXT"]).unwrap();
+    fs.remove(&f).unwrap();
+    assert_eq!(fs.lookup(["OLD.TXT"]), Err(FsError::NotFound));
+    host_check(&fs, &[]);
+}
+
+#[test]
+fn mkdir_nested_files_and_growing_directory() {
+    let mut fs = floppy(&[]);
+    let d = fs.mkdir(Dir::Root, "work").unwrap();
+    let sub = fs.mkdir(d.as_dir().unwrap(), "sub").unwrap();
+    let mut f = fs.create(sub.as_dir().unwrap(), "deep.txt").unwrap();
+    fs.write(&mut f, 0, b"deep").unwrap();
+    // 1 クラスタ（16 エントリ）を超えるだけファイルを作るとディレクトリが伸びる
+    let wd = d.as_dir().unwrap();
+    for i in 0..40 {
+        let mut f = fs.create(wd, &format!("F{i}.TXT")).unwrap();
+        fs.write(&mut f, 0, format!("{i}").as_bytes()).unwrap();
+    }
+    assert_eq!(fs.read_dir(wd).unwrap().len(), 41);
+    assert_eq!(fs.read_to_vec(&fs.lookup(["WORK", "F39.TXT"]).unwrap()).unwrap(), b"39");
+    host_check(&fs, &[("WORK/SUB/DEEP.TXT", b"deep"), ("WORK/F39.TXT", b"39"), ("WORK/F0.TXT", b"0")]);
+    // 空でないディレクトリは消せない
+    assert_eq!(fs.remove(&fs.lookup(["WORK"]).unwrap()), Err(FsError::NotEmpty));
+    let f = fs.lookup(["WORK", "SUB", "DEEP.TXT"]).unwrap();
+    fs.remove(&f).unwrap();
+    let s = fs.lookup(["WORK", "SUB"]).unwrap();
+    fs.remove(&s).unwrap();
+    host_check(&fs, &[]);
+}
+
+#[test]
+fn name_rules_and_duplicates() {
+    let mut fs = floppy(&[("A.TXT", b"a".to_vec())]);
+    assert_eq!(fs.create(Dir::Root, "a.txt").err(), Some(FsError::AlreadyExists));
+    for bad in ["toolongname.txt", "x.long", "", ".txt", "sp ace", "a/b", "dot.."] {
+        assert_eq!(fs.create(Dir::Root, bad).err(), Some(FsError::InvalidName), "{bad:?}");
+    }
+    assert!(fs.create(Dir::Root, "NOEXT").is_ok());
+}
+
+#[test]
+fn root_directory_and_disk_can_fill_up() {
+    let mut fs = floppy(&[]);
+    // ルートディレクトリは 224 エントリまで
+    for i in 0..224 {
+        fs.create(Dir::Root, &format!("R{i}")).unwrap();
+    }
+    assert_eq!(fs.create(Dir::Root, "ONEMORE").err(), Some(FsError::NoSpace));
+    // 入りきらない書き込みは NoSpace で、取りかけたクラスタは返す（ファイルは元のまま）
+    let mut f = fs.lookup(["R0"]).unwrap();
+    let big = vec![1u8; 1024 * 1024];
+    fs.write(&mut f, 0, &big).unwrap();
+    let free = fs.free_clusters();
+    assert_eq!(fs.write(&mut f, 1024 * 1024, &big).err(), Some(FsError::NoSpace));
+    assert_eq!(fs.free_clusters(), free);
+    assert_eq!(fs.lookup(["R0"]).unwrap().size, 1024 * 1024);
+    host_check(&fs, &[]);
+}
+
+#[test]
+fn fat16_write() {
+    let img = make_image("fat16w", 16 * 1024, &["-F", "16"], &[]);
+    let mut fs = FatFs::mount(MemDisk(img)).unwrap();
+    let d = fs.mkdir(Dir::Root, "DATA").unwrap();
+    let mut f = fs.create(d.as_dir().unwrap(), "X.BIN").unwrap();
+    let data = pattern(70000);
+    fs.write(&mut f, 0, &data).unwrap();
+    host_check(&fs, &[("DATA/X.BIN", &data)]);
+}

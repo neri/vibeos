@@ -21,6 +21,13 @@ uptime    time since boot
 sleep     sleep for some milliseconds
 history   command history
 demo      three threads draw counters
+write     write text to a file
+append    add a line to a file
+cp, rm    copy / remove files
+mkdir     make a directory
+df        free space, unsaved changes
+sync      save changes to the floppy
+beep      sound the PC speaker
 reboot    restart the computer
 
 LINE EDITING
@@ -56,4 +63,7 @@ FILES
 /IMAGES/GRADIENT.BMP true color image
 
 The disk is loaded into memory at boot
-(a RAM disk). Changes are not saved yet.
+(a RAM disk). Changes stay in memory
+until you type "sync", which writes the
+changed sectors back to the floppy.
+File names use the 8.3 form (NAME.EXT).

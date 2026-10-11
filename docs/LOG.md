@@ -165,3 +165,13 @@
 - ディスクに `DOCS/GUIDE.TXT`（コマンドとアプリの説明）を追加
 - 5 本とも一度でビルドが通り、移した `view` / `paint` は既存のシナリオ（期待画像も含む）がそのまま通った
 - テスト: `16-apps`（mandel は期待画像、snake は動き続けることと操作、more はページ送り）
+
+## 2026-10-11 Phase 11（前半）: 書き込み・フロッピー・スピーカー
+
+- `vibe-fat` に書き込み（作成・書き込み・切り詰め・削除・ディレクトリ作成）。ホストのテストで fsck.fat に不整合が無いことと、mtools（mtype）で同じ中身が読めることを確かめる（テスト 15 件）
+  - 空きが足りないときに取りかけたクラスタをファイルにつないだままにしていたら、fsck.fat に「クラスタの連鎖がファイルの大きさより長い」と指摘された。取りかけたクラスタを返して元に戻すよう修正
+- VFS に書き込み（open のフラグ・write・mkdir・remove・sync）、システムコール（open のフラグ・write・mkdir・remove・sync・sound）、シェルのコマンド（write / append / cp / rm / mkdir / df / sync / beep）、テスト用アプリ `fstest`
+- RAM ディスクが中身の変わったセクタを覚え、`sync` でそのセクタだけを FDC ドライバ（82077 + ISA DMA）で書き戻す。FDC ドライバは一度で動いた
+- PC スピーカー（待たずに鳴らし、タイマ割り込みで止める）。snake でえさを食べたときとゲームオーバーで鳴らす
+- vibe-run に `writable`（イメージの写しを書き込み可能で使う）、`expect-disk-file` / `expect-disk-clean`（ホストの mtools / fsck.fat でフロッピーのイメージを確かめる）、`quit`、`expect-wav-sound`（QEMU の音声を WAV に書き出して音が出ているか）を追加。音の確認は、鳴らさないときに失敗することも確かめた
+- テスト: `17-write-sync`（書いて sync するとホスト側のイメージに入る）, `18-sound`, カーネル内テスト 2 件（FDC で読んだ中身が RAM ディスクと同じ、書いて sync するとフロッピーに届く）

@@ -63,6 +63,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "875488b8711a968268c7cf5d139578713097ca4635a76044e8fe8eedf831d07e"
 
 [[package]]
+name = "fstest"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+]
+
+[[package]]
 name = "hello"
 version = "0.1.0"
 dependencies = [

@@ -24,6 +24,12 @@ pub enum VfsError {
     BadFd,
     TooManyFiles,
     NotMounted,
+    /// 読み込み専用で開いたファイルに書こうとした
+    NotWritable,
+    /// 書き戻す先のフロッピードライブが無い
+    NoDevice,
+    /// フロッピーへの書き戻しに失敗した
+    DeviceError,
 }
 
 impl From<FsError> for VfsError {
@@ -39,6 +45,9 @@ impl fmt::Display for VfsError {
             VfsError::BadFd => write!(f, "bad file descriptor"),
             VfsError::TooManyFiles => write!(f, "too many open files"),
             VfsError::NotMounted => write!(f, "no file system"),
+            VfsError::NotWritable => write!(f, "file is not open for writing"),
+            VfsError::NoDevice => write!(f, "no floppy drive to write to"),
+            VfsError::DeviceError => write!(f, "floppy write error"),
         }
     }
 }
@@ -48,7 +57,10 @@ pub type Result<T> = core::result::Result<T, VfsError>;
 struct OpenFile {
     entry: DirEntry,
     pos: u32,
+    flags: u32,
 }
+
+pub use vibe_abi::{OPEN_APPEND, OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
 
 /// タスクごとのファイルシステムの状態
 pub struct TaskFs {
@@ -106,10 +118,17 @@ fn resolve(cwd: &[String], path: &str) -> Vec<String> {
     parts
 }
 
-fn with_root<R>(f: impl FnOnce(&FatFs<RamDisk>) -> Result<R>) -> Result<R> {
-    let root = ROOT.lock();
-    let fs = root.as_ref().ok_or(VfsError::NotMounted)?;
+fn with_root<R>(f: impl FnOnce(&mut FatFs<RamDisk>) -> Result<R>) -> Result<R> {
+    let mut root = ROOT.lock();
+    let fs = root.as_mut().ok_or(VfsError::NotMounted)?;
     f(fs)
+}
+
+/// パスを (親ディレクトリの名前の並び, 最後の名前) に分ける
+fn resolve_parent(path: &str) -> Result<(Vec<String>, String)> {
+    let mut parts = resolve(&current().lock().cwd, path);
+    let name = parts.pop().ok_or(VfsError::Fs(FsError::InvalidName))?;
+    Ok((parts, name))
 }
 
 fn lookup(path: &str) -> Result<DirEntry> {
@@ -132,13 +151,33 @@ pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
 
 /// ファイルを読むために開く
 pub fn open(path: &str) -> Result<Fd> {
-    let entry = lookup(path)?;
-    if entry.is_dir() {
-        return Err(FsError::IsADirectory.into());
-    }
+    open_with(path, 0)
+}
+
+/// ファイルを開く。`flags` は OPEN_*（0 なら読み込み専用）
+pub fn open_with(path: &str, flags: u32) -> Result<Fd> {
+    let entry = match lookup(path) {
+        Ok(mut e) => {
+            if e.is_dir() {
+                return Err(FsError::IsADirectory.into());
+            }
+            if flags & OPEN_WRITE != 0 && flags & OPEN_TRUNCATE != 0 {
+                with_root(|fs| Ok(fs.truncate(&mut e, 0)?))?;
+            }
+            e
+        }
+        Err(VfsError::Fs(FsError::NotFound)) if flags & OPEN_CREATE != 0 => {
+            let (parent, name) = resolve_parent(path)?;
+            with_root(|fs| {
+                let dir = fs.lookup(parent.iter().map(String::as_str))?.as_dir()?;
+                Ok(fs.create(dir, &name)?)
+            })?
+        }
+        Err(e) => return Err(e),
+    };
     let tfs = current();
     let mut t = tfs.lock();
-    let file = Some(OpenFile { entry, pos: 0 });
+    let file = Some(OpenFile { entry, pos: 0, flags });
     if let Some(fd) = t.files.iter().position(Option::is_none) {
         t.files[fd] = file;
         return Ok(fd);
@@ -158,6 +197,72 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
     let n = with_root(|fs| Ok(fs.read(&file.entry, file.pos, buf)?))?;
     file.pos += n as u32;
     Ok(n)
+}
+
+/// 書いたバイト数を返す
+pub fn write(fd: Fd, data: &[u8]) -> Result<usize> {
+    let tfs = current();
+    let mut t = tfs.lock();
+    let file = t.files.get_mut(fd).and_then(Option::as_mut).ok_or(VfsError::BadFd)?;
+    if file.flags & OPEN_WRITE == 0 {
+        return Err(VfsError::NotWritable);
+    }
+    if file.flags & OPEN_APPEND != 0 {
+        file.pos = file.entry.size;
+    }
+    let n = with_root(|fs| Ok(fs.write(&mut file.entry, file.pos, data)?))?;
+    file.pos += n as u32;
+    Ok(n)
+}
+
+/// ファイルを丸ごと書く（無ければ作る）
+pub fn write_file(path: &str, data: &[u8]) -> Result<()> {
+    let fd = open_with(path, OPEN_WRITE | OPEN_CREATE | OPEN_TRUNCATE)?;
+    let r = write(fd, data);
+    close(fd)?;
+    r.map(|_| ())
+}
+
+pub fn mkdir(path: &str) -> Result<()> {
+    let (parent, name) = resolve_parent(path)?;
+    with_root(|fs| {
+        let dir = fs.lookup(parent.iter().map(String::as_str))?.as_dir()?;
+        fs.mkdir(dir, &name)?;
+        Ok(())
+    })
+}
+
+/// ファイルか空のディレクトリを消す
+pub fn remove(path: &str) -> Result<()> {
+    let entry = lookup(path)?;
+    with_root(|fs| Ok(fs.remove(&entry)?))
+}
+
+/// RAM ディスクの変更をフロッピーに書き戻す。書いたセクタ数を返す
+pub fn sync() -> Result<u32> {
+    with_root(|fs| {
+        let disk = fs.device_mut();
+        if disk.dirty_sectors() == 0 {
+            return Ok(0);
+        }
+        if !crate::drivers::fdc::present() {
+            return Err(VfsError::NoDevice);
+        }
+        disk.sync().map_err(|e| {
+            klog!("fs: sync failed: {:?}", e);
+            VfsError::DeviceError
+        })
+    })
+}
+
+/// まだ書き戻していないセクタの数
+pub fn dirty_sectors() -> u32 {
+    with_root(|fs| Ok(fs.device().dirty_sectors())).unwrap_or(0)
+}
+
+/// (空きバイト数, 全体のバイト数)
+pub fn space() -> Result<(u64, u64)> {
+    with_root(|fs| Ok((fs.free_bytes(), fs.total_clusters() as u64 * fs.cluster_bytes() as u64)))
 }
 
 pub fn close(fd: Fd) -> Result<()> {

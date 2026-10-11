@@ -73,11 +73,13 @@ impl Game {
         let hits_self = self.body.iter().take(self.body.len() - tail_moves as usize).any(|&b| b == next);
         if next.0 < 0 || next.0 >= COLS || next.1 < 0 || next.1 >= ROWS || hits_self {
             self.over = true;
+            sys::sound(110, 400);
             return;
         }
         self.body.push_front(next);
         if grows {
             self.score += 10;
+            sys::sound(880, 60);
             self.place_food(rng);
         } else {
             self.body.pop_back();
