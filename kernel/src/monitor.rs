@@ -5,6 +5,7 @@
 use core::arch::asm;
 
 use crate::drivers::{keyboard, pit};
+use crate::mm::{heap, pmm};
 
 const LINE_MAX: usize = 36;
 
@@ -46,7 +47,7 @@ fn read_line(buf: &mut [u8]) -> usize {
 fn execute(cmd: &str) {
     match cmd {
         "" => {}
-        "help" => kprintln!("help ticks sleep divzero panic"),
+        "help" => kprintln!("help ticks sleep mem divzero nullptr panic"),
         "ticks" => kprintln!("ticks: {}", pit::ticks()),
         "sleep" => {
             let start = pit::ticks();
@@ -59,6 +60,17 @@ fn execute(cmd: &str) {
             // Rust の割り算はゼロ除算を事前に検査して panic するので、CPU の例外を起こすには div 命令を直接使う
             // SAFETY: わざと #DE を起こす（例外ハンドラの確認用）
             unsafe { asm!("div {0}", in(reg) 0u32, inout("eax") 1u32 => _, inout("edx") 0u32 => _) };
+        }
+        "mem" => {
+            let (free, total) = pmm::stats();
+            kprintln!("pages: {} KB free / {} KB", free * 4, total * 4);
+            let (hfree, htotal, blocks) = heap::stats();
+            kprintln!("heap: {} / {} bytes free, {} blocks", hfree, htotal, blocks);
+        }
+        "nullptr" => {
+            // SAFETY: わざと 0 番地を読んでページフォルトを起こす（ページングの確認用）
+            let v = unsafe { core::ptr::read_volatile(core::ptr::null::<u32>()) };
+            kprintln!("read {v:#x} from address 0 (should not happen)");
         }
         "panic" => panic!("panic requested from monitor"),
         other => kprintln!("unknown command: {other}"),

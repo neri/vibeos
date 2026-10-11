@@ -14,6 +14,7 @@ bench = false
 qemu-test = []
 
 [dependencies]
+vibe-alloc = { path = "../crates/vibe-alloc" }
 vibe-font = { path = "../crates/vibe-font" }
 vibe-gfx = { path = "../crates/vibe-gfx" }
 vibe-keyboard = { path = "../crates/vibe-keyboard" }

@@ -1,0 +1,8 @@
+[package]
+name = "vibe-alloc"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "物理ページの割り当て（ビットマップ）とヒープの割り当て（空きリスト）"
+
+[dependencies]

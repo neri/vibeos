@@ -5,6 +5,10 @@
 
 #![no_std]
 #![no_main]
+// テスト用ビルドではモニタなど通常の起動でだけ使うものが未使用になる
+#![cfg_attr(feature = "qemu-test", allow(dead_code))]
+
+extern crate alloc;
 
 #[macro_use]
 mod print;
@@ -13,6 +17,9 @@ mod arch;
 mod bootinfo;
 mod drivers;
 mod gfx;
+#[cfg(feature = "qemu-test")]
+mod ktest;
+mod mm;
 mod monitor;
 mod panic;
 mod sync;
@@ -76,6 +83,7 @@ extern "C" fn kmain(magic: u32, info: &'static BootInfo) -> ! {
 
     check_cpu();
     print_memory(info);
+    mm::init(info);
 
     let stack_top = (&raw const BOOT_STACK) as u32 + BOOT_STACK_SIZE as u32;
     arch::gdt::init(stack_top);
@@ -89,6 +97,11 @@ extern "C" fn kmain(magic: u32, info: &'static BootInfo) -> ! {
     klog!("interrupts enabled");
 
     klog!("VIBEOS READY");
+
+    #[cfg(feature = "qemu-test")]
+    ktest::run_all();
+
+    #[cfg(not(feature = "qemu-test"))]
     monitor::run()
 }
 

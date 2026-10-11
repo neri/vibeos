@@ -8,6 +8,8 @@
 
 BUILD   := build
 IMG     := $(BUILD)/vibeos.img
+# テスト用イメージ: カーネルを qemu-test 機能付きでビルドしたもの（起動後にカーネル内テストを実行して終了する）
+TEST_IMG := $(BUILD)/vibeos-test.img
 QEMU    ?= qemu-system-i386
 CARGO   ?= cargo
 NASM    ?= nasm
@@ -18,6 +20,7 @@ QEMU_FLAGS := -m 32M -cpu pentium2 \
 	-boot a -vga std -nic none -no-reboot
 
 KERNEL_ELF := target/i686-vibeos/release/kernel
+TEST_KERNEL_ELF := target/test/i686-vibeos/release/kernel
 VIBE_RUN   := target/release/vibe-run
 SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
@@ -49,18 +52,33 @@ $(BUILD)/kernel.elf: $(KERNEL_ELF) | $(BUILD)
 $(BUILD)/kernel.sys: $(KERNEL_ELF) | $(BUILD)
 	$(OBJCOPY) -O binary $< $@
 
+$(TEST_KERNEL_ELF): FORCE
+	cd kernel && $(CARGO) build --release --features qemu-test --target-dir ../target/test
+
+$(BUILD)/test/kernel.sys: $(TEST_KERNEL_ELF)
+	mkdir -p $(dir $@)
+	$(OBJCOPY) -O binary $< $@
+
 # --- イメージ ---------------------------------------------------------------
 # FAT12 / 1.44MB / 予約セクタ 64（LBA 1〜63 に 2nd ステージを置く）。
 # ボリュームシリアルを固定して、同じ入力なら同じイメージになるようにする。
 # BPB は boot.asm にも同じ値で書いてあり、boot.bin で上書きする。
+# $(1) = 出力イメージ, $(2) = kernel.sys
+define make-image
+	rm -f $(1).tmp
+	mkfs.fat -C -F 12 -R 64 -i 56494245 -n VIBEOS $(1).tmp 1440 >/dev/null
+	dd if=$(BUILD)/boot.bin of=$(1).tmp conv=notrunc bs=512 count=1 status=none
+	dd if=$(BUILD)/loader.bin of=$(1).tmp conv=notrunc bs=512 seek=1 status=none
+	mcopy -i $(1).tmp $(2) ::KERNEL.SYS
+	fsck.fat -n $(1).tmp >/dev/null
+	mv $(1).tmp $(1)
+endef
+
 $(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(BUILD)/kernel.elf
-	rm -f $@.tmp
-	mkfs.fat -C -F 12 -R 64 -i 56494245 -n VIBEOS $@.tmp 1440 >/dev/null
-	dd if=$(BUILD)/boot.bin of=$@.tmp conv=notrunc bs=512 count=1 status=none
-	dd if=$(BUILD)/loader.bin of=$@.tmp conv=notrunc bs=512 seek=1 status=none
-	mcopy -i $@.tmp $(BUILD)/kernel.sys ::KERNEL.SYS
-	fsck.fat -n $@.tmp >/dev/null
-	mv $@.tmp $@
+	$(call make-image,$@,$(BUILD)/kernel.sys)
+
+$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/test/kernel.sys
+	$(call make-image,$@,$(BUILD)/test/kernel.sys)
 
 # --- 実行 -------------------------------------------------------------------
 run: $(IMG)
@@ -78,7 +96,7 @@ test-host:
 $(VIBE_RUN): FORCE
 	$(CARGO) build --release -p vibe-run
 
-test-qemu: $(IMG) $(VIBE_RUN)
+test-qemu: $(IMG) $(TEST_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --img $(IMG) --out $(BUILD)/test-out $(SCENARIOS)
 
 clean:

@@ -1,0 +1,5 @@
+# カーネル内テスト（qemu-test 機能付きのイメージ）。すべて通ると QEMU が終了コード 33 で終わる
+image build/vibeos-test.img
+timeout 60
+wait-serial ktest: all passed
+expect-exit 33
