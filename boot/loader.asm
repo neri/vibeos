@@ -4,6 +4,8 @@
 ; 次のことを済ませ、32bit プロテクトモードでカーネルへジャンプする。
 ;
 ;   1. シリアル（COM1）初期化。以降の進み具合はシリアルと画面の両方に出す
+;      CPU が i686 相当（CPUID があり CMOV 命令が使える）か確かめる。カーネルは i686 向けに
+;      コンパイルしているので、古い CPU では最初の数命令で止まってしまい、自分では確かめられない
 ;   2. A20 ライン有効化（BIOS → キーボードコントローラ → Fast A20）
 ;   3. Unreal モードに入る（リアルモードのまま 4GB を 32bit アドレスで触れるようにする）
 ;   4. メモリマップ取得（E820 → E801 → 88h）
@@ -46,6 +48,7 @@ start:
     call serial_init
     mov si, msg_hello
     call print
+    call check_cpu
 
     ; ブート情報構造体をゼロクリア（実機のメモリは初期化されていない）
     mov di, BI
@@ -177,6 +180,36 @@ fatal:
     cli
     hlt
     jmp .halt
+
+; =============================================================================
+; CPU の確認（386 以降を前提に、CPUID と CMOV を確かめる）
+
+check_cpu:
+    pushfd
+    pop eax
+    mov ecx, eax
+    xor eax, 1 << 21            ; EFLAGS.ID を反転できれば CPUID がある
+    push eax
+    popfd
+    pushfd
+    pop eax
+    push ecx
+    popfd
+    xor eax, ecx
+    test eax, 1 << 21
+    jz .too_old
+    xor eax, eax
+    cpuid
+    cmp eax, 1                  ; 機能の情報（リーフ 1）があるか
+    jb .too_old
+    mov eax, 1
+    cpuid
+    test edx, 1 << 15           ; CMOV
+    jz .too_old
+    ret
+.too_old:
+    mov si, msg_old_cpu
+    jmp fatal
 
 ; =============================================================================
 ; A20
@@ -805,6 +838,7 @@ msg_jump        db "jumping to kernel", 13, 10, 0
 msg_crlf        db 13, 10, 0
 msg_error       db 13, 10, "LOADER ERROR: ", 0
 msg_a20_fail    db "cannot enable A20", 13, 10, 0
+msg_old_cpu     db "VibeOS needs an i686 (Pentium Pro / II) or newer CPU", 13, 10, 0
 msg_mem_fail    db "cannot get memory map", 13, 10, 0
 msg_no_memory   db "not enough memory", 13, 10, 0
 msg_disk_fail   db "disk read error", 13, 10, 0

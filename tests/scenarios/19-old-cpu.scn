@@ -1,0 +1,7 @@
+# i686 より古い CPU では、ローダが理由を表示して止まる（カーネルは CMOV 命令を使うので自分では確かめられない）
+qemu-arg -cpu
+qemu-arg pentium
+timeout 15
+wait-serial VIBEOS LOADER
+wait-serial LOADER ERROR: VibeOS needs an i686
+serial-absent VibeOS kernel starting

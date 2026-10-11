@@ -1,0 +1,6 @@
+# メモリが足りない（5MB）ときは、ローダが理由を表示して止まる
+qemu-arg -m
+qemu-arg 5M
+timeout 15
+wait-serial LOADER ERROR: not enough memory
+serial-absent VibeOS kernel starting

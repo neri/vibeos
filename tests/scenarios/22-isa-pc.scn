@@ -1,0 +1,17 @@
+# PCI の無い古い ISA の PC（QEMU の isapc）でも起動し、キーボード・マウス・フロッピーが使える
+qemu-arg -M
+qemu-arg isapc
+timeout 20
+wait-serial ps2: keyboard true, mouse true
+wait-serial fdc: drive A ready
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type ls /bin
+key ret
+wait-serial HELLO.ELF
+type snake
+key ret
+wait-serial snake: started
+key esc
+wait-serial best score
+serial-absent PANIC
