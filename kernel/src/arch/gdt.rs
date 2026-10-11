@@ -7,6 +7,7 @@
 //! | 0x1B | ユーザのコード（RPL 3） |
 //! | 0x23 | ユーザのデータ（RPL 3） |
 //! | 0x28 | TSS |
+//! | 0x30 | 二重フォルト用の TSS（タスクゲートで別スタックに切り替える） |
 
 use core::arch::asm;
 use core::mem::size_of;
@@ -20,23 +21,81 @@ pub const USER_CODE: u16 = 0x18 | 3;
 #[allow(dead_code)]
 pub const USER_DATA: u16 = 0x20 | 3;
 const TSS_SELECTOR: u16 = 0x28;
+pub const DOUBLE_FAULT_TSS: u16 = 0x30;
+const GDT_ENTRIES: usize = 7;
 
 #[repr(C, packed)]
 pub struct Tss {
     link: u32,
     esp0: u32,
     ss0: u32,
-    unused: [u32; 22],
+    esp1: u32,
+    ss1: u32,
+    esp2: u32,
+    ss2: u32,
+    cr3: u32,
+    eip: u32,
+    eflags: u32,
+    eax: u32,
+    ecx: u32,
+    edx: u32,
+    ebx: u32,
+    esp: u32,
+    ebp: u32,
+    esi: u32,
+    edi: u32,
+    es: u32,
+    cs: u32,
+    ss: u32,
+    ds: u32,
+    fs: u32,
+    gs: u32,
+    ldt: u32,
     trap: u16,
     iomap_base: u16,
 }
 
 const _: () = assert!(size_of::<Tss>() == 104);
 
-static TSS: BootCell<Tss> =
-    BootCell::new(Tss { link: 0, esp0: 0, ss0: 0, unused: [0; 22], trap: 0, iomap_base: 0 });
+const EMPTY_TSS: Tss = Tss {
+    link: 0,
+    esp0: 0,
+    ss0: 0,
+    esp1: 0,
+    ss1: 0,
+    esp2: 0,
+    ss2: 0,
+    cr3: 0,
+    eip: 0,
+    eflags: 0,
+    eax: 0,
+    ecx: 0,
+    edx: 0,
+    ebx: 0,
+    esp: 0,
+    ebp: 0,
+    esi: 0,
+    edi: 0,
+    es: 0,
+    cs: 0,
+    ss: 0,
+    ds: 0,
+    fs: 0,
+    gs: 0,
+    ldt: 0,
+    trap: 0,
+    iomap_base: 0,
+};
 
-static GDT: BootCell<[u64; 6]> = BootCell::new([0; 6]);
+static TSS: BootCell<Tss> = BootCell::new(EMPTY_TSS);
+static DOUBLE_FAULT_TSS_DATA: BootCell<Tss> = BootCell::new(EMPTY_TSS);
+
+const DOUBLE_FAULT_STACK_SIZE: usize = 8192;
+#[repr(C, align(16))]
+struct DoubleFaultStack([u8; DOUBLE_FAULT_STACK_SIZE]);
+static DOUBLE_FAULT_STACK: BootCell<DoubleFaultStack> = BootCell::new(DoubleFaultStack([0; DOUBLE_FAULT_STACK_SIZE]));
+
+static GDT: BootCell<[u64; GDT_ENTRIES]> = BootCell::new([0; GDT_ENTRIES]);
 
 #[repr(C, packed)]
 struct DescriptorPointer {
@@ -69,8 +128,11 @@ pub fn init(kernel_stack_top: u32) {
         gdt[3] = segment(0, 0xF_FFFF, 0xFA, 0xC); // ユーザ コード
         gdt[4] = segment(0, 0xF_FFFF, 0xF2, 0xC); // ユーザ データ
         gdt[5] = segment(tss as u32, size_of::<Tss>() as u32 - 1, 0x89, 0x0); // TSS
+        let df = DOUBLE_FAULT_TSS_DATA.as_ptr();
+        gdt[6] = segment(df as u32, size_of::<Tss>() as u32 - 1, 0x89, 0x0); // 二重フォルト用 TSS
 
-        let ptr = DescriptorPointer { limit: (size_of::<[u64; 6]>() - 1) as u16, base: gdt.as_ptr() as u32 };
+        let ptr =
+            DescriptorPointer { limit: (size_of::<[u64; GDT_ENTRIES]>() - 1) as u16, base: gdt.as_ptr() as u32 };
         asm!(
             "lgdt [{ptr}]",
             "mov ds, {data:x}",
@@ -94,8 +156,33 @@ pub fn init(kernel_stack_top: u32) {
 }
 
 /// ring 3 から割り込みで戻ってきたときに使うカーネルスタックを設定する
-#[allow(dead_code)]
 pub fn set_kernel_stack(top: u32) {
     // SAFETY: TSS.esp0 は CPU が特権レベルの切り替え時に読むだけ。書き換えは割り込み禁止中に行う
     unsafe { (*TSS.as_ptr()).esp0 = top };
+}
+
+/// 二重フォルト用の TSS を設定する（ページングを有効にした後に、そのページディレクトリで呼ぶ）
+///
+/// 二重フォルトはカーネルスタックがあふれたとき（ガードページに触れて、例外の情報を積めない）に
+/// 起きるので、別のスタックに切り替えて処理する必要がある。IDT の 8 番はこの TSS へのタスクゲート。
+pub fn init_double_fault(page_directory: u32) {
+    let df = DOUBLE_FAULT_TSS_DATA.as_ptr();
+    // 関数の入口と同じ形（ESP+4 が 16 の倍数）にしておく
+    let stack_top = DOUBLE_FAULT_STACK.as_ptr() as u32 + DOUBLE_FAULT_STACK_SIZE as u32 - 4;
+    // SAFETY: 初期化中で、まだ二重フォルトは起きない
+    unsafe {
+        (*df).cr3 = page_directory;
+        (*df).eip = super::trap::double_fault_entry as *const () as u32;
+        (*df).eflags = 0x2; // 割り込み禁止
+        (*df).esp = stack_top;
+        (*df).esp0 = stack_top;
+        (*df).ss0 = KERNEL_DATA as u32;
+        (*df).cs = KERNEL_CODE as u32;
+        (*df).ss = KERNEL_DATA as u32;
+        (*df).ds = KERNEL_DATA as u32;
+        (*df).es = KERNEL_DATA as u32;
+        (*df).fs = KERNEL_DATA as u32;
+        (*df).gs = KERNEL_DATA as u32;
+        (*df).iomap_base = size_of::<Tss>() as u16;
+    }
 }

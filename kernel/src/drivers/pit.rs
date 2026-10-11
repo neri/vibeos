@@ -30,6 +30,7 @@ pub fn init() {
 fn on_tick() {
     TICKS.fetch_add(1, Ordering::Relaxed);
     TIMER_WAIT.notify_all();
+    crate::task::sched::on_tick();
 }
 
 /// 起動してからの刻み数（TICK_HZ 回で 1 秒）

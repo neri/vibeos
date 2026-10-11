@@ -9,8 +9,11 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::{format, vec};
 
-use crate::drivers::qemu;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+use crate::drivers::{pit, qemu};
 use crate::mm::{heap, paging, pmm};
+use crate::task::{self, sched, wait::WaitQueue};
 
 const TESTS: &[(&str, fn())] = &[
     ("heap_vec", heap_vec),
@@ -20,6 +23,12 @@ const TESTS: &[(&str, fn())] = &[
     ("heap_reuses_freed_memory", heap_reuses_freed_memory),
     ("pmm_alloc_free", pmm_alloc_free),
     ("paging_map_unmap", paging_map_unmap),
+    ("sched_preemption", sched_preemption),
+    ("sched_wait_queue", sched_wait_queue),
+    ("sched_sleep_accuracy", sched_sleep_accuracy),
+    ("sched_idle_halts", sched_idle_halts),
+    ("sched_switch_stress", sched_switch_stress),
+    ("sched_reclaims_stacks", sched_reclaims_stacks),
 ];
 
 pub fn run_all() -> ! {
@@ -109,4 +118,99 @@ fn paging_map_unmap() {
     pmm::free_pages(phys, 1);
     // カーネル空間で RAM の外にはページテーブルを作らない
     assert!(paging::map(pd, 0x3F00_0000, phys, paging::WRITABLE).is_err());
+}
+
+/// 譲らずに回り続けるスレッドが 3 つあっても、全員とこのタスクが進む
+fn sched_preemption() {
+    static STOP: AtomicBool = AtomicBool::new(false);
+    static COUNTS: [AtomicU32; 3] = [const { AtomicU32::new(0) }; 3];
+    let ids: Vec<_> = (0..3)
+        .map(|i| {
+            task::spawn("busy", move || {
+                while !STOP.load(Ordering::Relaxed) {
+                    COUNTS[i].fetch_add(1, Ordering::Relaxed);
+                }
+            })
+        })
+        .collect();
+    pit::sleep_ms(200);
+    let counts: Vec<u32> = COUNTS.iter().map(|c| c.load(Ordering::Relaxed)).collect();
+    STOP.store(true, Ordering::Relaxed);
+    for id in ids {
+        task::join(id);
+    }
+    klog!("ktest: busy counters {:?}", counts);
+    assert!(counts.iter().all(|&c| c > 0), "a busy thread never ran: {counts:?}");
+}
+
+/// 条件が成り立つまで眠り、notify_all で起きる
+fn sched_wait_queue() {
+    static WQ: WaitQueue = WaitQueue::new();
+    static FLAG: AtomicBool = AtomicBool::new(false);
+    static WOKE_AT: AtomicU32 = AtomicU32::new(0);
+    let t0 = pit::ticks();
+    let id = task::spawn("waiter", || {
+        WQ.wait_until(|| FLAG.load(Ordering::Relaxed));
+        WOKE_AT.store(pit::ticks(), Ordering::Relaxed);
+    });
+    pit::sleep_ms(100);
+    assert_eq!(WOKE_AT.load(Ordering::Relaxed), 0, "waiter woke up before the flag was set");
+    FLAG.store(true, Ordering::Relaxed);
+    WQ.notify_all();
+    task::join(id);
+    let woke = WOKE_AT.load(Ordering::Relaxed).wrapping_sub(t0);
+    assert!((10..=13).contains(&woke), "woke after {woke} ticks");
+}
+
+fn sched_sleep_accuracy() {
+    let start = pit::ticks();
+    pit::sleep_ms(100);
+    let elapsed = pit::ticks().wrapping_sub(start);
+    assert!((10..=12).contains(&elapsed), "slept {elapsed} ticks");
+}
+
+/// 誰も動かないとき、時間はアイドルタスク（hlt）で過ごす
+fn sched_idle_halts() {
+    let before = sched::idle_ticks();
+    pit::sleep_ms(300);
+    let idle = sched::idle_ticks() - before;
+    assert!(idle >= 25, "idle only {idle} of 30 ticks");
+}
+
+/// たくさんのスレッドが頻繁に譲り合っても、数え漏れが無い
+fn sched_switch_stress() {
+    static TOTAL: AtomicU32 = AtomicU32::new(0);
+    let ids: Vec<_> = (0..20)
+        .map(|_| {
+            task::spawn("stress", || {
+                for _ in 0..500 {
+                    TOTAL.fetch_add(1, Ordering::Relaxed);
+                    task::yield_now();
+                }
+            })
+        })
+        .collect();
+    for id in ids {
+        task::join(id);
+    }
+    assert_eq!(TOTAL.load(Ordering::Relaxed), 20 * 500);
+}
+
+/// 終わったタスクのスタック（物理ページ）は回収される
+fn sched_reclaims_stacks() {
+    // ヒープが途中で物理ページを取りに行かないよう、先に余裕を持たせておく
+    drop(vec![0u8; 256 * 1024]);
+    // 前のテストで終わったタスクがまだ回収されていないことがあるので、先に回収させてから数える
+    task::yield_now();
+    let (free_before, _) = pmm::stats();
+    for _ in 0..5 {
+        let ids: Vec<_> = (0..20).map(|_| task::spawn("short", || task::yield_now())).collect();
+        for id in ids {
+            task::join(id);
+        }
+    }
+    task::yield_now(); // 終わったタスクは次の切り替えで回収される
+    let (free_after, _) = pmm::stats();
+    assert_eq!(free_before, free_after, "stack pages were not returned");
+    assert!(sched::tasks().len() <= 3, "dead tasks remain: {}", sched::tasks().len());
 }

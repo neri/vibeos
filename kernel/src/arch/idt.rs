@@ -56,9 +56,14 @@ global_asm!(
     "    mov fs, ax",
     "    mov gs, ax",
     "    cld",
-    "    push esp",
+    // 割り込みはどこで起きるか分からないので、ESP を 16 の倍数にそろえてから呼ぶ（データレイアウトの S128）。
+    // EBX は呼び出し先が保存するレジスタなので、TrapFrame の番地をそこに取っておく
+    "    mov ebx, esp",
+    "    and esp, -16",
+    "    sub esp, 12",
+    "    push ebx",
     "    call {dispatch}",
-    "    add esp, 4",
+    "    mov esp, ebx",
     ".global isr_return",
     "isr_return:",
     "    pop eax",
@@ -102,6 +107,8 @@ struct Gate {
 
 const GATE_INTERRUPT_KERNEL: u8 = 0x8E; // present, DPL 0, 32bit 割り込みゲート
 const GATE_INTERRUPT_USER: u8 = 0xEE; // present, DPL 3（int 0x80 をユーザから呼べる）
+const GATE_TASK: u8 = 0x85; // present, DPL 0, タスクゲート
+const DOUBLE_FAULT_VECTOR: usize = 8;
 
 static IDT: BootCell<[Gate; 256]> =
     BootCell::new([Gate { offset_lo: 0, selector: 0, zero: 0, type_attr: 0, offset_hi: 0 }; 256]);
@@ -131,6 +138,14 @@ pub fn init() {
             idt[i] = gate(stub, GATE_INTERRUPT_KERNEL);
         }
         idt[SYSCALL_VECTOR as usize] = gate(isr_stub_128 as *const () as u32, GATE_INTERRUPT_USER);
+        // 二重フォルトは別の TSS（別のスタック）に切り替えて処理する
+        idt[DOUBLE_FAULT_VECTOR] = Gate {
+            offset_lo: 0,
+            selector: super::gdt::DOUBLE_FAULT_TSS,
+            zero: 0,
+            type_attr: GATE_TASK,
+            offset_hi: 0,
+        };
         let ptr = DescriptorPointer { limit: (size_of::<[Gate; 256]>() - 1) as u16, base: idt.as_ptr() as u32 };
         asm!("lidt [{}]", in(reg) &ptr, options(readonly, nostack, preserves_flags));
     }

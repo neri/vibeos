@@ -1,0 +1,14 @@
+# Phase 5: 複数のスレッドが同時に画面のカウンタを進め、その間もキー入力が効く
+timeout 15
+wait-serial VIBEOS READY
+type demo
+key ret
+wait-serial demo started
+sleep 500
+type ps
+key ret
+wait-serial counter0
+wait-serial counter1
+wait-serial counter2
+wait-serial demo finished
+serial-absent PANIC

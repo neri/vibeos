@@ -66,7 +66,6 @@ pub fn init() {
     klog!("paging: enabled, identity mapped up to {:#x}", ram_end);
 }
 
-#[allow(dead_code)]
 pub fn kernel_page_directory() -> usize {
     KERNEL_PD.load(Ordering::Relaxed)
 }
@@ -93,7 +92,6 @@ fn entry(pd: usize, virt: usize, create: bool) -> Option<*mut u32> {
 }
 
 /// `virt` のページを `phys` に対応付ける（`flags` に PRESENT は自動で付く）
-#[allow(dead_code)]
 pub fn map(pd: usize, virt: usize, phys: usize, flags: u32) -> Result<(), &'static str> {
     let e = entry(pd, virt, true).ok_or("paging: no page table (out of memory, or kernel space beyond RAM)")?;
     // SAFETY: entry が返したのはページテーブルの中のエントリ
@@ -103,7 +101,6 @@ pub fn map(pd: usize, virt: usize, phys: usize, flags: u32) -> Result<(), &'stat
 }
 
 /// `virt` のページの対応付けを外し、対応していた物理アドレスを返す
-#[allow(dead_code)]
 pub fn unmap(pd: usize, virt: usize) -> Option<usize> {
     let e = entry(pd, virt, false)?;
     // SAFETY: 同上

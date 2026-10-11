@@ -1,22 +1,23 @@
 //! 待ち合わせ（WaitQueue）
 //!
 //! 「何かを待つ」処理は必ずこれを通す（DESIGN.md §6.4）。
-//!
-//! **仮実装**: スケジューラが入るまでは、待つ側は `hlt` で次の割り込みまで止まり、
-//! 起きるたびに条件を見直す。`notify_all` は何もしない。Phase 5 で、待っているタスクを
-//! 眠らせて `notify_all` で起こす本物の実装に差し替える（呼び出し側は変えない）。
+//! 待つ側は条件が成り立っていなければ自分を待ち行列に入れて眠り、`notify_all` で起こされたら
+//! 条件を見直す。条件の確認から眠るまでは割り込み禁止なので、その間の `notify_all` を取りこぼさない。
 
+use alloc::collections::VecDeque;
 use core::arch::asm;
 
+use super::sched::{self, TaskId};
 use crate::arch::cpu;
+use crate::sync::IrqMutex;
 
 pub struct WaitQueue {
-    _private: (),
+    waiters: IrqMutex<VecDeque<TaskId>>,
 }
 
 impl WaitQueue {
     pub const fn new() -> Self {
-        WaitQueue { _private: () }
+        WaitQueue { waiters: IrqMutex::new(VecDeque::new()) }
     }
 
     /// `cond` が true を返すまで待つ。`cond` は割り込み禁止の状態で呼ばれる。
@@ -33,15 +34,25 @@ impl WaitQueue {
                 unsafe { cpu::enable_interrupts() };
                 return;
             }
-            // sti の直後の 1 命令（hlt）が終わるまでは割り込みが入らないので、
-            // 条件を見てから止まるまでの間に来た割り込みを取りこぼさない
-            // SAFETY: 割り込みを許可して止まるだけ
-            unsafe { asm!("sti", "hlt", options(nomem, nostack)) };
+            if sched::is_started() {
+                self.waiters.lock().push_back(sched::current_id());
+                sched::block_current(); // 起こされると割り込み禁止のまま戻ってくる
+            } else {
+                // スケジューラが動く前は、次の割り込みまで止まって見直す
+                // SAFETY: 割り込みを許可して止まる（sti の直後の hlt までは割り込みが入らない）
+                unsafe { asm!("sti", "hlt", options(nomem, nostack)) };
+            }
         }
     }
 
-    /// 待っている人を起こす（割り込みハンドラからも呼んでよい）
+    /// 待っているタスクを全部起こす（割り込みハンドラからも呼んでよい。メモリ確保はしない）
     pub fn notify_all(&self) {
-        // 仮実装では何もしない（待つ側は割り込みのたびに条件を見直している）
+        loop {
+            let next = self.waiters.lock().pop_front();
+            match next {
+                Some(id) => sched::wake(id),
+                None => break,
+            }
+        }
     }
 }

@@ -77,7 +77,6 @@ pub fn alloc_zeroed_page() -> Option<usize> {
     Some(addr)
 }
 
-#[allow(dead_code)]
 pub fn free_pages(addr: usize, count: usize) {
     FRAMES.lock().free(addr, count);
 }

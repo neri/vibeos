@@ -15,5 +15,6 @@ use crate::bootinfo::BootInfo;
 pub fn init(info: &BootInfo) {
     pmm::init(info);
     paging::init();
+    crate::arch::gdt::init_double_fault(paging::kernel_page_directory() as u32);
     heap::init();
 }

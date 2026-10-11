@@ -139,3 +139,8 @@ fn exception(f: &TrapFrame) -> ! {
         f.esp_at_pushad + 20,
     );
 }
+
+/// 二重フォルトのタスクゲートの入口（専用の TSS とスタックで動く）
+pub extern "C" fn double_fault_entry() -> ! {
+    panic!("Double fault (#DF)\nkernel stack overflow?");
+}

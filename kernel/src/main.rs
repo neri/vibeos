@@ -47,6 +47,8 @@ core::arch::global_asm!(
     "    rep stosb",
     "    mov esp, offset {stack} + {stack_size}",
     "    xor ebp, ebp",
+    // kmain の入口で ESP+4 が 16 の倍数になるように（データレイアウトの S128）
+    "    sub esp, 8",
     "    push edx",
     "    push esi",
     "    call {kmain}",
@@ -92,23 +94,25 @@ extern "C" fn kmain(magic: u32, info: &'static BootInfo) -> ! {
     drivers::pit::init();
     drivers::keyboard::init();
     arch::pic::enable_nmi();
-    // SAFETY: IDT・PIC・各ハンドラの準備ができた
+    task::sched::init();
+    // SAFETY: IDT・PIC・各ハンドラ・スケジューラの準備ができた
     unsafe { arch::cpu::enable_interrupts() };
     klog!("interrupts enabled");
 
     klog!("VIBEOS READY");
 
+    // ここから先はガードページ付きのスタックを持つタスクで動かす（起動時のスタックには無い）
     #[cfg(feature = "qemu-test")]
-    ktest::run_all();
-
+    task::spawn("ktest", || ktest::run_all());
     #[cfg(not(feature = "qemu-test"))]
-    monitor::run()
+    task::spawn("monitor", || monitor::run());
+    task::exit()
 }
 
 fn check_cpu() {
     match arch::cpu::identify() {
         Some(cpu) => {
-            kprintln!("cpu: {} family {} model {} stepping {}", cpu.vendor_str(), cpu.family, cpu.model, cpu.stepping);
+            kprintln!("cpu: {} {}/{}/{}", cpu.vendor_str(), cpu.family, cpu.model, cpu.stepping);
             if cpu.family < 6 {
                 panic!("VibeOS needs an i686 (Pentium Pro / II) or newer CPU");
             }
