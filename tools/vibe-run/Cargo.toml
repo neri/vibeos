@@ -1,0 +1,10 @@
+[package]
+name = "vibe-run"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "QEMU を起動してシナリオどおりに自動テストするホスト側ツール"
+
+[dependencies]
+serde_json = "1"
+png = "0.17"

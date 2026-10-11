@@ -1,0 +1,5 @@
+# Phase 0: QEMU が起動し、テストランナーから操作できる
+timeout 5
+sleep 500
+expect-running
+screendump phase0

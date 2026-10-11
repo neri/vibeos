@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["kernel", "tools/vibe-run"]
+# ルートで cargo build / cargo test したときはホスト向けのものだけを対象にする。
+# kernel は kernel/ に入って（Makefile 経由で）ビルドする。
+default-members = ["tools/vibe-run"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+[profile.release]
+debug = true

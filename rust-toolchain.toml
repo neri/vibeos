@@ -1,0 +1,6 @@
+# nightly は日付で固定する（カスタムターゲット JSON の書式が版ごとに変わるため）。
+# 上げるときは docs/LOG.md に記録し、targets/i686-vibeos.json が通るか確認する。
+[toolchain]
+channel = "nightly-2026-10-10"
+components = ["rust-src", "rustfmt", "clippy"]
+profile = "minimal"
