@@ -1,0 +1,8 @@
+[package]
+name = "vibe-fat"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "FAT12/16 ファイルシステム（ブロックデバイスの上で動く）"
+
+[dependencies]

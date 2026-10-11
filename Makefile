@@ -70,14 +70,18 @@ define make-image
 	dd if=$(BUILD)/boot.bin of=$(1).tmp conv=notrunc bs=512 count=1 status=none
 	dd if=$(BUILD)/loader.bin of=$(1).tmp conv=notrunc bs=512 seek=1 status=none
 	mcopy -i $(1).tmp $(2) ::KERNEL.SYS
+	mcopy -s -i $(1).tmp rootfs/* ::/
 	fsck.fat -n $(1).tmp >/dev/null
 	mv $(1).tmp $(1)
 endef
 
-$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(BUILD)/kernel.elf
+# ディスクに入れるファイル（rootfs/ 以下。8.3 形式の大文字の名前にすること）
+ROOTFS := $(shell find rootfs -type f)
+
+$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(BUILD)/kernel.elf $(ROOTFS)
 	$(call make-image,$@,$(BUILD)/kernel.sys)
 
-$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/test/kernel.sys
+$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/test/kernel.sys $(ROOTFS)
 	$(call make-image,$@,$(BUILD)/test/kernel.sys)
 
 # --- 実行 -------------------------------------------------------------------

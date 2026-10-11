@@ -12,6 +12,7 @@ use alloc::{format, vec};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::drivers::{pit, qemu};
+use crate::fs;
 use crate::mm::{heap, paging, pmm};
 use crate::task::{self, sched, wait::WaitQueue};
 
@@ -29,6 +30,12 @@ const TESTS: &[(&str, fn())] = &[
     ("sched_idle_halts", sched_idle_halts),
     ("sched_switch_stress", sched_switch_stress),
     ("sched_reclaims_stacks", sched_reclaims_stacks),
+    ("mutex_sleeps_while_contended", mutex_sleeps_while_contended),
+    ("fs_kernel_file_matches_boot_info", fs_kernel_file_matches_boot_info),
+    ("fs_read_text_files", fs_read_text_files),
+    ("fs_errors", fs_errors),
+    ("fs_fd_read_in_chunks", fs_fd_read_in_chunks),
+    ("fs_cwd_is_per_task", fs_cwd_is_per_task),
 ];
 
 pub fn run_all() -> ! {
@@ -213,4 +220,79 @@ fn sched_reclaims_stacks() {
     let (free_after, _) = pmm::stats();
     assert_eq!(free_before, free_after, "stack pages were not returned");
     assert!(sched::tasks().len() <= 3, "dead tasks remain: {}", sched::tasks().len());
+}
+
+/// 眠る Mutex: 持っている間に他のタスクが取りに来ても、持ち主は（割り込みを止めずに）進める
+fn mutex_sleeps_while_contended() {
+    use alloc::sync::Arc;
+    let m = Arc::new(crate::sync::Mutex::new(0u32));
+    let g = m.lock();
+    let m2 = m.clone();
+    let id = task::spawn("contender", move || {
+        *m2.lock() += 1;
+    });
+    pit::sleep_ms(50); // 持ったまま眠っても、相手は待つだけで壊れない
+    assert_eq!(*g, 0);
+    drop(g);
+    task::join(id);
+    assert_eq!(*m.lock(), 1);
+}
+
+fn fs_kernel_file_matches_boot_info() {
+    let info = crate::bootinfo::get();
+    let st = fs::stat("/KERNEL.SYS").unwrap();
+    assert_eq!(st.size, info.kernel_size);
+    let data = fs::read_file("/kernel.sys").unwrap();
+    // SAFETY: カーネル本体の先頭（ローダがファイルの中身をそのまま置いた）
+    let loaded = unsafe { core::slice::from_raw_parts(info.kernel_addr as *const u8, 64) };
+    assert_eq!(&data[..64], loaded);
+}
+
+fn fs_read_text_files() {
+    let hello = fs::read_file("/HELLO.TXT").unwrap();
+    assert!(hello.starts_with(b"Hello from the floppy!"));
+    let names: Vec<String> = fs::read_dir("/").unwrap().into_iter().map(|e| e.name).collect();
+    assert!(names.iter().any(|n| n == "DOCS"), "{names:?}");
+    let readme = fs::read_file("/docs/../DOCS/./readme.txt").unwrap();
+    assert!(readme.starts_with(b"VibeOS documents."));
+}
+
+fn fs_errors() {
+    use vibe_fat::FsError;
+    assert_eq!(fs::read_file("/NOPE.TXT").err(), Some(fs::VfsError::Fs(FsError::NotFound)));
+    assert_eq!(fs::open("/DOCS").err(), Some(fs::VfsError::Fs(FsError::IsADirectory)));
+    assert_eq!(fs::read(99, &mut [0u8; 4]).err(), Some(fs::VfsError::BadFd));
+    assert!(fs::chdir("/HELLO.TXT").is_err());
+}
+
+fn fs_fd_read_in_chunks() {
+    let whole = fs::read_file("/KERNEL.SYS").unwrap();
+    let fd = fs::open("/KERNEL.SYS").unwrap();
+    let mut got = Vec::new();
+    let mut buf = [0u8; 777];
+    loop {
+        let n = fs::read(fd, &mut buf).unwrap();
+        if n == 0 {
+            break;
+        }
+        got.extend_from_slice(&buf[..n]);
+    }
+    fs::close(fd).unwrap();
+    assert_eq!(got, whole);
+    assert_eq!(fs::close(fd).err(), Some(fs::VfsError::BadFd));
+    assert_eq!(fs::open_count(), 0);
+}
+
+fn fs_cwd_is_per_task() {
+    assert_eq!(fs::cwd(), "/");
+    let id = task::spawn("cwd", || {
+        fs::chdir("docs").unwrap();
+        assert_eq!(fs::cwd(), "/DOCS");
+        assert!(fs::read_file("README.TXT").is_ok());
+        let fd = fs::open("README.TXT").unwrap();
+        assert_eq!(fd, 0);
+    });
+    task::join(id);
+    assert_eq!(fs::cwd(), "/");
+    assert_eq!(fs::open_count(), 0, "file table must not be shared");
 }

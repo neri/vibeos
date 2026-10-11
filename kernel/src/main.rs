@@ -16,6 +16,7 @@ mod print;
 mod arch;
 mod bootinfo;
 mod drivers;
+mod fs;
 mod gfx;
 #[cfg(feature = "qemu-test")]
 mod ktest;
@@ -67,12 +68,14 @@ struct Stack([u8; BOOT_STACK_SIZE]);
 #[used]
 static mut BOOT_STACK: Stack = Stack([0; BOOT_STACK_SIZE]);
 
-extern "C" fn kmain(magic: u32, info: &'static BootInfo) -> ! {
+extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     drivers::serial::init();
     klog!("VibeOS kernel starting");
     if magic != BOOT_MAGIC {
         panic!("bad boot magic {magic:#010x}");
     }
+    // 0x500 にある元の構造体はページングを有効にすると読めなくなるので、写しを使う
+    let info = bootinfo::set(loader_info);
 
     drivers::vga::init(info);
     gfx::console::init();
@@ -95,6 +98,7 @@ extern "C" fn kmain(magic: u32, info: &'static BootInfo) -> ! {
     drivers::keyboard::init();
     arch::pic::enable_nmi();
     task::sched::init();
+    fs::mount_root(info);
     // SAFETY: IDT・PIC・各ハンドラ・スケジューラの準備ができた
     unsafe { arch::cpu::enable_interrupts() };
     klog!("interrupts enabled");

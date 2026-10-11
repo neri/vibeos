@@ -5,12 +5,17 @@
 //! 取りに来ることはない。取りに来たならそれは同じ流れでの二重ロック（バグ）なので panic する。
 //!
 //! 複数のロックを同時に持つときは、取る順番をそろえること（例: CONSOLE → SCREEN）。
+//!
+//! 長く持つ可能性のあるもの（ファイルシステムなど、待つかもしれない処理）には、割り込みを
+//! 止めない `Mutex`（取れなければ眠って待つ）を使う。
 
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::arch::cpu;
+use crate::task::sched::{self, TaskId};
+use crate::task::wait::WaitQueue;
 
 pub struct IrqMutex<T> {
     locked: AtomicBool,
@@ -101,5 +106,74 @@ impl<T> BootCell<T> {
 
     pub fn as_ptr(&self) -> *mut T {
         self.0.get()
+    }
+}
+
+/// 眠って待つロック。持っている間も割り込みは止めないので、中で待つ処理（I/O など）をしてよい。
+/// 割り込みハンドラの中では使えない。
+pub struct Mutex<T> {
+    locked: AtomicBool,
+    /// 持っているタスク（同じタスクでの二重取得を見つけるため）
+    owner: core::sync::atomic::AtomicU32,
+    waiters: WaitQueue,
+    data: UnsafeCell<T>,
+}
+
+// SAFETY: 中身へのアクセスはロックで 1 つに限られる
+unsafe impl<T: Send> Sync for Mutex<T> {}
+// SAFETY: 同上
+unsafe impl<T: Send> Send for Mutex<T> {}
+
+const NO_OWNER: u32 = u32::MAX;
+
+impl<T> Mutex<T> {
+    pub const fn new(value: T) -> Self {
+        Mutex {
+            locked: AtomicBool::new(false),
+            owner: core::sync::atomic::AtomicU32::new(NO_OWNER),
+            waiters: WaitQueue::new(),
+            data: UnsafeCell::new(value),
+        }
+    }
+
+    pub fn lock(&self) -> MutexGuard<'_, T> {
+        let me: TaskId = if sched::is_started() { sched::current_id() } else { 0 };
+        loop {
+            if !self.locked.swap(true, Ordering::Acquire) {
+                self.owner.store(me, Ordering::Relaxed);
+                return MutexGuard { mutex: self };
+            }
+            if self.owner.load(Ordering::Relaxed) == me {
+                panic!("Mutex locked twice by task {me} (deadlock)");
+            }
+            self.waiters.wait_until(|| !self.locked.load(Ordering::Relaxed));
+        }
+    }
+}
+
+pub struct MutexGuard<'a, T> {
+    mutex: &'a Mutex<T>,
+}
+
+impl<T> Deref for MutexGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: ガードがある間はこの参照だけが中身に触れる
+        unsafe { &*self.mutex.data.get() }
+    }
+}
+
+impl<T> DerefMut for MutexGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: 同上
+        unsafe { &mut *self.mutex.data.get() }
+    }
+}
+
+impl<T> Drop for MutexGuard<'_, T> {
+    fn drop(&mut self) {
+        self.mutex.owner.store(NO_OWNER, Ordering::Relaxed);
+        self.mutex.locked.store(false, Ordering::Release);
+        self.mutex.waiters.notify_all();
     }
 }

@@ -13,6 +13,7 @@
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::global_asm;
 
@@ -20,8 +21,9 @@ use vibe_alloc::frame::PAGE_SIZE;
 
 use super::wait::WaitQueue;
 use crate::arch::{cpu, gdt};
+use crate::fs::TaskFs;
 use crate::mm::{paging, pmm};
-use crate::sync::IrqMutex;
+use crate::sync::{IrqMutex, Mutex};
 
 pub type TaskId = u32;
 
@@ -73,6 +75,8 @@ pub struct Task {
     stack: Option<KernelStack>,
     /// このタスクが実行中だったタイマの刻み数
     pub ticks: u32,
+    /// 開いているファイル・カレントディレクトリ
+    fs: Arc<Mutex<TaskFs>>,
 }
 
 pub struct TaskInfo {
@@ -137,7 +141,15 @@ pub fn init() {
         let id = s.alloc_id();
         s.tasks.insert(
             id,
-            Box::new(Task { id, name: String::from("boot"), state: State::Running, esp: 0, stack: None, ticks: 0 }),
+            Box::new(Task {
+                id,
+                name: String::from("boot"),
+                state: State::Running,
+                esp: 0,
+                stack: None,
+                ticks: 0,
+                fs: TaskFs::new_child(&[]),
+            }),
         );
         s.current = id;
     }
@@ -210,6 +222,9 @@ fn create(name: &str, entry: Entry, make_ready: bool) -> TaskId {
             sp.write(v);
         }
     }
+    // カレントディレクトリは作ったタスクから受け継ぐ（ロックの順番を守るため SCHED の外で読む）
+    let parent_cwd: Vec<String> = if is_started() { current_fs().lock().cwd_parts().to_vec() } else { Vec::new() };
+    let fs = TaskFs::new_child(&parent_cwd);
     let mut s = SCHED.lock();
     let id = s.alloc_id();
     s.tasks.insert(
@@ -221,6 +236,7 @@ fn create(name: &str, entry: Entry, make_ready: bool) -> TaskId {
             esp: sp as u32,
             stack: Some(stack),
             ticks: 0,
+            fs,
         }),
     );
     if make_ready {
@@ -341,6 +357,13 @@ pub fn exit() -> ! {
 
 pub fn current_id() -> TaskId {
     SCHED.lock().current
+}
+
+/// 今のタスクのファイルシステムの状態
+pub fn current_fs() -> Arc<Mutex<TaskFs>> {
+    let mut s = SCHED.lock();
+    let cur = s.current;
+    s.task(cur).fs.clone()
 }
 
 fn is_alive(id: TaskId) -> bool {

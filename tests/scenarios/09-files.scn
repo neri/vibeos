@@ -1,0 +1,25 @@
+# Phase 6: RAM ディスク上の FAT12 のファイルを一覧・表示できる
+timeout 15
+wait-serial fs: mounted Fat12
+wait-serial VIBEOS READY
+type ls
+key ret
+# wait-serial は前に一致した位置より後ろを探すので、ls の表示順（ディレクトリの並び順）に書く
+wait-serial KERNEL.SYS
+wait-serial DOCS
+wait-serial HELLO.TXT
+type cat hello.txt
+key ret
+wait-serial Hello from the floppy!
+type cd docs
+key ret
+type pwd
+key ret
+wait-serial /DOCS
+type cat readme.txt
+key ret
+wait-serial Subdirectories work.
+type cat nope.txt
+key ret
+wait-serial cat: nope.txt: not found
+serial-absent PANIC

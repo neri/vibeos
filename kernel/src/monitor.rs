@@ -12,15 +12,16 @@ use vibe_gfx::palette;
 
 use crate::drivers::vga::{self, SCREEN};
 use crate::drivers::{keyboard, pit};
+use crate::fs;
 use crate::mm::{heap, pmm};
 use crate::task::{self, sched};
 
-const LINE_MAX: usize = 36;
+const LINE_MAX: usize = 60;
 
 pub fn run() -> ! {
     kprintln!("type 'help' for commands");
     loop {
-        kprint!("> ");
+        kprint!("{}> ", fs::cwd());
         let mut buf = [0u8; LINE_MAX];
         let len = read_line(&mut buf);
         let line = core::str::from_utf8(&buf[..len]).unwrap_or("");
@@ -52,10 +53,34 @@ fn read_line(buf: &mut [u8]) -> usize {
     }
 }
 
-fn execute(cmd: &str) {
+fn execute(line: &str) {
+    let (cmd, arg) = line.split_once(' ').map_or((line, ""), |(c, a)| (c, a.trim()));
     match cmd {
         "" => {}
-        "help" => kprintln!("help ticks sleep mem ps demo\ndivzero nullptr overflow panic"),
+        "help" => kprintln!("help ticks sleep mem ps demo\nls cat cd pwd\ndivzero nullptr overflow panic"),
+        "ls" => match fs::read_dir(if arg.is_empty() { "." } else { arg }) {
+            Ok(entries) => {
+                for e in entries {
+                    if e.is_dir() {
+                        kprintln!("  {:12} <DIR>", e.name);
+                    } else {
+                        kprintln!("  {:12} {:7}", e.name, e.size);
+                    }
+                }
+            }
+            Err(e) => kprintln!("ls: {arg}: {e}"),
+        },
+        "cat" => {
+            if let Err(e) = cat(arg) {
+                kprintln!("cat: {arg}: {e}");
+            }
+        }
+        "cd" => {
+            if let Err(e) = fs::chdir(if arg.is_empty() { "/" } else { arg }) {
+                kprintln!("cd: {arg}: {e}");
+            }
+        }
+        "pwd" => kprintln!("{}", fs::cwd()),
         "ticks" => kprintln!("ticks: {}", pit::ticks()),
         "sleep" => {
             let start = pit::ticks();
@@ -91,7 +116,7 @@ fn execute(cmd: &str) {
             recurse(0);
         }
         "panic" => panic!("panic requested from monitor"),
-        other => kprintln!("unknown command: {other}"),
+        _ => kprintln!("unknown command: {line}"),
     }
 }
 
@@ -146,4 +171,29 @@ fn recurse(depth: u32) -> u32 {
     let r = recurse(depth + 1);
     // 再帰の後で buf を使うので、末尾呼び出しの最適化で消えない
     core::hint::black_box(&buf)[0] as u32 + r
+}
+
+/// ファイルを少しずつ読んで表示する（表示できない文字は '.'）
+fn cat(path: &str) -> fs::Result<()> {
+    let fd = fs::open(path)?;
+    let mut buf = [0u8; 256];
+    let mut last = b'\n';
+    loop {
+        let n = match fs::read(fd, &mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => {
+                let _ = fs::close(fd);
+                return Err(e);
+            }
+        };
+        let text: alloc::string::String =
+            buf[..n].iter().map(|&b| if b == b'\n' || (0x20..0x7F).contains(&b) { b as char } else { '.' }).collect();
+        kprint!("{text}");
+        last = buf[n - 1];
+    }
+    if last != b'\n' {
+        kprintln!();
+    }
+    fs::close(fd)
 }
