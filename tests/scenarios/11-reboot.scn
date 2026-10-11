@@ -1,4 +1,6 @@
 # Phase 7: reboot で CPU がリセットされる（QEMU は -no-reboot なので終了する）
+# Bochs は本当に再起動するので終了を待てない（Bochs で 2 回目の起動が始まることは手で確認した）
+qemu-only
 timeout 15
 wait-serial VIBEOS READY
 wait-serial VibeOS shell

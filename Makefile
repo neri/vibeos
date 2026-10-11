@@ -4,6 +4,8 @@
 #   make run      QEMU で起動（シリアルは端末に出る）
 #   make debug    QEMU を gdb 待ちで起動（別端末で gdb build/kernel.elf → target remote :1234）
 #   make test     ホストの単体テスト + QEMU でのシナリオテスト
+#   make bochs    Bochs で起動（画面は X のウィンドウ）
+#   make test-bochs  シナリオテストを Bochs で（画面・マウス・QEMU 専用のものは飛ばす）
 #   make clean
 
 BUILD   := build
@@ -26,7 +28,7 @@ SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 予約領域 LBA 1〜63
 
-.PHONY: all run debug test test-host test-qemu clean FORCE
+.PHONY: all run debug bochs test test-host test-qemu test-bochs clean FORCE
 
 all: $(IMG)
 
@@ -118,6 +120,11 @@ run: $(IMG)
 debug: $(IMG)
 	$(QEMU) $(QEMU_FLAGS) -serial stdio -s -S
 
+bochs: $(IMG)
+	cp $(IMG) $(BUILD)/bochs.img
+	BOCHS_FLOPPY=$(BUILD)/bochs.img BOCHS_SERIAL=/dev/stdout BOCHS_LOG=$(BUILD)/bochs.log \
+		BOCHS_DISPLAY=x BOCHS_DISPLAY_OPTIONS= bochs -q -f tools/bochs/bochsrc.txt -rc tools/bochs/continue.rc
+
 # --- テスト -----------------------------------------------------------------
 test: test-host test-qemu
 
@@ -129,6 +136,9 @@ $(VIBE_RUN): FORCE
 
 test-qemu: $(IMG) $(TEST_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --img $(IMG) --out $(BUILD)/test-out $(SCENARIOS)
+
+test-bochs: $(IMG) $(TEST_IMG) $(VIBE_RUN)
+	$(VIBE_RUN) test --bochs --img $(IMG) --out $(BUILD)/test-out-bochs $(SCENARIOS)
 
 clean:
 	rm -rf $(BUILD)

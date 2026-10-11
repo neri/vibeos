@@ -1,0 +1,17 @@
+# Bochs の設定（tools/bochs/run.sh から使う）。BOCHS_FLOPPY, BOCHS_SERIAL, BOCHS_LOG, BOCHS_DISPLAY, BOCHS_DISPLAY_OPTIONS は環境変数で渡す
+megs: 32
+# 0x8900 に "Shutdown" と書くと終了する（テスト用カーネルが使う）
+plugin_ctrl: unmapped=1
+cpu: model=p2_klamath, ips=50000000
+# BIOS-bochs-latest は（Debian の 2.7 では）BIOS の初期化中に三重フォルトするので、PCI の無い旧来の BIOS を使う
+romimage: file=/usr/share/bochs/BIOS-bochs-legacy
+vgaromimage: file=/usr/share/bochs/VGABIOS-lgpl-latest
+floppya: 1_44=$BOCHS_FLOPPY, status=inserted
+boot: floppy
+display_library: $BOCHS_DISPLAY, options="$BOCHS_DISPLAY_OPTIONS"
+com1: enabled=1, mode=file, dev=$BOCHS_SERIAL
+log: $BOCHS_LOG
+panic: action=fatal
+error: action=report
+info: action=ignore
+debug: action=ignore

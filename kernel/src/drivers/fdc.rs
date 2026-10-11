@@ -179,7 +179,11 @@ impl Fdc {
         send(CMD_SPECIFY)?;
         send(0xDF)?;
         send(0x02)?;
-        self.recalibrate()
+        // 再較正はモーターが回っていないと失敗する（実機と Bochs。QEMU は通ってしまう）
+        self.motor(true);
+        let r = self.recalibrate();
+        self.motor(false);
+        r
     }
 
     fn motor(&self, on: bool) {
@@ -192,6 +196,7 @@ impl Fdc {
     }
 
     fn recalibrate(&self) -> Result<(), FdcError> {
+        let mut last = (0, 0);
         for _ in 0..2 {
             IRQ_RECEIVED.store(false, Ordering::Release);
             send(CMD_RECALIBRATE)?;
@@ -203,8 +208,10 @@ impl Fdc {
             if st0 & 0xC0 == 0 && cyl == 0 {
                 return Ok(());
             }
+            last = (st0, cyl);
         }
-        Err(FdcError::Failed(0, 0, 0))
+        // ST0 とシリンダを返す（原因を調べるため）
+        Err(FdcError::Failed(last.0, last.1, 0))
     }
 
     fn seek(&self, cyl: u8, head: u8) -> Result<(), FdcError> {

@@ -29,6 +29,12 @@
 //!   expect-exit CODE      QEMU が終了コード CODE で終わるのを待つ
 //!                         （isa-debug-exit に v を書くと終了コードは (v << 1) | 1）
 //!
+//!   qemu-only             このシナリオは Bochs では動かさない
+//!
+//! `--bochs` を付けると QEMU の代わりに Bochs で動かす（tools/bochs/）。Bochs では次のものは
+//! 飛ばす: 画面の取得と比較・マウス・QEMU 用の引数（qemu-arg）があるシナリオ・音・終了コードの値。
+//! 待ち時間の上限は 4 倍にする。
+//!
 //! 環境変数: QEMU（既定 qemu-system-i386）, UPDATE_GOLDEN, VIBE_RUN_VERBOSE（シリアルをそのまま表示）
 
 use std::fs;
@@ -42,14 +48,19 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+mod bochs;
+
 type Result<T> = std::result::Result<T, String>;
+
+/// Bochs で動かすときに待ち時間の上限を何倍にするか
+const BOCHS_SLOWDOWN: u32 = 4;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("test") => run_tests(&args[1..]),
         _ => {
-            eprintln!("usage: vibe-run test [--img PATH] [--out DIR] SCENARIO...");
+            eprintln!("usage: vibe-run test [--bochs] [--img PATH] [--out DIR] SCENARIO...");
             ExitCode::from(2)
         }
     }
@@ -59,9 +70,11 @@ fn run_tests(args: &[String]) -> ExitCode {
     let mut img = PathBuf::from("build/vibeos.img");
     let mut out = PathBuf::from("build/test-out");
     let mut scenarios = Vec::new();
+    let mut use_bochs = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--bochs" => use_bochs = true,
             "--img" => img = it.next().expect("--img needs a value").into(),
             "--out" => out = it.next().expect("--out needs a value").into(),
             _ => scenarios.push(PathBuf::from(a)),
@@ -73,19 +86,23 @@ fn run_tests(args: &[String]) -> ExitCode {
     }
     fs::create_dir_all(&out).expect("create output dir");
 
-    let mut failed = 0;
+    let (mut failed, mut skipped) = (0, 0);
     for scn in &scenarios {
         let name = scn.file_stem().unwrap().to_string_lossy().into_owned();
         let started = Instant::now();
-        match run_scenario(scn, &name, &img, &out) {
-            Ok(()) => println!("PASS {name} ({:.1}s)", started.elapsed().as_secs_f32()),
+        match run_scenario(scn, &name, &img, &out, use_bochs) {
+            Ok(true) => println!("PASS {name} ({:.1}s)", started.elapsed().as_secs_f32()),
+            Ok(false) => {
+                skipped += 1;
+                println!("SKIP {name} (not for Bochs)");
+            }
             Err(e) => {
                 failed += 1;
                 println!("FAIL {name}: {e}");
             }
         }
     }
-    println!("{} passed, {} failed", scenarios.len() - failed, failed);
+    println!("{} passed, {} failed, {} skipped", scenarios.len() - failed - skipped, failed, skipped);
     if failed == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE }
 }
 
@@ -114,8 +131,19 @@ fn parse_scenario(path: &Path) -> Result<Vec<Step>> {
     Ok(steps)
 }
 
-fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path) -> Result<()> {
+/// Bochs では動かせないシナリオか（QEMU の引数・マウス・音・QEMU の終了を使うもの）
+fn qemu_only(steps: &[Step]) -> bool {
+    steps.iter().any(|s| {
+        matches!(s.cmd.as_str(), "qemu-only" | "qemu-arg" | "mouse-move" | "mouse-button" | "quit" | "expect-wav-sound")
+    })
+}
+
+/// 実行したら Ok(true)、Bochs で飛ばしたら Ok(false)
+fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_bochs: bool) -> Result<bool> {
     let steps = parse_scenario(path)?;
+    if use_bochs && qemu_only(&steps) {
+        return Ok(false);
+    }
     let mut img = default_img.to_path_buf();
     let mut extra = Vec::new();
     let mut writable = false;
@@ -130,22 +158,23 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path) -> Resu
     if !img.exists() {
         return Err(format!("image not found: {}", img.display()));
     }
-    if writable {
+    // Bochs はイメージに直接書くので、いつも写しを使う
+    if writable || use_bochs {
         let copy = out.join(format!("{name}.img"));
         fs::copy(&img, &copy).map_err(|e| format!("copy image: {e}"))?;
         img = copy;
     }
 
-    let mut vm = Vm::start(&img, &extra, out, name, !writable)?;
+    let mut vm = if use_bochs { Vm::start_bochs(&img, out, name)? } else { Vm::start(&img, &extra, out, name, !writable)? };
     vm.disk = img.clone();
     let result = run_steps(&mut vm, &steps, name, out);
-    if result.is_err() {
+    if result.is_err() && !vm.is_bochs() {
         let _ = vm.screendump(&out.join(format!("{name}-fail.png")));
     }
     vm.shutdown();
     let serial = vm.serial_text();
     let _ = fs::write(out.join(format!("{name}.serial.log")), &serial);
-    result.map_err(|e| {
+    result.map(|_| true).map_err(|e| {
         let tail: Vec<&str> = serial.lines().rev().take(15).collect();
         let tail: Vec<&str> = tail.into_iter().rev().collect();
         format!("{e}\n--- serial (last lines) ---\n{}\n---", tail.join("\n"))
@@ -153,11 +182,18 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path) -> Resu
 }
 
 fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> {
-    let mut timeout = Duration::from_secs(10);
+    let slowdown = if vm.is_bochs() { BOCHS_SLOWDOWN } else { 1 };
+    let mut timeout = Duration::from_secs(10) * slowdown;
     for s in steps {
         let at = |e: String| format!("line {} `{} {}`: {e}", s.line, s.cmd, s.arg);
+        // Bochs では画面を取れないので、画面を確かめる手順は飛ばす
+        if vm.is_bochs()
+            && matches!(s.cmd.as_str(), "screendump" | "expect-screen" | "expect-pixel" | "expect-change" | "expect-running")
+        {
+            continue;
+        }
         match s.cmd.as_str() {
-            "image" | "qemu-arg" | "writable" => {}
+            "image" | "qemu-arg" | "writable" | "qemu-only" => {}
             "expect-disk-file" => {
                 let (path, text) = s.arg.split_once(' ').ok_or_else(|| at("expected PATH TEXT".into()))?;
                 let out = Command::new("mtype")
@@ -196,7 +232,9 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
                     return Err(at(format!("fsck.fat found problems:\n{}", String::from_utf8_lossy(&out.stdout))));
                 }
             }
-            "timeout" => timeout = Duration::from_secs_f32(s.arg.parse().map_err(|_| at("bad number".into()))?),
+            "timeout" => {
+                timeout = Duration::from_secs_f32(s.arg.parse().map_err(|_| at("bad number".into()))?) * slowdown
+            }
             "wait-serial" => vm.wait_serial(&s.arg, timeout).map_err(at)?,
             "serial-absent" => {
                 if vm.serial_text().contains(&s.arg) {
@@ -283,7 +321,8 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
             "expect-exit" => {
                 let want: i32 = s.arg.parse().map_err(|_| at("bad number".into()))?;
                 let got = vm.wait_exit(timeout).map_err(at)?;
-                if got != want {
+                // Bochs は終了コードを伝えられないので、終わったことだけを確かめる
+                if got != want && !vm.is_bochs() {
                     return Err(at(format!("exit code {got}, want {want}")));
                 }
             }
@@ -298,6 +337,8 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
 
 struct Vm {
     child: Child,
+    /// Bochs で動かしているときの画面（キー入力用）
+    rfb: Option<bochs::Rfb>,
     /// 起動したイメージ（writable のときは写し）
     disk: PathBuf,
     qmp: Option<Qmp>,
@@ -345,9 +386,29 @@ impl Vm {
             }
         });
 
-        let mut vm = Vm { child, disk: img.to_path_buf(), qmp: None, serial, serial_pos: 0, sock, exit_code: None };
+        let mut vm =
+            Vm { child, rfb: None, disk: img.to_path_buf(), qmp: None, serial, serial_pos: 0, sock, exit_code: None };
         vm.qmp = Some(Qmp::connect(&vm.sock, Duration::from_secs(5))?);
         Ok(vm)
+    }
+
+    fn start_bochs(img: &Path, out: &Path, name: &str) -> Result<Vm> {
+        let serial = Arc::new(Mutex::new(Vec::new()));
+        let (child, rfb) = bochs::start(img, out, name, serial.clone())?;
+        Ok(Vm {
+            child,
+            rfb: Some(rfb),
+            disk: img.to_path_buf(),
+            qmp: None,
+            serial,
+            serial_pos: 0,
+            sock: PathBuf::new(),
+            exit_code: None,
+        })
+    }
+
+    fn is_bochs(&self) -> bool {
+        self.rfb.is_some()
     }
 
     fn serial_text(&self) -> String {
@@ -407,7 +468,7 @@ impl Vm {
         if let Some(code) = self.exited() {
             return Err(format!("QEMU already exited (code {code})"));
         }
-        Ok(self.qmp.as_mut().unwrap())
+        self.qmp.as_mut().ok_or_else(|| "not available on Bochs".to_string())
     }
 
     fn expect_running(&mut self) -> Result<()> {
@@ -422,6 +483,9 @@ impl Vm {
     }
 
     fn send_key(&mut self, keys: &[&str]) -> Result<()> {
+        if let Some(rfb) = self.rfb.as_mut() {
+            return rfb.send_keys(keys);
+        }
         let keys: Vec<Value> = keys.iter().map(|k| json!({"type": "qcode", "data": k})).collect();
         self.qmp()?.execute("send-key", json!({ "keys": keys }))?;
         Ok(())
