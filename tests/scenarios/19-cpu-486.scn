@@ -1,0 +1,14 @@
+# 486 で起動し、アプリ（ユーザプロセス）も動く。テストはどれも -cpu 486 で動かしているが、
+# ここでは CPU の表示とアプリを確かめる（386 での「486 以降が必要」の表示は QEMU に 386 が無いので確かめられない）
+# Bochs 2.7 には 486 の CPU モデルが無い（Pentium II 相当で動かしている）
+qemu-only
+timeout 30
+wait-serial VIBEOS LOADER
+wait-serial cpu: GenuineIntel 4/
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type hello
+key ret
+wait-serial primes below 20000: 2262
+serial-absent LOADER ERROR
+serial-absent PANIC

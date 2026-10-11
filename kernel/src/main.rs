@@ -144,11 +144,12 @@ fn check_cpu() {
     match arch::cpu::identify() {
         Some(cpu) => {
             kprintln!("cpu: {} {}/{}/{}", cpu.vendor_str(), cpu.family, cpu.model, cpu.stepping);
-            if cpu.family < 6 {
-                panic!("VibeOS needs an i686 (Pentium Pro / II) or newer CPU");
+            if cpu.family < 4 {
+                panic!("VibeOS needs a 486 or newer CPU");
             }
         }
-        None => panic!("VibeOS needs an i686 (Pentium Pro / II) or newer CPU (no CPUID)"),
+        // CPUID の無い初期の 486（486 以降かどうかはローダが確かめている）
+        None => kprintln!("cpu: no CPUID (early 486)"),
     }
 }
 

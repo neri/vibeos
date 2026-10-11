@@ -382,7 +382,7 @@ impl Vm {
         let _ = fs::remove_file(&sock);
         let qemu = std::env::var("QEMU").unwrap_or_else(|_| "qemu-system-i386".into());
         let mut cmd = Command::new(&qemu);
-        cmd.args(["-m", "32M", "-cpu", "pentium2"])
+        cmd.args(["-m", "32M", "-cpu", "486"])
             .arg("-drive")
             .arg(format!("file={},format=raw,if=floppy,snapshot={}", img.display(), if snapshot { "on" } else { "off" }))
             .args(["-boot", "a", "-vga", "std", "-nic", "none", "-display", "none", "-serial", "stdio", "-monitor", "none"])

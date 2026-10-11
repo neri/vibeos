@@ -4,8 +4,8 @@
 ; 次のことを済ませ、32bit プロテクトモードでカーネルへジャンプする。
 ;
 ;   1. シリアル（COM1）初期化。以降の進み具合はシリアルと画面の両方に出す
-;      CPU が i686 相当（CPUID があり CMOV 命令が使える）か確かめる。カーネルは i686 向けに
-;      コンパイルしているので、古い CPU では最初の数命令で止まってしまい、自分では確かめられない
+;      CPU が 486 以降か確かめる（EFLAGS.AC を変えられるか）。カーネルは 486 向けに
+;      コンパイルしているので、386 では最初の方の命令で止まってしまい、自分では確かめられない
 ;   2. A20 ライン有効化（BIOS → キーボードコントローラ → Fast A20）
 ;   3. Unreal モードに入る（リアルモードのまま 4GB を 32bit アドレスで触れるようにする）
 ;   4. メモリマップ取得（E820 → E801 → 88h）
@@ -191,13 +191,14 @@ fatal:
     jmp .halt
 
 ; =============================================================================
-; CPU の確認（386 以降を前提に、CPUID と CMOV を確かめる）
+; CPU の確認: 486 以降か（386 では EFLAGS の AC ビット（bit18）を変えられない）。
+; CPUID の無い初期の 486 もあるので CPUID は求めない
 
 check_cpu:
     pushfd
     pop eax
     mov ecx, eax
-    xor eax, 1 << 21            ; EFLAGS.ID を反転できれば CPUID がある
+    xor eax, 1 << 18
     push eax
     popfd
     pushfd
@@ -205,15 +206,7 @@ check_cpu:
     push ecx
     popfd
     xor eax, ecx
-    test eax, 1 << 21
-    jz .too_old
-    xor eax, eax
-    cpuid
-    cmp eax, 1                  ; 機能の情報（リーフ 1）があるか
-    jb .too_old
-    mov eax, 1
-    cpuid
-    test edx, 1 << 15           ; CMOV
+    test eax, 1 << 18
     jz .too_old
     ret
 .too_old:
@@ -1014,7 +1007,7 @@ msg_mode_640    db "video: 640x480", 13, 10, 0
 msg_crlf        db 13, 10, 0
 msg_error       db 13, 10, "LOADER ERROR: ", 0
 msg_a20_fail    db "cannot enable A20", 13, 10, 0
-msg_old_cpu     db "VibeOS needs an i686 (Pentium Pro / II) or newer CPU", 13, 10, 0
+msg_old_cpu     db "VibeOS needs a 486 or newer CPU", 13, 10, 0
 msg_mem_fail    db "cannot get memory map", 13, 10, 0
 msg_no_memory   db "not enough memory", 13, 10, 0
 msg_disk_fail   db "disk read error", 13, 10, 0

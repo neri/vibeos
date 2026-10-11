@@ -42,7 +42,7 @@
 - レジスタやメモリの初期値を当てにしない（セグメントレジスタは明示的に設定、BSS はゼロクリア）
 - ディスク読み込みはリトライ付き。デバイスの応答待ちには必ずタイムアウトを付ける
 - メモリ量や空き領域は E820 の結果から決め、決め打ちしない
-- QEMU は `-cpu pentium2` で動かし、i686 に無い命令を使わない
+- QEMU は `-cpu 486` で動かし、486 に無い命令（CMOV・CMPXCHG8B・RDTSC など）を使わない。`llvm-objdump -d build/kernel.elf | grep -E "cmov|cmpxchg8b|rdtsc"` で確かめられる
 - `isa-debug-exit` やポート `0xE9` など QEMU 専用の機能はテスト用ビルドだけで使う
 
 ### 外部クレート（DESIGN.md §3.4）

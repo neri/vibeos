@@ -17,12 +17,12 @@ CARGO   ?= cargo
 NASM    ?= nasm
 OBJCOPY ?= llvm-objcopy
 
-QEMU_FLAGS := -m 32M -cpu pentium2 \
+QEMU_FLAGS := -m 32M -cpu 486 \
 	-drive file=$(IMG),format=raw,if=floppy \
 	-boot a -vga std -nic none -rtc base=localtime -no-reboot
 
-KERNEL_ELF := target/i686-vibeos/release/kernel
-TEST_KERNEL_ELF := target/test/i686-vibeos/release/kernel
+KERNEL_ELF := target/i486-vibeos/release/kernel
+TEST_KERNEL_ELF := target/test/i486-vibeos/release/kernel
 VIBE_RUN   := target/release/vibe-run
 SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
@@ -91,7 +91,7 @@ $(APPS_STAMP): FORCE | $(BUILD)
 	mkdir -p $(APPS_DIR)/BIN
 	@for a in $(APPS); do \
 		name=$$(echo $$a | tr a-z A-Z); \
-		$(OBJCOPY) --strip-all target/apps/i686-vibeos/release/$$a $(APPS_DIR)/BIN/$$name.ELF.tmp; \
+		$(OBJCOPY) --strip-all target/apps/i486-vibeos/release/$$a $(APPS_DIR)/BIN/$$name.ELF.tmp; \
 		if ! cmp -s $(APPS_DIR)/BIN/$$name.ELF.tmp $(APPS_DIR)/BIN/$$name.ELF; then \
 			mv $(APPS_DIR)/BIN/$$name.ELF.tmp $(APPS_DIR)/BIN/$$name.ELF; touch $@; \
 		else rm $(APPS_DIR)/BIN/$$name.ELF.tmp; fi; \

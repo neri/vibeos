@@ -1,11 +1,11 @@
 # kernel/ の中で cargo を実行したときだけ効く設定。
 [build]
-target = "../targets/i686-vibeos.json"
+target = "../targets/i486-vibeos.json"
 
 [unstable]
 build-std = ["core", "alloc", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
 json-target-spec = true
 
-[target.i686-vibeos]
+[target.i486-vibeos]
 rustflags = ["-C", "relocation-model=static"]

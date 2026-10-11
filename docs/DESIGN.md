@@ -23,7 +23,7 @@
 | 起動媒体 | 3.5インチ 2HD フロッピーイメージ（1.44MB, `vibeos.img`） |
 | 主な実行環境 | QEMU (`qemu-system-i386`)。ただし実機で動くことを前提にコードを書く |
 | 画面 | 640×480・256 色（VESA）または VGA モード 13h（320×200, 256 色）。起動時に選ぶ（§8.0） |
-| CPU | 32bit（i686 = Pentium Pro / II 以降） |
+| CPU | 32bit（486 以降。D-022） |
 | 言語 | ブート部はアセンブラ（NASM）、カーネル以降は Rust |
 | キーボード | US 配列のみ（配列は追加できる構造にする） |
 | 日本語 | 対応しない（ASCII のみ。後から足せる構造にはする） |
@@ -77,11 +77,12 @@
 
 Rust には i686 のベアメタル用の組み込みターゲットが無い（`x86_64-unknown-none` はあるが `i686-unknown-none` は無い）ため、次の構成にする。動作確認の経緯は [LOG.md](LOG.md) の 2026-10-11 を参照。
 
-- **カスタムターゲット** `targets/i686-vibeos.json`:
+- **カスタムターゲット** `targets/i486-vibeos.json`（CPU は i486。CMOV など Pentium 以降の命令を使わない。アトミック操作は 32bit まで（CMPXCHG8B を使わない））:
   ```json
   {
     "arch": "x86",
-    "cpu": "i686",
+    "cpu": "i486",
+    "max-atomic-width": 32,
     "data-layout": "e-m:e-p:32:32-p270:32:32-p271:32:32-p272:64:64-i128:128-f64:32:64-f80:32-n8:16:32-S128",
     "llvm-target": "i686-unknown-none",
     "target-pointer-width": 32,
@@ -98,7 +99,7 @@ Rust には i686 のベアメタル用の組み込みターゲットが無い（
   - カーネルでは FPU/SSE を使わない（割り込み時のレジスタ退避を簡単にするため）。浮動小数点はソフトウェア演算になる
 - **nightly 必須**。ビルドオプション:
   ```
-  cargo +nightly build --target targets/i686-vibeos.json -Zjson-target-spec \
+  cargo +nightly build --target targets/i486-vibeos.json -Zjson-target-spec \
     -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem
   ```
   （`.cargo/config.toml` に書いて `cargo build` だけで済むようにする）
@@ -151,7 +152,7 @@ Rust には i686 のベアメタル用の組み込みターゲットが無い（
 | ホスト側ツール・テスト | 何でも可 | `std` が使える環境 |
 
 #### 運用ルール
-- `no_std` で、今回のターゲット（i686, ソフトウェア浮動小数点）でビルドできること
+- `no_std` で、今回のターゲット（i486, ソフトウェア浮動小数点）でビルドできること
 - ライセンスは MIT / Apache-2.0 / BSD など寛容なもの
 - バージョンは `Cargo.lock` で固定する（Git に含める）
 - クレートを追加したら、名前・用途・理由を `docs/LOG.md` に 1 行残す
@@ -205,7 +206,7 @@ mcopy -i vibeos.img kernel.sys ::KERNEL.SYS
    - `int 13h AH=02h` で LBA 1〜63 を `0x8000` に読み込み。**トラック単位で読み、失敗時は `AH=00h` でリセットして最大 3 回リトライ** → それでも駄目ならエラー表示して停止
    - `0x0000:0x8000` へジャンプ
 3. **2nd ステージ（loader.asm）**
-   1. COM1 を初期化。以降の進み具合はシリアルと画面（BIOS テレタイプ）の両方に出す。CPU が i686 相当（CPUID があり CMOV が使える）か確かめ、古ければ理由を表示して止まる（カーネルは i686 向けにコンパイルしているので、古い CPU では自分で確かめる前に未定義命令で止まる）
+   1. COM1 を初期化。以降の進み具合はシリアルと画面（BIOS テレタイプ）の両方に出す。CPU が 486 以降か（EFLAGS.AC を変えられるか）確かめ、386 なら理由を表示して止まる（カーネルは 486 向けにコンパイルしているので、386 では自分で確かめる前に止まる）
    2. A20 ライン有効化: 有効か確認 → BIOS `int 15h AX=2401h` → キーボードコントローラ経由 → Fast A20（`0x92`）の順に試し、毎回確認する
    3. **Unreal モード**に入る（一度プロテクトモードで DS/ES に 4GB リミットを読み込んでリアルモードへ戻る）。リアルモードのまま 1MB より上を 32bit アドレスで読み書きできる。BIOS 呼び出しでリミットが戻ることがあるので、使う直前に毎回入り直す
    4. メモリマップ取得（`int 15h EAX=E820h`）→ ブート情報構造体に保存（E820 非対応なら `E801h` → `88h` で近似のマップを作る）
@@ -278,7 +279,7 @@ pub struct BootInfo {
 - **GDT**: null / kernel code / kernel data / user code / user data / TSS
 - **IDT**: 0–31 CPU 例外, 32–47 IRQ（PIC を 0x20–0x2F にリマップ）, 0x80 システムコール
 - **例外**: レジスタダンプをパニック画面とシリアルに出して停止
-- **CPUID**: 起動時に画面とログに出す（i686 未満かどうかの判定はローダが行う。§4.2）
+- **CPUID**: あれば起動時に画面とログに出す（486 以降かどうかの判定はローダが行う。§4.2）
 
 ### 6.2 割り込み・デバイス
 | デバイス | IRQ | 内容 |
@@ -491,7 +492,7 @@ vibeos/
 ├── rust-toolchain.toml       # nightly の日付を固定
 ├── .cargo/config.toml        # build-std などの設定
 ├── targets/
-│   ├── i686-vibeos.json      # カーネル用ターゲット
+│   ├── i486-vibeos.json      # カーネル・アプリ用ターゲット
 │   ├── kernel.ld             # カーネル用リンカスクリプト
 │   └── app.ld                # アプリ用リンカスクリプト
 ├── docs/
@@ -549,13 +550,13 @@ vibeos/
 
 ### 10.2 QEMU 起動コマンド
 ```
-qemu-system-i386 -m 32M -cpu pentium2 \
+qemu-system-i386 -m 32M -cpu 486 \
   -drive file=build/vibeos.img,format=raw,if=floppy \
   -boot a -vga std -serial stdio \
   -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
   -no-reboot -no-shutdown
 ```
-- `-cpu pentium2`: 最低ラインの CPU で動かし、新しい命令を使ってしまうのを防ぐ
+- `-cpu 486`: 最低ラインの CPU で動かし、新しい命令を使ってしまうのを防ぐ
 - `-serial stdio`: カーネルのログがホストの端末に出る
 - `-no-reboot`: トリプルフォルト時に再起動ループせず止まる
 - 例外を追うときは `-d int,cpu_reset -D qemu.log` を追加
@@ -582,7 +583,7 @@ QEMU で日常的にテストしつつ、実機でも動くことを前提に書
 
 ### 11.1 想定する実機
 - レガシー BIOS（または UEFI の CSM）で起動できる PC
-- i686 以上の CPU、8MB 以上のメモリ、VGA 互換の表示
+- 486 以上の CPU、8MB 以上のメモリ、VGA 互換の表示（VESA 2.0 が無ければ 320x200）。マウスは PS/2 のみ（シリアルマウスは未対応）
 - 起動媒体: 本物の 3.5" ドライブ、または USB フロッピー/USB メモリのフロッピーエミュレーション
 - 注意: 2020 年頃以降の PC の多くは CSM が無く、そもそも起動できない
 
@@ -596,12 +597,12 @@ QEMU で日常的にテストしつつ、実機でも動くことを前提に書
 | A20 | 3 段階で試して毎回確認 |
 | メモリマップ | E820 の結果だけを信用する |
 | キーボード | 8042 をきちんと初期化。タイムアウト付きで待つ |
-| CPU | CPUID で確認。`-cpu pentium2` でテストする |
+| CPU | ローダが 486 以降か確かめる（EFLAGS.AC）。CPUID の無い初期の 486 も動く。`-cpu 486` でテストする |
 | I/O | 待ちとタイムアウトを入れる |
 | QEMU 専用機能 | `isa-debug-exit` やポート `0xE9` 出力はテスト用ビルド限定 |
 
 ### 11.3 実機寄りの検証
-- QEMU で古い PC に近い構成を試すシナリオ: ISA だけの PC（`-M isapc`）、最低メモリ 8MB、メモリ不足（5MB）、i686 より古い CPU（Pentium）
+- QEMU で古い PC に近い構成を試すシナリオ: ISA だけの PC（`-M isapc`）、最低メモリ 8MB、メモリ不足（5MB）、486（すべてのシナリオを -cpu 486 で動かしている）
 - **Bochs**: QEMU より厳密で、実機で起きる問題を見つけやすい。`make test-bochs` で同じシナリオを Bochs（Pentium II 相当・PCI の無い旧来の BIOS）で流す。Bochs は画面を出さずに動かせないので VNC（RFB）サーバとして動かし、テストランナーが最小限の RFB クライアントとしてつないでキー入力を送る。画面の比較・マウス・QEMU 専用の設定・音・終了コードは Bochs では確かめない。`make bochs` で X のウィンドウに出して触れる
 - **86Box**: 実在の古い PC をそのまま再現するエミュレータ。実機を持っていない場合の最終確認用
 - 実機で試すときは、パニック画面とシリアルログを手がかりにする
