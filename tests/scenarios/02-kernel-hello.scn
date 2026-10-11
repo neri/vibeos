@@ -1,0 +1,9 @@
+# Phase 2: Rust カーネルが起動し、フォントで画面に文字を描く
+timeout 15
+wait-serial VibeOS kernel starting
+wait-serial Hello from Rust!
+wait-serial VIBEOS READY
+serial-absent PANIC
+sleep 200
+# 1〜2 行目（"VibeOS" と "Hello from Rust!"）だけを比べる。3 行目以降はビルドごとに変わる値を含む
+expect-screen phase2-hello 0 0 640 32

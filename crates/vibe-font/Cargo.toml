@@ -1,0 +1,9 @@
+[package]
+name = "vibe-font"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "ビットマップフォント（データは font8x8 クレート）"
+
+[dependencies]
+font8x8 = { version = "0.3", default-features = false }

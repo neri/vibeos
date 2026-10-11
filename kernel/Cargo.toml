@@ -8,3 +8,11 @@ license.workspace = true
 name = "kernel"
 test = false
 bench = false
+
+[features]
+# QEMU でのテスト用ビルド: isa-debug-exit で終了コードを返す（実機では使わない）
+qemu-test = []
+
+[dependencies]
+vibe-font = { path = "../crates/vibe-font" }
+vibe-gfx = { path = "../crates/vibe-gfx" }

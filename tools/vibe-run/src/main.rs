@@ -12,8 +12,9 @@
 //!   sleep MS              待つ
 //!   expect-running        QEMU がまだ動いていることを確認する
 //!   screendump NAME       画面を OUT/NAME.png に保存する
-//!   expect-screen NAME    画面を tests/golden/NAME.png と比較する
-//!                         （UPDATE_GOLDEN=1 のときは期待画像を更新する）
+//!   expect-screen NAME [X Y W H]
+//!                         画面を tests/golden/NAME.png と比較する。矩形を指定するとその範囲だけ
+//!                         切り出して比較する（UPDATE_GOLDEN=1 のときは期待画像を更新する）
 //!   expect-pixel X Y R G B  画面の 1 点の色を確認する
 //!   key KEYS              キーを押す（例: `key a`, `key shift+a`, `key ret`。QEMU の qcode 名）
 //!   type TEXT             文字列を US 配列で打つ
@@ -152,9 +153,20 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
             "expect-running" => vm.expect_running().map_err(at)?,
             "screendump" => vm.screendump(&out.join(format!("{}.png", s.arg))).map_err(at)?,
             "expect-screen" => {
-                let shot = out.join(format!("{name}-{}.png", s.arg));
+                let mut words = s.arg.split_whitespace();
+                let golden_name = words.next().ok_or_else(|| at("missing name".into()))?;
+                let rect: Vec<u32> = words.map(|w| w.parse().unwrap_or(u32::MAX)).collect();
+                let rect = match rect.as_slice() {
+                    [] => None,
+                    [x, y, w, h] => Some((*x, *y, *w, *h)),
+                    _ => return Err(at("expected NAME [X Y W H]".into())),
+                };
+                let shot = out.join(format!("{name}-{golden_name}.png"));
                 vm.screendump(&shot).map_err(at)?;
-                compare_golden(&shot, &Path::new("tests/golden").join(format!("{}.png", s.arg))).map_err(at)?;
+                if let Some((x, y, w, h)) = rect {
+                    Image::load(&shot).and_then(|i| i.crop(x, y, w, h)).and_then(|i| i.save(&shot)).map_err(at)?;
+                }
+                compare_golden(&shot, &Path::new("tests/golden").join(format!("{golden_name}.png"))).map_err(at)?;
             }
             "expect-pixel" => {
                 let v: Vec<u32> = s.arg.split_whitespace().map(|x| x.parse().unwrap_or(u32::MAX)).collect();
@@ -420,6 +432,27 @@ impl Image {
             other => return Err(format!("unsupported PNG color type {other:?}")),
         };
         Ok(Image { width: info.width, height: info.height, rgb })
+    }
+
+    fn crop(&self, x: u32, y: u32, w: u32, h: u32) -> Result<Image> {
+        if x + w > self.width || y + h > self.height {
+            return Err(format!("crop {x},{y} {w}x{h} outside {}x{}", self.width, self.height));
+        }
+        let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+        for row in y..y + h {
+            let start = ((row * self.width + x) * 3) as usize;
+            rgb.extend_from_slice(&self.rgb[start..start + (w * 3) as usize]);
+        }
+        Ok(Image { width: w, height: h, rgb })
+    }
+
+    fn save(&self, path: &Path) -> Result<()> {
+        let file = fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), self.width, self.height);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().map_err(|e| e.to_string())?;
+        w.write_image_data(&self.rgb).map_err(|e| e.to_string())
     }
 
     fn pixel(&self, x: u32, y: u32) -> Option<[u8; 3]> {

@@ -7,8 +7,3 @@ wait-serial disk loaded, bytes: 00168000
 wait-serial kernel loaded, bytes:
 wait-serial jumping to kernel
 serial-absent LOADER ERROR
-# 進み具合のバー（画面はモード 13h の 2 倍で取得される: 640x400）
-# ※ Phase 2 以降はカーネルが画面を描き直すので、そのときこの確認は外す
-sleep 200
-expect-pixel 200 372 87 87 255
-expect-pixel 116 364 87 87 87

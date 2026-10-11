@@ -15,6 +15,9 @@
 
 - Phase の完了は、完了条件を **自動テストで確認できたとき**。人が画面を見て判断するだけにしない
 - 動作確認はシリアルログ、`isa-debug-exit` の終了コード、`screendump` の画像比較で行う
+- QEMU のテストは `tests/scenarios/*.scn`（書き方は `tools/vibe-run/src/main.rs` の先頭）。`make test` で全部流れる
+- 画面の期待画像は `tests/golden/`。新しく作るときは `UPDATE_GOLDEN=1` で生成し、**必ず画像を目で確認してから**コミットする。ビルドごとに変わる値（カーネルの大きさなど）が写る範囲は比較しない（`expect-screen NAME X Y W H` で範囲を絞る）
+- QEMU の画面取得はモード 13h を 2 倍の 640x400 で返すので、テストの座標はその大きさで書く
 - オーナーに判断を仰いだこと、オーナーが方針を変えたことは DECISIONS.md に「決めた人」付きで残す
 
 ## コードのルール（詳細は docs/DESIGN.md）
