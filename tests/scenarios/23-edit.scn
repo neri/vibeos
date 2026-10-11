@@ -58,7 +58,8 @@ key ret
 key ctrl+f
 type programs
 key ret
-wait-serial Found at line 42
+# 行番号はガイドの内容で変わるので、見つかったことだけを確かめる
+wait-serial Found at line
 key ctrl+g
 type 3
 key ret
