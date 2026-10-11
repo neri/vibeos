@@ -54,3 +54,4 @@
 
 - nightly は `rust-toolchain.toml` で日付を固定している。上げるときは意図して上げ、カスタムターゲット JSON の書式が変わっていないか確認する
 - カーネルのリンカスクリプトでは `.text.entry` を先頭に置き、`.eh_frame*` を捨てる（でないとエントリが `0x100000` からずれる）
+- インラインアセンブラ（Intel 記法）で `push ds` などセグメントレジスタを push/pop すると 16bit 版（`66` プレフィックス付き）になる。32bit で積みたいときは汎用レジスタ経由で行う。怪しいときは `llvm-objdump -d --x86-asm-syntax=intel build/kernel.elf` で確認する

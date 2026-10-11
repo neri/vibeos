@@ -13,8 +13,11 @@ mod arch;
 mod bootinfo;
 mod drivers;
 mod gfx;
+mod monitor;
 mod panic;
 mod sync;
+mod task;
+mod util;
 
 use bootinfo::{BOOT_MAGIC, BootInfo, E820_USABLE};
 use vibe_gfx::palette;
@@ -70,18 +73,45 @@ extern "C" fn kmain(magic: u32, info: &'static BootInfo) -> ! {
     gfx::console::set_color(palette::LIGHT_GRAY, palette::BLACK);
     kprintln!("Hello from Rust!");
     kprintln!();
-    kprintln!("kernel  {:08x} +{:x}", info.kernel_addr, info.kernel_size);
-    kprintln!("ramdisk {:08x} +{:x}", info.ramdisk_addr, info.ramdisk_size);
-    kprintln!("memory map:");
+
+    check_cpu();
+    print_memory(info);
+
+    let stack_top = (&raw const BOOT_STACK) as u32 + BOOT_STACK_SIZE as u32;
+    arch::gdt::init(stack_top);
+    arch::idt::init();
+    arch::pic::init();
+    drivers::pit::init();
+    drivers::keyboard::init();
+    arch::pic::enable_nmi();
+    // SAFETY: IDT・PIC・各ハンドラの準備ができた
+    unsafe { arch::cpu::enable_interrupts() };
+    klog!("interrupts enabled");
+
+    klog!("VIBEOS READY");
+    monitor::run()
+}
+
+fn check_cpu() {
+    match arch::cpu::identify() {
+        Some(cpu) => {
+            kprintln!("cpu: {} family {} model {} stepping {}", cpu.vendor_str(), cpu.family, cpu.model, cpu.stepping);
+            if cpu.family < 6 {
+                panic!("VibeOS needs an i686 (Pentium Pro / II) or newer CPU");
+            }
+        }
+        None => panic!("VibeOS needs an i686 (Pentium Pro / II) or newer CPU (no CPUID)"),
+    }
+}
+
+fn print_memory(info: &BootInfo) {
     let mut usable = 0u64;
     for e in info.memory_map() {
-        kprintln!(" {:09x}-{:09x} {}", e.base, e.base + e.len, e.kind);
+        klog!("e820: {:09x}-{:09x} type {}", e.base, e.base + e.len, e.kind);
         if e.kind == E820_USABLE {
             usable += e.len;
         }
     }
-    kprintln!("usable: {} KB", usable / 1024);
-
-    klog!("VIBEOS READY");
-    arch::cpu::halt_forever()
+    kprintln!("memory: {} KB usable", usable / 1024);
+    klog!("kernel {:08x} +{:x}, ramdisk {:08x} +{:x}", info.kernel_addr, info.kernel_size, info.ramdisk_addr, info.ramdisk_size);
 }

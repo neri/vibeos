@@ -1,0 +1,8 @@
+[package]
+name = "vibe-keyboard"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "PS/2 スキャンコード（セット 1）の解釈とキー配列"
+
+[dependencies]

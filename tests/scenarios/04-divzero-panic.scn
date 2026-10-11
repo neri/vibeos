@@ -1,0 +1,10 @@
+# Phase 3: CPU 例外（0 除算）でパニック画面になる
+timeout 15
+wait-serial VIBEOS READY
+type divzero
+key ret
+wait-serial KERNEL PANIC:
+wait-serial Divide error (#DE)
+sleep 200
+# 見出しと例外名の行だけを比べる（以降はレジスタの値なのでビルドごとに変わる）
+expect-screen panic-divzero 0 0 640 66

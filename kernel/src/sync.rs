@@ -85,3 +85,21 @@ impl<T> Drop for IrqMutexGuard<'_, T> {
         }
     }
 }
+
+/// 起動時に一度だけ書き、以降は CPU（GDT・IDT など）から参照されるだけの静的データ用。
+///
+/// ロックを持たないので、書くのは割り込み禁止中の初期化処理の中だけにすること。
+pub struct BootCell<T>(UnsafeCell<T>);
+
+// SAFETY: 書き込みは単一の初期化処理の中だけ（型の説明参照）
+unsafe impl<T> Sync for BootCell<T> {}
+
+impl<T> BootCell<T> {
+    pub const fn new(value: T) -> Self {
+        BootCell(UnsafeCell::new(value))
+    }
+
+    pub fn as_ptr(&self) -> *mut T {
+        self.0.get()
+    }
+}

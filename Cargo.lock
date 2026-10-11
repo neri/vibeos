@@ -67,6 +67,7 @@ version = "0.1.0"
 dependencies = [
  "vibe-font",
  "vibe-gfx",
+ "vibe-keyboard",
 ]
 
 [[package]]
@@ -204,6 +205,10 @@ version = "0.1.0"
 dependencies = [
  "vibe-font",
 ]
+
+[[package]]
+name = "vibe-keyboard"
+version = "0.1.0"
 
 [[package]]
 name = "vibe-run"

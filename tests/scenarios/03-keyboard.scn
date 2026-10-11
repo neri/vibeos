@@ -1,0 +1,20 @@
+# Phase 3: 割り込み・タイマ・キーボード
+timeout 15
+wait-serial interrupts enabled
+wait-serial VIBEOS READY
+wait-serial > 
+type hello
+key ret
+wait-serial unknown command: hello
+type sleep
+key ret
+wait-serial sleep ok
+# Shift・CapsLock・BackSpace
+type Ab!x
+key backspace
+key caps_lock
+type cd
+key caps_lock
+key ret
+wait-serial unknown command: Ab!CD
+serial-absent PANIC
