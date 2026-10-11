@@ -74,6 +74,16 @@ pub mod nr {
     pub const SOUND: u32 = 24;
     /// time() -> 1970 年からの秒（現地時刻）。時計が無ければ 0
     pub const TIME: u32 = 25;
+    /// win_open(w, h, title, title_len) -> ウィンドウ番号。デスクトップでは枠付きのウィンドウ、
+    /// 全画面のときは前面に出る
+    pub const WIN_OPEN: u32 = 26;
+    /// win_blit(win, buf: *const [u8; w*h]) -> 0。中身全体を書き換える
+    pub const WIN_BLIT: u32 = 27;
+    /// win_event(win, &mut WinEvent, timeout_ms) -> 1 ならイベントあり, 0 なら時間切れ。
+    /// timeout_ms = 0 なら待たない、u32::MAX ならいつまでも待つ
+    pub const WIN_EVENT: u32 = 28;
+    /// win_close(win) -> 0
+    pub const WIN_CLOSE: u32 = 29;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -160,6 +170,25 @@ impl DirEntry {
         core::str::from_utf8(&self.name[..len]).unwrap_or("?")
     }
 }
+
+/// ウィンドウのイベント（win_event）
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WinEvent {
+    /// WIN_EVENT_*
+    pub kind: u32,
+    /// キーのとき: `KeyEvent` に詰めた値
+    pub key: u32,
+    /// マウスのとき: ウィンドウの中身の座標とボタン（bit0 = 左, bit1 = 右, bit2 = 中）
+    pub x: i32,
+    pub y: i32,
+    pub buttons: u32,
+}
+
+pub const WIN_EVENT_KEY: u32 = 1;
+pub const WIN_EVENT_MOUSE: u32 = 2;
+/// [x] が押された（閉じるかどうかはアプリが決める）
+pub const WIN_EVENT_CLOSE: u32 = 3;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

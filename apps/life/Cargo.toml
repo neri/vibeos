@@ -1,0 +1,13 @@
+[package]
+name = "life"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "life"
+test = false
+bench = false
+
+[dependencies]
+vibe-rt = { path = "../vibe-rt" }

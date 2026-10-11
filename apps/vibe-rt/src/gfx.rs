@@ -49,3 +49,61 @@ impl Drop for Screen {
         sys::gfx_close();
     }
 }
+
+/// 好きな大きさのウィンドウ（win_open）。捨てると閉じる
+pub struct Window {
+    id: i32,
+    w: usize,
+    h: usize,
+    buf: Vec<u8>,
+}
+
+/// ウィンドウのイベント
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    Key(vibe_abi::KeyEvent),
+    /// 中身の座標とボタン（bit0 = 左, bit1 = 右, bit2 = 中）
+    Mouse { x: i32, y: i32, buttons: u32 },
+    /// [x] が押された
+    Close,
+}
+
+impl Window {
+    pub fn open(w: usize, h: usize, title: &str) -> Option<Window> {
+        let id = sys::win_open(w as u32, h as u32, title);
+        (id >= 0).then(|| Window { id, w, h, buf: vec![0; w * h] })
+    }
+
+    pub fn width(&self) -> usize {
+        self.w
+    }
+
+    pub fn height(&self) -> usize {
+        self.h
+    }
+
+    pub fn surface(&mut self) -> Surface<'_> {
+        Surface::new(&mut self.buf, self.w, self.h)
+    }
+
+    pub fn present(&self) {
+        sys::win_blit(self.id, &self.buf);
+    }
+
+    /// イベントを待つ（timeout_ms = 0 なら待たない、None ならいつまでも）
+    pub fn event(&self, timeout_ms: Option<u32>) -> Option<Event> {
+        let ev = sys::win_event(self.id, timeout_ms.unwrap_or(u32::MAX))?;
+        match ev.kind {
+            vibe_abi::WIN_EVENT_KEY => Some(Event::Key(vibe_abi::KeyEvent(ev.key))),
+            vibe_abi::WIN_EVENT_MOUSE => Some(Event::Mouse { x: ev.x, y: ev.y, buttons: ev.buttons }),
+            vibe_abi::WIN_EVENT_CLOSE => Some(Event::Close),
+            _ => None,
+        }
+    }
+}
+
+impl Drop for Window {
+    fn drop(&mut self) {
+        sys::win_close(self.id);
+    }
+}

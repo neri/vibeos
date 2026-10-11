@@ -23,6 +23,7 @@ pub mod sys;
 use core::fmt::{self, Write};
 
 pub use vibe_abi as abi;
+pub use vibe_time as time;
 pub use vibe_font as font;
 pub use vibe_gfx as gfx_lib;
 
@@ -208,5 +209,33 @@ pub fn wait_key() -> abi::KeyEvent {
                 return k;
             }
         }
+    }
+}
+
+/// 固定長の文字列に書式付きで書く（ヒープを使わない。あふれた分は捨てる）
+pub fn format_fixed<const N: usize>(args: fmt::Arguments) -> FixedStr<N> {
+    let mut s = FixedStr { buf: [0; N], len: 0 };
+    let _ = s.write_fmt(args);
+    s
+}
+
+pub struct FixedStr<const N: usize> {
+    buf: [u8; N],
+    len: usize,
+}
+
+impl<const N: usize> core::ops::Deref for FixedStr<N> {
+    type Target = str;
+    fn deref(&self) -> &str {
+        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
+    }
+}
+
+impl<const N: usize> Write for FixedStr<N> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let n = s.len().min(N - self.len);
+        self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
+        self.len += n;
+        Ok(())
     }
 }

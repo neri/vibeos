@@ -1,0 +1,17 @@
+# Phase 15: 320x200（全画面）でもウィンドウの API が使える（前面に全画面で出る）
+boot-config video=320x200
+timeout 30
+wait-serial video: 320x200
+wait-serial VibeOS shell
+type clock
+key ret
+wait-serial clock: started
+sleep 300
+# 時計の文字盤（白）が左上から出ている（画面は 2 倍で取れる）
+expect-pixel 10 30 255 255 255
+key esc
+wait-serial clock: closed
+type echo back to shell
+key ret
+wait-serial back to shell
+serial-absent PANIC

@@ -39,6 +39,11 @@ pub fn ticks() -> u32 {
     TICKS.load(Ordering::Relaxed)
 }
 
+/// タイマの刻みごとに起こされる待ち行列（時間切れ付きで何かを待つときに使う）
+pub fn tick_queue() -> &'static WaitQueue {
+    &TIMER_WAIT
+}
+
 /// 少なくとも `ms` ミリ秒待つ
 pub fn sleep_ms(ms: u32) {
     let start = ticks();

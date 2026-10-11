@@ -43,9 +43,9 @@ const DESKTOP_BG: u8 = palette::CUBE_BASE + 13; // 落ち着いた青緑（カ�
 const BORDER: u8 = palette::LIGHT_GRAY;
 const TITLE_ACTIVE: u8 = palette::BLUE;
 const TITLE_INACTIVE: u8 = palette::DARK_GRAY;
-/// 端末のウィンドウの大きさ（文字数）
-const TERMINAL_COLS: usize = 72;
-const TERMINAL_ROWS: usize = 46;
+/// 端末のウィンドウの大きさ（文字数）。左下に置き、上をアプリのウィンドウのために空ける
+const TERMINAL_COLS: usize = 64;
+const TERMINAL_ROWS: usize = 32;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -194,11 +194,11 @@ pub fn start_desktop() -> bool {
     s.console_w = cw.min(s.width - 2);
     s.console_h = ch.min(s.height - BAR_H - TITLE_H - 2);
     let (cw, ch) = (s.console_w, s.console_h);
-    let y = (BAR_H + TITLE_H + 1 + 8) as i32;
+    let y = (s.height - ch - 8) as i32;
     if let Some(c) = s.windows.get_mut(&CONSOLE) {
         c.w = cw;
         c.h = ch;
-        c.x = 16;
+        c.x = 8;
         c.y = y;
         c.closable = false;
     }
@@ -289,7 +289,7 @@ impl Screen {
         }
     }
 
-    /// ウィンドウを作って前に出す
+    /// ウィンドウを作って前に出す。`kill_on_close` なら [x] で持ち主を止め、そうでなければ閉じる要求のイベントを届ける
     pub fn create_window(&mut self, w: usize, h: usize, title: &str, owner: Option<TaskId>, kill_on_close: bool) -> WinId {
         self.next_id += 1; // 0 はコンソールなので 1 から
         let id = self.next_id;
@@ -834,6 +834,61 @@ pub fn read_key(id: WinId) -> Option<KeyEvent> {
             let s = SCREEN.lock();
             s.windows.get(&id).is_none_or(|w| !w.keys.is_empty() || w.close_requested)
         });
+    }
+}
+
+/// ウィンドウの持ち主か
+pub fn is_owner(id: WinId, task: TaskId) -> bool {
+    SCREEN.lock().windows.get(&id).is_some_and(|w| w.owner == Some(task))
+}
+
+/// ウィンドウのイベント
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    Key(KeyEvent),
+    Mouse(MouseEvent),
+    Close,
+}
+
+fn take_event(w: &mut Window) -> Option<Event> {
+    if w.close_requested && !w.kill_on_close {
+        // 閉じる要求は 1 回だけ届ける（アプリが閉じなければ、また [x] で届く）
+        w.close_requested = false;
+        return Some(Event::Close);
+    }
+    if let Some(k) = w.keys.pop() {
+        return Some(Event::Key(k));
+    }
+    w.mouse.pop().map(Event::Mouse)
+}
+
+/// ウィンドウ `id` のイベントを待つ（閉じる要求・キー・マウスの順）。`timeout_ticks` が None なら
+/// いつまでも待つ。時間切れかウィンドウが無くなれば None
+pub fn next_event(id: WinId, timeout_ticks: Option<u32>) -> Option<Event> {
+    let start = crate::drivers::pit::ticks();
+    let timed_out = || timeout_ticks.is_some_and(|t| crate::drivers::pit::ticks().wrapping_sub(start) >= t);
+    loop {
+        {
+            let mut s = SCREEN.lock();
+            let w = s.windows.get_mut(&id)?;
+            if let Some(e) = take_event(w) {
+                return Some(e);
+            }
+        }
+        if timed_out() {
+            return None;
+        }
+        let has_event = || {
+            let s = SCREEN.lock();
+            s.windows.get(&id).is_none_or(|w| {
+                (w.close_requested && !w.kill_on_close) || !w.keys.is_empty() || !w.mouse.is_empty()
+            })
+        };
+        if timeout_ticks.is_some() {
+            WaitQueue::wait_until_any(&[&INPUT_WAIT, crate::drivers::pit::tick_queue()], || has_event() || timed_out());
+        } else {
+            INPUT_WAIT.wait_until(has_event);
+        }
     }
 }
 

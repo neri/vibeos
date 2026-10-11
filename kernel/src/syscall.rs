@@ -9,7 +9,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use vibe_abi::{DirEntry, KeyEvent, MouseState, Stat, err, nr};
+use vibe_abi::{DirEntry, KeyEvent, MouseState, Stat, WinEvent, err, nr};
 
 use crate::arch::trap::TrapFrame;
 use crate::gui::{self, SCREEN};
@@ -166,6 +166,65 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
             process::close_display(&mut user.lock());
             Ok(0)
         }
+        nr::WIN_OPEN => {
+            let (w, h) = (a as usize, b as usize);
+            if w == 0 || h == 0 || w > 640 || h > 480 {
+                return Err(err::EINVAL);
+            }
+            let title = user_str(user, c, d)?;
+            let id = SCREEN.lock().create_window(w, h, &title, Some(sched::current_id()), false);
+            user.lock().windows.push(id);
+            SCREEN.lock().present();
+            Ok(id)
+        }
+        nr::WIN_BLIT => {
+            let id = own_window(user, a)?;
+            let (w, h) = window_size(id).ok_or(err::EINVAL)?;
+            check_user(user, b, (w * h) as u32, false)?;
+            // SAFETY: 上で今のプロセスが読めるページだと確かめた
+            let src = unsafe { core::slice::from_raw_parts(b as *const u8, w * h) };
+            let mut s = SCREEN.lock();
+            if let Some(mut surf) = s.window_surface(id) {
+                surf.blit(0, 0, src, w, None);
+            }
+            s.mark_window_dirty(id, 0, h);
+            s.present();
+            Ok(0)
+        }
+        nr::WIN_EVENT => {
+            let id = own_window(user, a)?;
+            check_user(user, b, core::mem::size_of::<WinEvent>() as u32, true)?;
+            let timeout = match c {
+                u32::MAX => None,
+                ms => Some((ms * pit::TICK_HZ).div_ceil(1000)),
+            };
+            let ev = match gui::next_event(id, timeout) {
+                None => return Ok(0),
+                Some(gui::Event::Key(e)) => WinEvent {
+                    kind: vibe_abi::WIN_EVENT_KEY,
+                    key: KeyEvent::encode(e.ch, e.key.0, e.pressed, e.mods.shift(), e.mods.ctrl(), e.mods.alt()),
+                    ..Default::default()
+                },
+                Some(gui::Event::Mouse(m)) => WinEvent {
+                    kind: vibe_abi::WIN_EVENT_MOUSE,
+                    x: m.x,
+                    y: m.y,
+                    buttons: m.buttons as u32,
+                    ..Default::default()
+                },
+                Some(gui::Event::Close) => WinEvent { kind: vibe_abi::WIN_EVENT_CLOSE, ..Default::default() },
+            };
+            copy_to_user(user, b, as_bytes(&ev))?;
+            Ok(1)
+        }
+        nr::WIN_CLOSE => {
+            let id = own_window(user, a)?;
+            user.lock().windows.retain(|&w| w != id);
+            let mut s = SCREEN.lock();
+            s.destroy_window(id);
+            s.present();
+            Ok(0)
+        }
         nr::GETKEY => {
             // 画面（ウィンドウ）を開いていればそこへのキー、なければ端末へのキー
             let win = user.lock().display.unwrap_or(gui::CONSOLE);
@@ -229,6 +288,17 @@ fn sys_read(user: &UserRef, fd: u32, buf: u32, len: u32) -> SysResult {
     // SAFETY: 上で確かめた
     unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf as *mut u8, n) };
     Ok(n as u32)
+}
+
+/// 今のプロセスが win_open で作ったウィンドウか
+fn own_window(user: &UserRef, id: u32) -> Result<gui::WinId, i32> {
+    if user.lock().windows.contains(&id) && gui::is_owner(id, sched::current_id()) { Ok(id) } else { Err(err::EBADF) }
+}
+
+fn window_size(id: gui::WinId) -> Option<(usize, usize)> {
+    let mut s = SCREEN.lock();
+    let surf = s.window_surface(id)?;
+    Some((surf.width(), surf.height()))
 }
 
 fn check_user(user: &UserRef, addr: u32, len: u32, write: bool) -> Result<(), i32> {

@@ -23,7 +23,13 @@ impl WaitQueue {
     /// `cond` が true を返すまで待つ。`cond` は割り込み禁止の状態で呼ばれる。
     ///
     /// ロックを持ったまま（= 割り込み禁止のまま）呼ぶと永久に起きられないので panic する。
-    pub fn wait_until(&self, mut cond: impl FnMut() -> bool) {
+    pub fn wait_until(&self, cond: impl FnMut() -> bool) {
+        Self::wait_until_any(&[self], cond);
+    }
+
+    /// いくつかの待ち行列のどれかで起こされるたびに `cond` を見直し、true になるまで待つ
+    /// （例: 入力か時間切れのどちらかを待つ）
+    pub fn wait_until_any(queues: &[&WaitQueue], mut cond: impl FnMut() -> bool) {
         if !cpu::interrupts_enabled() {
             panic!("WaitQueue::wait_until called with interrupts disabled (holding a lock?)");
         }
@@ -35,8 +41,12 @@ impl WaitQueue {
                 return;
             }
             if sched::is_started() {
-                self.waiters.lock().push_back(sched::current_id());
+                let me = sched::current_id();
+                for q in queues {
+                    q.waiters.lock().push_back(me);
+                }
                 sched::block_current(); // 起こされると割り込み禁止のまま戻ってくる
+                // 他の待ち行列に残った自分の ID は、そちらの notify_all で捨てられる（起こしても待っていなければ何もしない）
             } else {
                 // スケジューラが動く前は、次の割り込みまで止まって見直す
                 // SAFETY: 割り込みを許可して止まる（sti の直後の hlt までは割り込みが入らない）

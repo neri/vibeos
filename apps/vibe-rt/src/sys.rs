@@ -147,3 +147,23 @@ pub fn sound(freq: u32, ms: u32) {
 pub fn time() -> u32 {
     syscall(nr::TIME, 0, 0, 0, 0, 0) as u32
 }
+
+/// ウィンドウを開く（デスクトップでは枠付き、全画面のときは前面に出る）。負ならエラー
+pub fn win_open(w: u32, h: u32, title: &str) -> i32 {
+    syscall(nr::WIN_OPEN, w, h, title.as_ptr() as u32, title.len() as u32, 0)
+}
+
+/// ウィンドウの中身全体を `buf`（w*h バイト）で書き換える
+pub fn win_blit(win: i32, buf: &[u8]) -> i32 {
+    syscall(nr::WIN_BLIT, win as u32, buf.as_ptr() as u32, 0, 0, 0)
+}
+
+/// イベントを待つ。timeout_ms = 0 なら待たない、u32::MAX ならいつまでも
+pub fn win_event(win: i32, timeout_ms: u32) -> Option<vibe_abi::WinEvent> {
+    let mut ev = vibe_abi::WinEvent::default();
+    (syscall(nr::WIN_EVENT, win as u32, &mut ev as *mut _ as u32, timeout_ms, 0, 0) == 1).then_some(ev)
+}
+
+pub fn win_close(win: i32) -> i32 {
+    syscall(nr::WIN_CLOSE, win as u32, 0, 0, 0, 0)
+}

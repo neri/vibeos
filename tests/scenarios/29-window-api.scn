@@ -1,0 +1,36 @@
+# Phase 15: アプリが好きな大きさのウィンドウを開き、キー・マウス・閉じる要求のイベントを受け取る
+timeout 30
+wait-serial gui: desktop 640x480
+wait-serial VibeOS shell
+# 時計（中身 120,47 に 136x156）。[x]（245〜253, 36〜44）で閉じると、アプリが閉じる要求を受けて終わる
+type clock &
+key ret
+wait-serial clock: started
+sleep 300
+expect-pixel 200 40 0 0 168
+expect-pixel 125 60 255 255 255
+mouse-move -71 -200
+mouse-button left down
+mouse-button left up
+wait-serial clock: closed
+sleep 300
+expect-pixel 125 60 0 103 55
+# ライフゲーム（2 つ目のウィンドウは中身 144,67 に 192x144）。空いているセル (10,10) をクリックで生かす
+type life &
+key ret
+wait-serial life: started
+sleep 300
+mouse-move -64 68
+mouse-button left down
+mouse-button left up
+sleep 300
+# カーソルの先（185,108）と重ならないセルの左上で確かめる
+expect-pixel 184 107 87 255 87
+# スペースで動かし、Esc で終わる（世代が進んでいる）
+key spc
+wait-serial life: running
+sleep 500
+key esc
+wait-serial life: closed after
+serial-absent life: closed after 0 generations
+serial-absent PANIC

@@ -13,8 +13,18 @@ SCREEN MODE
   video=640x480  or  video=320x200
 Edit it, sync, and reboot. Hold Shift
 while booting to use 320x200 once.
-Programs made for 320x200 are shown
-twice as large in 640x480.
+In 640x480 you get a desktop with
+windows. The shell runs in the
+Terminal window.
+
+DESKTOP (640x480)
+-----------------
+Click a window     bring it to front
+Drag a title bar   move the window
+Click [x]          close the window
+Keys go to the window in front.
+Add "&" to run a program in the
+background, e.g.  clock &
 
 SHELL COMMANDS
 --------------
@@ -59,6 +69,9 @@ mandel    the Mandelbrot set
           (arrows move, + and - zoom)
 snake     the snake game (arrows)
 more      read a text file page by page
+clock     a clock window
+life      game of life (click cells,
+          space runs, R random, C clear)
 edit      text editor
           ^S save (and sync), ^Q quit,
           ^F find, ^G go to line,

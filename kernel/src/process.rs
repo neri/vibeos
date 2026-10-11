@@ -27,6 +27,8 @@ pub struct UserProc {
     pub space: AddressSpace,
     /// gfx_open で作った画面（ウィンドウ）
     pub display: Option<WinId>,
+    /// win_open で作ったウィンドウ（終了時にすべて閉じる）
+    pub windows: Vec<WinId>,
 }
 
 pub type UserRef = Arc<Mutex<UserProc>>;
@@ -109,7 +111,7 @@ pub fn spawn(path: &str, args: &[&str]) -> Result<TaskId, i32> {
     let esp = push_args(&space, args).ok_or(err::ENOMEM)?;
 
     let name = path.rsplit('/').next().unwrap_or(path);
-    let user = Arc::new(Mutex::new(UserProc { space, display: None }));
+    let user = Arc::new(Mutex::new(UserProc { space, display: None, windows: Vec::new() }));
     Ok(sched::spawn_user(name, user, entry, esp))
 }
 
@@ -197,12 +199,15 @@ pub fn kill_current(reason: &str, eip: u32, addr: Option<u32>) -> ! {
 
 /// プロセスの画面（ウィンドウ）を閉じる。パレットは gui が前に出ているウィンドウのものに戻す
 pub fn close_display(p: &mut UserProc) {
+    let mut s = SCREEN.lock();
     if let Some(id) = p.display.take() {
-        let mut s = SCREEN.lock();
         s.destroy_window(id);
         s.set_cursor_visible(false);
-        s.present();
     }
+    for id in p.windows.drain(..) {
+        s.destroy_window(id);
+    }
+    s.present();
 }
 
 /// 実行ファイルの名前からパスを決める（"/" を含まなければ /BIN/名前.ELF）

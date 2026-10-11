@@ -1,54 +1,54 @@
 # Phase 15: ウィンドウシステム（640x480）。ウィンドウを開く・前に出す・動かす・閉じる
+# 端末は左下（中身 8,216 から 512x256、タイトルバー y=204〜215）、新しいウィンドウは 120,47 から
 timeout 30
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
 sleep 300
-# 端末のタイトルバー（フォーカスがあるので青）と、上端のバー
-expect-pixel 100 25 0 0 168
-expect-screen desktop-terminal 0 10 640 21
-# mandel を裏で動かす → 新しいウィンドウ（120,47 に 320x200）が前に出てフォーカスを持つ
+# 端末のタイトルバー（フォーカスがあるので青）と 1 行目
+expect-pixel 100 210 0 0 168
+expect-screen desktop-terminal 0 203 640 21
+# mandel を裏で動かす → 新しいウィンドウ（中身 120,47 に 320x200）が前に出てフォーカスを持つ
 type mandel &
 key ret
 wait-serial mandel: rendered
 sleep 300
 expect-pixel 200 40 0 0 168
-expect-pixel 100 25 87 87 87
-# タイトルバーをつかんで (+100, +230) 動かす（カーソルは真ん中 320,240 から始まる）
-#   → 中身の左上が (220, 277)。下の方が端末（下端 y=399）からはみ出して見える
+expect-pixel 100 210 87 87 87
+# タイトルバーをつかんで (+100, +230) 動かす（カーソルは真ん中 320,240 から始まる）→ 中身の左上が (220, 277)
 mouse-move -120 -200
 mouse-button left down
 mouse-move 50 115
 mouse-move 50 115
 mouse-button left up
 sleep 300
-# 新しい位置のタイトルバー（y=265〜276）は青、元の位置は端末の中身（黒）
+# 新しい位置のタイトルバー（y=265〜276）は青、元の位置は背景
 expect-pixel 400 270 0 0 168
-expect-pixel 200 40 0 0 0
+expect-pixel 200 40 0 103 55
 # 時計や描画時間が写る上端のバー・端末の文字は除き、mandel のウィンドウのまわりだけを比べる
 expect-screen desktop-moved 216 262 328 218
-# 端末をクリックすると端末が前に出る（mandel のタイトルバーは端末の下に隠れる）
-mouse-move -250 -70
+# 端末をクリックすると端末が前に出る（mandel の左側は端末の下に隠れる）
+mouse-move -250 80
 mouse-button left down
 mouse-button left up
 sleep 300
-expect-pixel 100 25 0 0 168
+expect-pixel 100 210 0 0 168
 expect-pixel 400 270 0 0 0
 type echo terminal has focus
 key ret
 wait-serial terminal has focus
-# 端末からはみ出している mandel の下の方をクリックして前に出し、[x]（529〜537, 266〜274）で閉じる
-mouse-move 250 240
+# 端末からはみ出している mandel の右端をクリックして前に出し、[x]（529〜537, 266〜274）で閉じる
+mouse-move 480 50
 mouse-button left down
 mouse-button left up
 sleep 300
 expect-pixel 400 270 0 0 168
-mouse-move 232 -170
+mouse-move 2 -130
 mouse-button left down
 mouse-button left up
 sleep 500
-# 閉じた場所は端末の中身（黒）に戻り、mandel のプロセスは無い
+# 閉じた場所は端末の中身（黒）か背景に戻る
 expect-pixel 400 270 0 0 0
-expect-pixel 300 440 0 103 55
+expect-pixel 530 300 0 103 55
 type ps
 key ret
 wait-serial shell
