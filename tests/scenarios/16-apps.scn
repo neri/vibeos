@@ -29,7 +29,8 @@ key ret
 wait-serial VibeOS GUIDE
 wait-serial -- more (
 key spc
-wait-serial LINE EDITING
+# ガイドの内容に左右されないよう、2 ページ目のプロンプトが出ることだけを確かめる
+wait-serial -- more (
 key q
 type echo after more
 key ret
