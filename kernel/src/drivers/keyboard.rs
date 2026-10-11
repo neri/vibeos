@@ -9,7 +9,7 @@ use vibe_keyboard::{Decoder, KeyEvent, US, UsLayout};
 
 use super::ps2;
 use crate::arch::trap;
-use crate::input;
+
 use crate::sync::IrqMutex;
 use crate::task::wait::WaitQueue;
 use crate::util::ring::Ring;
@@ -43,7 +43,6 @@ fn on_irq() {
         klog!("keyboard: buffer full, dropped {:#x}", byte);
     }
     KEY_WAIT.notify_all();
-    input::notify();
 }
 
 /// 届いているキーイベントがあれば返す（待たない）

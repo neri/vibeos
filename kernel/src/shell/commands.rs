@@ -10,7 +10,7 @@ use vibe_font::FONT_8X8;
 use vibe_gfx::palette;
 
 use super::Shell;
-use crate::drivers::vga::{self, SCREEN};
+use crate::gui::SCREEN;
 use crate::drivers::{pit, power};
 use crate::fs;
 use crate::mm::{heap, pmm};
@@ -330,15 +330,16 @@ fn demo(_: &mut Shell, _: &[&str]) {
                 while pit::ticks().wrapping_sub(start) < 5 * pit::TICK_HZ {
                     n += 1;
                     let text = format!("T{i}:{n:6}");
-                    let x = (vga::width() - text.len() * FONT_8X8.width) as i32;
+                    let mut s = SCREEN.lock();
+                    let x = (s.console_size().0 - text.len() * FONT_8X8.width) as i32;
                     // ステータスバーの下に並べる
                     let y = ((i + 1) * FONT_8X8.height) as i32;
                     {
-                        let mut s = SCREEN.lock();
                         s.surface().draw_text(&FONT_8X8, x, y, &text, colors[i], Some(palette::BLACK));
                         s.mark_dirty(y as usize, y as usize + FONT_8X8.height);
                         s.present();
                     }
+                    drop(s);
                     // スレッドごとに速さを変える（1 つは休まない）
                     if i > 0 {
                         pit::sleep_ms(10 * i as u32);

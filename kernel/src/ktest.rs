@@ -215,6 +215,7 @@ fn sched_reclaims_stacks() {
     // 前のテストで終わったタスクがまだ回収されていないことがあるので、先に回収させてから数える
     task::yield_now();
     let (free_before, _) = pmm::stats();
+    let tasks_before = sched::tasks().len();
     for _ in 0..5 {
         let ids: Vec<_> = (0..20).map(|_| task::spawn("short", || task::yield_now())).collect();
         for id in ids {
@@ -224,7 +225,7 @@ fn sched_reclaims_stacks() {
     task::yield_now(); // 終わったタスクは次の切り替えで回収される
     let (free_after, _) = pmm::stats();
     assert_eq!(free_before, free_after, "stack pages were not returned");
-    assert!(sched::tasks().len() <= 3, "dead tasks remain: {}", sched::tasks().len());
+    assert_eq!(sched::tasks().len(), tasks_before, "dead tasks remain");
 }
 
 /// 眠る Mutex: 持っている間に他のタスクが取りに来ても、持ち主は（割り込みを止めずに）進める

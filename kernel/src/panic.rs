@@ -7,7 +7,8 @@ use vibe_font::FONT_8X8;
 use vibe_gfx::palette;
 
 use crate::arch::cpu;
-use crate::drivers::{serial, vga};
+use crate::drivers::serial;
+use crate::gui;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -23,17 +24,15 @@ fn panic(info: &PanicInfo) -> ! {
     }
 
     // SAFETY: 同上
-    let screen = unsafe { vga::SCREEN.force_get() };
-    // アプリが前面に出ていたり独自のパレットにしていても、コンソールに戻して見えるようにする
-    vga::set_palette(&palette::standard());
-    screen.set_foreground(vga::CONSOLE);
-    screen.set_cursor_visible(false);
+    let screen = unsafe { gui::SCREEN.force_get() };
+    // ウィンドウが出ていたり独自のパレットにしていても、全画面のコンソールに戻して見えるようにする
+    screen.panic_takeover();
     {
         let font = &FONT_8X8;
         let mut s = screen.surface();
         s.clear(palette::RED);
         s.draw_text(font, 8, 8, "KERNEL PANIC", palette::YELLOW, None);
-        let cols = (vga::width() - 16) / font.width;
+        let cols = (s.width() - 16) / font.width;
         let (mut col, mut y) = (0, 24);
         for ch in text.as_str().chars() {
             if ch == '\n' || col >= cols {
@@ -47,7 +46,8 @@ fn panic(info: &PanicInfo) -> ! {
             col += 1;
         }
     }
-    screen.mark_dirty(0, vga::height());
+    let h = screen.console_size().1;
+    screen.mark_dirty(0, h);
     screen.present();
 
     #[cfg(feature = "qemu-test")]

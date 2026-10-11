@@ -29,7 +29,7 @@ key ret
 wait-serial VibeOS GUIDE
 wait-serial -- more (
 key spc
-wait-serial PROGRAMS (/BIN)
+wait-serial LINE EDITING
 key q
 type echo after more
 key ret

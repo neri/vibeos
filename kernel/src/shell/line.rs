@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 use vibe_keyboard::KeyCode;
 
-use crate::drivers::keyboard;
+use crate::gui;
 
 const HISTORY_MAX: usize = 32;
 const LINE_MAX: usize = 256;
@@ -139,7 +139,9 @@ impl LineEditor {
         let mut hist_pos = self.history.len();
         let mut draft = String::new();
         loop {
-            let ev = keyboard::read_event();
+            let Some(ev) = gui::read_key(gui::CONSOLE) else {
+                return Input::Cancelled;
+            };
             if !ev.pressed {
                 continue;
             }

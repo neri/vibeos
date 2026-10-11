@@ -6,7 +6,7 @@ use vibe_font::FONT_8X8;
 use vibe_gfx::palette;
 
 use crate::drivers::pit;
-use crate::drivers::vga::{self, SCREEN};
+use crate::gui::SCREEN;
 use crate::mm::pmm;
 use crate::task::{self, sched};
 
@@ -34,13 +34,15 @@ fn draw() {
     let right = format!("{when}  {}K T{} ", free_pages * 4, tasks);
     let font = &FONT_8X8;
     let mut s = SCREEN.lock();
-    {
-        let mut surf = s.surface();
-        surf.fill_rect(0, 0, vga::width() as i32, font.height as i32, BAR_BG);
-        surf.draw_text(font, font.width as i32, 0, "VibeOS", palette::YELLOW, None);
-        let x = vga::width() - right.len() * font.width;
-        surf.draw_text(font, x as i32, 0, &right, BAR_FG, None);
-    }
-    s.mark_dirty(0, font.height);
+    let desktop = s.mode() == crate::gui::Mode::Desktop;
+    s.draw_status_bar(|surf| {
+        let w = surf.width() as i32;
+        // デスクトップのバーは 1 ピクセルずつ上下に余白がある
+        let (h, y) = if desktop { (crate::gui::BAR_H as i32, 1) } else { (font.height as i32, 0) };
+        surf.fill_rect(0, 0, w, h, BAR_BG);
+        surf.draw_text(font, font.width as i32, y, "VibeOS", palette::YELLOW, None);
+        let x = w - (right.len() * font.width) as i32;
+        surf.draw_text(font, x, y, &right, BAR_FG, None);
+    });
     s.present();
 }

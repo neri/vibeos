@@ -1,6 +1,7 @@
 //! テキストコンソール
 //!
-//! 画面の一番上の行（ステータスバー）を除いた範囲を文字の格子として使う。
+//! コンソールのウィンドウ（全画面のときは画面全体から一番上の行（ステータスバー）を除いた範囲、
+//! デスクトップのときは端末のウィンドウの中身）を文字の格子として使う。
 //! 制御文字と ANSI エスケープシーケンスの一部を解釈する（vibe-term）。
 //!
 //! カーソルの左右移動（`\x08`, `ESC [ n D` / `C`）は行をまたいで前後の行へ回り込む。
@@ -12,12 +13,10 @@ use vibe_font::{FONT_8X8, Font};
 use vibe_gfx::palette;
 use vibe_term::{Action, Parser, Sgr};
 
-use crate::drivers::vga::{self, SCREEN, Screen};
+use crate::gui::{self, SCREEN, Screen};
 use crate::sync::IrqMutex;
 
 const TAB_WIDTH: usize = 4;
-/// コンソールの上に空けておく行数（ステータスバー）
-pub const RESERVED_TOP_ROWS: usize = 1;
 
 /// ANSI の色番号（黒 赤 緑 黄 青 紫 水 白）→ CGA パレット
 const ANSI_TO_CGA: [u8; 8] = [0, 4, 2, 6, 1, 5, 3, 7];
@@ -28,6 +27,8 @@ pub struct Console {
     font: &'static Font,
     /// 画面上の上端（ピクセル）
     top: usize,
+    /// 画面（ウィンドウ）の幅
+    pixel_width: usize,
     cols: usize,
     rows: usize,
     /// 0..=cols。cols は「行末まで書いた（次の文字で改行する）」状態
@@ -44,6 +45,7 @@ pub struct Console {
 static CONSOLE: IrqMutex<Console> = IrqMutex::new(Console {
     font: &FONT_8X8,
     top: 0,
+    pixel_width: 0,
     cols: 0,
     rows: 0,
     col: 0,
@@ -55,11 +57,20 @@ static CONSOLE: IrqMutex<Console> = IrqMutex::new(Console {
     cursor_drawn: false,
 });
 
+/// コンソールの大きさを今のウィンドウに合わせ、先頭から書き始める（画面は消さない）
 pub fn init() {
     let mut c = CONSOLE.lock();
-    c.top = RESERVED_TOP_ROWS * c.font.height;
-    c.cols = vga::width() / c.font.width;
-    c.rows = vga::height() / c.font.height - RESERVED_TOP_ROWS;
+    let (w, h, mode) = {
+        let s = SCREEN.lock();
+        let (w, h) = s.console_size();
+        (w, h, s.mode())
+    };
+    // 全画面では一番上の行をステータスバーに使う
+    let reserved = if mode == gui::Mode::Fullscreen { 1 } else { 0 };
+    c.top = reserved * c.font.height;
+    c.pixel_width = w;
+    c.cols = w / c.font.width;
+    c.rows = h / c.font.height - reserved;
     c.col = 0;
     c.row = 0;
 }
@@ -247,7 +258,7 @@ impl Console {
             return;
         }
         let (y0, y1) = (self.cell_y(from), self.cell_y(to));
-        screen.surface().fill_rect(0, y0 as i32, vga::width() as i32, (y1 - y0) as i32, self.bg);
+        screen.surface().fill_rect(0, y0 as i32, self.pixel_width as i32, (y1 - y0) as i32, self.bg);
         screen.mark_dirty(y0, y1);
     }
 
@@ -258,7 +269,7 @@ impl Console {
         }
         let h = self.font.height as i32;
         let (y0, y1) = (self.cell_y(0), self.cell_y(self.rows));
-        screen.surface().scroll_up(0, y0 as i32, vga::width() as i32, (y1 - y0) as i32, h, self.bg);
+        screen.surface().scroll_up(0, y0 as i32, self.pixel_width as i32, (y1 - y0) as i32, h, self.bg);
         screen.mark_dirty(y0, y1);
     }
 

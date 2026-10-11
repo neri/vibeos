@@ -18,6 +18,7 @@ mod bootinfo;
 mod drivers;
 mod fs;
 mod gfx;
+mod gui;
 mod input;
 #[cfg(feature = "qemu-test")]
 mod ktest;
@@ -81,6 +82,7 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     let info = bootinfo::set(loader_info);
 
     drivers::vga::init(info);
+    gui::init();
     gfx::console::init();
 
     gfx::console::set_color(palette::YELLOW, palette::BLACK);
@@ -92,6 +94,7 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     check_cpu();
     print_memory(info);
     mm::init(info);
+    gui::init_windows();
 
     let stack_top = (&raw const BOOT_STACK) as u32 + BOOT_STACK_SIZE as u32;
     arch::gdt::init(stack_top);
@@ -112,6 +115,7 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     if ps2.mouse {
         input::start_mouse();
     }
+    gui::start_input_router();
     // SAFETY: IDT・PIC・各ハンドラ・スケジューラの準備ができた
     unsafe { arch::cpu::enable_interrupts() };
     klog!("interrupts enabled");
@@ -125,6 +129,11 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     task::spawn("ktest", || ktest::run_all());
     #[cfg(not(feature = "qemu-test"))]
     {
+        // 画面が広ければデスクトップ（ウィンドウ）にして、コンソールを端末のウィンドウに合わせる
+        if gui::start_desktop() {
+            gfx::console::init();
+            klog!("gui: desktop {}x{}", drivers::vga::width(), drivers::vga::height());
+        }
         gfx::statusbar::start();
         task::spawn("shell", || shell::run());
     }

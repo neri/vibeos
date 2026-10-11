@@ -69,11 +69,20 @@ fn split_args(line: &str) -> Vec<String> {
     out
 }
 
-/// 組み込みのコマンドでなければ、/BIN の中のプログラムとして実行して終わるのを待つ
+/// 組み込みのコマンドでなければ、/BIN の中のプログラムとして実行して終わるのを待つ。
+/// 最後が "&" なら待たない（裏で動かす）
 fn run_program(argv: &[&str]) {
+    let (argv, background) = match argv.split_last() {
+        Some((&"&", rest)) if !rest.is_empty() => (rest, true),
+        _ => (argv, false),
+    };
     // argv[0] は打った名前のまま渡す
     let path = crate::process::resolve_program(argv[0]);
     match crate::process::spawn(&path, argv) {
+        Ok(id) if background => {
+            crate::process::detach(id);
+            kprintln!("[{}] {}", id, argv[0]);
+        }
         Ok(id) => {
             // 前面のプロセスにする（Ctrl+C で止められる）
             crate::process::set_foreground(Some(id));

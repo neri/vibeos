@@ -37,7 +37,8 @@ type third
 key ret
 key ctrl+u
 key ctrl+s
-wait-serial Saved
+# 前の保存のメッセージ（Saved 26 bytes）と取り違えないよう、大きさまで確かめる（保存はフロッピーへの書き戻しを含むので時間がかかる）
+wait-serial Saved 33 bytes
 key ctrl+q
 type cat /docs/note.txt
 key ret

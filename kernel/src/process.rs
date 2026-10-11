@@ -8,16 +8,15 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use vibe_abi::{EXIT_INTERRUPTED, EXIT_KILLED, USER_BASE, USER_END, USER_STACK_SIZE, USER_STACK_TOP, err};
 use vibe_alloc::frame::PAGE_SIZE;
-use vibe_gfx::palette;
 use xmas_elf::ElfFile;
 use xmas_elf::header::{Class, Data, Machine, Type};
 use xmas_elf::program::Type as PhType;
 
-use crate::drivers::vga::{self, DisplayId, SCREEN};
+use crate::gui::{self, SCREEN, WinId};
 use crate::fs;
 use crate::mm::space::AddressSpace;
 use crate::sync::{IrqMutex, Mutex};
@@ -26,10 +25,8 @@ use crate::task::sched::{self, TaskId};
 /// プロセスが持つもの（タスクから `Arc` で参照する）
 pub struct UserProc {
     pub space: AddressSpace,
-    /// gfx_open で作った画面
-    pub display: Option<DisplayId>,
-    /// gfx_palette でパレットを変えたか（閉じるときに戻す）
-    pub custom_palette: bool,
+    /// gfx_open で作った画面（ウィンドウ）
+    pub display: Option<WinId>,
 }
 
 pub type UserRef = Arc<Mutex<UserProc>>;
@@ -112,7 +109,7 @@ pub fn spawn(path: &str, args: &[&str]) -> Result<TaskId, i32> {
     let esp = push_args(&space, args).ok_or(err::ENOMEM)?;
 
     let name = path.rsplit('/').next().unwrap_or(path);
-    let user = Arc::new(Mutex::new(UserProc { space, display: None, custom_palette: false }));
+    let user = Arc::new(Mutex::new(UserProc { space, display: None }));
     Ok(sched::spawn_user(name, user, entry, esp))
 }
 
@@ -178,7 +175,10 @@ pub fn exit_current(code: i32) -> ! {
     if let Some(user) = sched::current_user() {
         close_display(&mut user.lock());
     }
-    EXIT_CODES.lock().insert(sched::current_id(), code);
+    let me = sched::current_id();
+    if DETACHED.lock().remove(&me).is_none() {
+        EXIT_CODES.lock().insert(me, code);
+    }
     sched::exit()
 }
 
@@ -195,16 +195,12 @@ pub fn kill_current(reason: &str, eip: u32, addr: Option<u32>) -> ! {
     exit_current(EXIT_KILLED)
 }
 
-/// プロセスの画面を閉じ、パレットを戻す
+/// プロセスの画面（ウィンドウ）を閉じる。パレットは gui が前に出ているウィンドウのものに戻す
 pub fn close_display(p: &mut UserProc) {
-    let mut s = SCREEN.lock();
-    if p.custom_palette {
-        vga::set_palette(&palette::standard());
-        p.custom_palette = false;
-    }
     if let Some(id) = p.display.take() {
+        let mut s = SCREEN.lock();
+        s.destroy_window(id);
         s.set_cursor_visible(false);
-        s.destroy_display(id);
         s.present();
     }
 }
@@ -219,28 +215,79 @@ pub fn resolve_program(name: &str) -> String {
 }
 
 const NO_PROCESS: u32 = u32::MAX;
-/// シェルが終わるのを待っている（キーボードを使っている）プロセス
+/// シェルが終わるのを待っている（端末のキーボードを使っている）プロセス
 static FOREGROUND: AtomicU32 = AtomicU32::new(NO_PROCESS);
-/// Ctrl+C が押された（前面のプロセスを止める）
-static INTERRUPT: AtomicBool = AtomicBool::new(false);
+
+/// 止めるよう頼まれたプロセス（Ctrl+C・ウィンドウの [x]）と、Ctrl+C によるものか。
+/// 割り込みの中でも使うので固定長
+struct KillList {
+    ids: [(TaskId, bool); 16],
+    len: usize,
+}
+
+static KILL: IrqMutex<KillList> = IrqMutex::new(KillList { ids: [(0, false); 16], len: 0 });
+
+/// 誰も終わるのを待たないプロセス（シェルの "&"）。終了コードを残さない
+static DETACHED: IrqMutex<BTreeMap<TaskId, ()>> = IrqMutex::new(BTreeMap::new());
+
+pub fn detach(id: TaskId) {
+    DETACHED.lock().insert(id, ());
+}
 
 pub fn set_foreground(id: Option<TaskId>) {
     FOREGROUND.store(id.unwrap_or(NO_PROCESS), Ordering::Relaxed);
-    INTERRUPT.store(false, Ordering::Relaxed);
 }
 
-/// キーボードの割り込みから: Ctrl+C が押された
+/// プロセスを止めるよう頼む。ユーザモードへ戻る直前に止まる（割り込みの中から呼んでよい）
+pub fn request_kill(id: TaskId) {
+    request_kill_with(id, false);
+}
+
+fn request_kill_with(id: TaskId, ctrl_c: bool) {
+    {
+        let mut k = KILL.lock();
+        let len = k.len;
+        if !k.ids[..len].iter().any(|e| e.0 == id) && len < k.ids.len() {
+            k.ids[len] = (id, ctrl_c);
+            k.len += 1;
+        }
+    }
+    // キーを待っているなら起こす（戻ってきたところで止める）
+    gui::wake_readers();
+}
+
+/// キーボードの割り込みから: Ctrl+C が押された。フォーカスのあるウィンドウがアプリのものなら
+/// その持ち主、端末ならシェルが待っているプロセスを止める
 pub fn request_interrupt() {
-    if FOREGROUND.load(Ordering::Relaxed) != NO_PROCESS {
-        INTERRUPT.store(true, Ordering::Relaxed);
+    let target = SCREEN.lock().focused_owner().or_else(|| {
+        let f = FOREGROUND.load(Ordering::Relaxed);
+        (f != NO_PROCESS).then_some(f)
+    });
+    if let Some(id) = target {
+        request_kill_with(id, true);
     }
 }
 
-/// ユーザモードへ戻る直前に呼ぶ: Ctrl+C が押されていて、今のタスクが前面のプロセスなら止める
+/// ユーザモードへ戻る直前に呼ぶ: 止めるよう頼まれていれば止める
 pub fn check_interrupt() {
-    if INTERRUPT.load(Ordering::Relaxed) && sched::current_id() == FOREGROUND.load(Ordering::Relaxed) {
-        INTERRUPT.store(false, Ordering::Relaxed);
-        kprintln!("^C");
+    let me = sched::current_id();
+    let hit = {
+        let mut k = KILL.lock();
+        let len = k.len;
+        match k.ids[..len].iter().position(|e| e.0 == me) {
+            Some(p) => {
+                let entry = k.ids[p];
+                k.ids[p] = k.ids[len - 1];
+                k.len -= 1;
+                Some(entry.1)
+            }
+            None => None,
+        }
+    };
+    if let Some(ctrl_c) = hit {
+        if ctrl_c {
+            kprintln!("^C");
+        }
         exit_current(EXIT_INTERRUPTED);
     }
 }

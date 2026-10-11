@@ -12,13 +12,16 @@ use alloc::vec::Vec;
 use vibe_abi::{DirEntry, KeyEvent, MouseState, Stat, err, nr};
 
 use crate::arch::trap::TrapFrame;
-use crate::drivers::vga::{self, SCREEN};
-use crate::drivers::{keyboard, pit};
+use crate::gui::{self, SCREEN};
+use crate::drivers::pit;
 use crate::fs;
-use crate::input;
 use crate::process::{self, UserRef};
 use crate::shell::line::{Input, LineEditor};
 use crate::task::{self, sched};
+
+/// アプリの画面（gfx_open）の大きさ
+const APP_W: usize = 320;
+const APP_H: usize = 200;
 
 /// ファイル記述子 0〜2 はコンソール。それ以降は VFS の番号 + 3
 const FIRST_FILE_FD: u32 = 3;
@@ -116,28 +119,31 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
             let mut u = user.lock();
             let mut s = SCREEN.lock();
             if u.display.is_none() {
-                let id = s.create_display();
-                s.set_foreground(id);
+                // タイトルはプログラムの名前（拡張子を除く）
+                let name = sched::current_name();
+                let title = name.rsplit_once('.').map_or(name.as_str(), |(base, _)| base);
+                let id = s.create_window(APP_W, APP_H, title, Some(sched::current_id()), true);
                 u.display = Some(id);
             }
             s.set_cursor_visible(a & vibe_abi::GFX_CURSOR != 0);
             s.present();
+            let id = u.display.unwrap();
             drop(s);
-            input::clear_mouse_events();
+            gui::clear_mouse(id);
             Ok(0)
         }
         nr::GFX_BLIT => {
-            let len = (vga::APP_WIDTH * vga::APP_HEIGHT) as u32;
+            let len = (APP_W * APP_H) as u32;
             check_user(user, a, len, false)?;
             let u = user.lock();
             let id = u.display.ok_or(err::EINVAL)?;
             // SAFETY: 上で今のプロセスが読めるページだと確かめた
             let src = unsafe { core::slice::from_raw_parts(a as *const u8, len as usize) };
             let mut s = SCREEN.lock();
-            if let Some(mut surf) = s.display_surface(id) {
-                surf.blit(0, 0, src, vga::APP_WIDTH, None);
+            if let Some(mut surf) = s.window_surface(id) {
+                surf.blit(0, 0, src, APP_W, None);
             }
-            s.mark_display_dirty(id, 0, vga::APP_HEIGHT);
+            s.mark_window_dirty(id, 0, APP_H);
             s.present();
             Ok(0)
         }
@@ -147,14 +153,13 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
                 return Err(err::EINVAL);
             }
             check_user(user, c, (count * 3) as u32, false)?;
-            let mut u = user.lock();
-            if u.display.is_none() {
-                return Err(err::EINVAL);
-            }
+            let u = user.lock();
+            let id = u.display.ok_or(err::EINVAL)?;
             // SAFETY: 上で確かめた
             let rgb = unsafe { core::slice::from_raw_parts(c as *const [u8; 3], count) };
-            vga::set_palette_range(start as u8, rgb);
-            u.custom_palette = true;
+            let mut s = SCREEN.lock();
+            s.set_window_palette(id, start, rgb);
+            s.present();
             Ok(0)
         }
         nr::GFX_CLOSE => {
@@ -162,25 +167,24 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
             Ok(0)
         }
         nr::GETKEY => {
-            let ev = if a != 0 { keyboard::try_read_event() } else { Some(keyboard::read_event()) };
+            // 画面（ウィンドウ）を開いていればそこへのキー、なければ端末へのキー
+            let win = user.lock().display.unwrap_or(gui::CONSOLE);
+            let ev = if a != 0 { gui::try_read_key(win) } else { gui::read_key(win) };
             Ok(ev.map_or(0, |e| {
                 KeyEvent::encode(e.ch, e.key.0, e.pressed, e.mods.shift(), e.mods.ctrl(), e.mods.alt())
             }))
         }
-        nr::MOUSE => match input::poll_mouse() {
-            Some(m) => {
-                // アプリの画面（320x200）の座標にする
-                let (x, y) = vga::screen_to_app(m.x, m.y);
-                let st = MouseState {
-                    x,
-                    y,
-                    buttons: m.left as u32 | (m.right as u32) << 1 | (m.middle as u32) << 2,
-                };
-                copy_to_user(user, a, as_bytes(&st))?;
-                Ok(1)
+        nr::MOUSE => {
+            let Some(win) = user.lock().display else { return Ok(0) };
+            match gui::poll_mouse(win) {
+                Some(m) => {
+                    let st = MouseState { x: m.x, y: m.y, buttons: m.buttons as u32 };
+                    copy_to_user(user, a, as_bytes(&st))?;
+                    Ok(1)
+                }
+                None => Ok(0),
             }
-            None => Ok(0),
-        },
+        }
         _ => Err(err::ENOSYS),
     }
 }
