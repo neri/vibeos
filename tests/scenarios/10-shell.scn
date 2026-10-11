@@ -1,0 +1,45 @@
+# Phase 7: シェル（行の編集・履歴・Ctrl+C・引用符）と、裏で動き続けるステータスバーのスレッド
+timeout 15
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+# ステータスバー（青）が描かれ、時刻が進む
+sleep 300
+expect-pixel 4 4 0 0 168
+expect-change 400 0 240 16 1500
+# 行の途中に挿入: "eco hi" → Home, → → で 'c' の前に 'h' を入れて "echo hi"
+type eco hi
+key home
+key right
+key right
+type h
+key ret
+wait-serial hi
+# 後ろから消す・Delete
+type echo abcX
+key backspace
+key left
+key delete
+key ret
+wait-serial ab
+# 履歴: ↑で前のコマンドを呼び出す
+type echo "two  words"
+key ret
+wait-serial two  words
+key up
+key ret
+wait-serial two  words
+type history
+key ret
+wait-serial echo "two  words"
+# Ctrl+C で入力を取り消す（打った文字はシリアルにも出るので、実行されたら出る help の出力が無いことで確かめる）
+type help
+key ctrl+c
+wait-serial ^C
+type help echo
+key ret
+wait-serial echo [text...]
+type uptime
+key ret
+wait-serial ticks)
+serial-absent for details
+serial-absent PANIC

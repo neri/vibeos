@@ -1,0 +1,8 @@
+# Phase 7: reboot で CPU がリセットされる（QEMU は -no-reboot なので終了する）
+timeout 15
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type reboot
+key ret
+wait-serial rebooting
+expect-exit 0

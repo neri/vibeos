@@ -5,5 +5,6 @@ wait-serial Hello from Rust!
 wait-serial VIBEOS READY
 serial-absent PANIC
 sleep 200
-# 1〜2 行目（"VibeOS" と "Hello from Rust!"）だけを比べる。3 行目以降はビルドごとに変わる値を含む
-expect-screen phase2-hello 0 0 640 32
+# 2〜3 行目（"VibeOS" と "Hello from Rust!"）だけを比べる。1 行目はステータスバー（時刻が変わる）、
+# 4 行目以降はビルドごとに変わる値を含む
+expect-screen phase2-hello 0 16 640 32

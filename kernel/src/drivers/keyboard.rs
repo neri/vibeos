@@ -154,12 +154,3 @@ pub fn read_event() -> KeyEvent {
         KEY_WAIT.wait_until(|| !RAW.lock().is_empty());
     }
 }
-
-/// 文字が入力されるまで待つ
-pub fn read_char() -> char {
-    loop {
-        if let KeyEvent { pressed: true, ch: Some(c), .. } = read_event() {
-            return c;
-        }
-    }
-}

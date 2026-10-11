@@ -70,6 +70,7 @@ dependencies = [
  "vibe-font",
  "vibe-gfx",
  "vibe-keyboard",
+ "vibe-term",
 ]
 
 [[package]]
@@ -227,6 +228,10 @@ dependencies = [
  "png",
  "serde_json",
 ]
+
+[[package]]
+name = "vibe-term"
+version = "0.1.0"
 
 [[package]]
 name = "zlib-rs"

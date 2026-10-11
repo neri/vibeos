@@ -21,8 +21,8 @@ mod gfx;
 #[cfg(feature = "qemu-test")]
 mod ktest;
 mod mm;
-mod monitor;
 mod panic;
+mod shell;
 mod sync;
 mod task;
 mod util;
@@ -109,7 +109,10 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     #[cfg(feature = "qemu-test")]
     task::spawn("ktest", || ktest::run_all());
     #[cfg(not(feature = "qemu-test"))]
-    task::spawn("monitor", || monitor::run());
+    {
+        gfx::statusbar::start();
+        task::spawn("shell", || shell::run());
+    }
     task::exit()
 }
 

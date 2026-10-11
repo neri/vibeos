@@ -16,6 +16,7 @@
 //!                         画面を tests/golden/NAME.png と比較する。矩形を指定するとその範囲だけ
 //!                         切り出して比較する（UPDATE_GOLDEN=1 のときは期待画像を更新する）
 //!   expect-pixel X Y R G B  画面の 1 点の色を確認する
+//!   expect-change X Y W H MS  矩形の中身が MS ミリ秒の間に変わることを確認する（動き続けているものの確認）
 //!   key KEYS              キーを押す（例: `key a`, `key shift+a`, `key ret`。QEMU の qcode 名）
 //!   type TEXT             文字列を US 配列で打つ
 //!   expect-exit CODE      QEMU が終了コード CODE で終わるのを待つ
@@ -180,6 +181,22 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
                 let want = [v[2] as u8, v[3] as u8, v[4] as u8];
                 if got != want {
                     return Err(at(format!("pixel is {got:?}, want {want:?}")));
+                }
+            }
+            "expect-change" => {
+                let v: Vec<u32> = s.arg.split_whitespace().map(|x| x.parse().unwrap_or(u32::MAX)).collect();
+                let [x, y, w, h, ms] = v[..] else {
+                    return Err(at("expected X Y W H MS".into()));
+                };
+                let a_path = out.join(format!("{name}-change-a.png"));
+                let b_path = out.join(format!("{name}-change-b.png"));
+                vm.screendump(&a_path).map_err(at)?;
+                thread::sleep(Duration::from_millis(ms as u64));
+                vm.screendump(&b_path).map_err(at)?;
+                let a = Image::load(&a_path).and_then(|i| i.crop(x, y, w, h)).map_err(at)?;
+                let b = Image::load(&b_path).and_then(|i| i.crop(x, y, w, h)).map_err(at)?;
+                if a.rgb == b.rgb {
+                    return Err(at(format!("region did not change in {ms} ms")));
                 }
             }
             "key" => vm.send_key(&s.arg.split('+').collect::<Vec<_>>()).map_err(at)?,
