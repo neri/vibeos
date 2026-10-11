@@ -126,6 +126,7 @@ impl LineEditor {
         LineEditor { history: VecDeque::new() }
     }
 
+    #[allow(dead_code)]
     pub fn history(&self) -> impl Iterator<Item = &String> {
         self.history.iter()
     }

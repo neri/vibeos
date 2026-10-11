@@ -4,7 +4,7 @@
 //! コマンドを追加するときは `commands.rs` の `COMMANDS` に足す。
 
 mod commands;
-mod line;
+pub mod line;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -34,7 +34,7 @@ pub fn run() -> ! {
         let argv: Vec<&str> = args.iter().map(String::as_str).collect();
         match commands::find(argv[0]) {
             Some(cmd) => (cmd.run)(&mut shell, &argv),
-            None => kprintln!("unknown command: {}", argv[0]),
+            None => run_program(&argv),
         }
     }
 }
@@ -67,4 +67,25 @@ fn split_args(line: &str) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+/// 組み込みのコマンドでなければ、/BIN の中のプログラムとして実行して終わるのを待つ
+fn run_program(argv: &[&str]) {
+    // argv[0] は打った名前のまま渡す
+    let path = crate::process::resolve_program(argv[0]);
+    match crate::process::spawn(&path, argv) {
+        Ok(id) => {
+            // 前面のプロセスにする（Ctrl+C で止められる）
+            crate::process::set_foreground(Some(id));
+            let result = crate::process::wait(id);
+            crate::process::set_foreground(None);
+            match result {
+                Ok(0) => {}
+                Ok(code) => kprintln!("[{} exited with {}]", argv[0], code),
+                Err(e) => kprintln!("{}: {}", argv[0], vibe_abi::err::name(e)),
+            }
+        }
+        Err(vibe_abi::err::ENOENT) => kprintln!("unknown command: {}", argv[0]),
+        Err(e) => kprintln!("{}: {}", argv[0], vibe_abi::err::name(e)),
+    }
 }

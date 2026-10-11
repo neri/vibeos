@@ -1,0 +1,10 @@
+[package]
+name = "vibe-rt"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "ユーザアプリ用のランタイム（_start・システムコール・ヒープ・panic）"
+
+[dependencies]
+vibe-abi = { path = "../../crates/vibe-abi" }
+vibe-alloc = { path = "../../crates/vibe-alloc" }

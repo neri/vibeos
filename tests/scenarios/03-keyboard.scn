@@ -3,9 +3,9 @@ timeout 15
 wait-serial interrupts enabled
 wait-serial VIBEOS READY
 wait-serial > 
-type hello
+type xyzzy
 key ret
-wait-serial unknown command: hello
+wait-serial unknown command: xyzzy
 type sleep
 key ret
 wait-serial sleep ok

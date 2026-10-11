@@ -14,6 +14,8 @@ bench = false
 qemu-test = []
 
 [dependencies]
+xmas-elf = "0.10"
+vibe-abi = { path = "../crates/vibe-abi" }
 vibe-alloc = { path = "../crates/vibe-alloc" }
 vibe-fat = { path = "../crates/vibe-fat" }
 vibe-font = { path = "../crates/vibe-font" }

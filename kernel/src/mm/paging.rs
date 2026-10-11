@@ -16,7 +16,6 @@ use super::pmm;
 
 pub const PRESENT: u32 = 1 << 0;
 pub const WRITABLE: u32 = 1 << 1;
-#[allow(dead_code)]
 pub const USER: u32 = 1 << 2;
 
 /// カーネル空間の終わり（ここから上はユーザ空間）
@@ -112,6 +111,14 @@ pub fn unmap(pd: usize, virt: usize) -> Option<usize> {
     unsafe { e.write(0) };
     flush(virt);
     Some((old & !0xFFF) as usize)
+}
+
+/// `virt` のページの (物理アドレス, フラグ)。対応付けられていなければ None
+pub fn lookup(pd: usize, virt: usize) -> Option<(usize, u32)> {
+    let e = entry(pd, virt, false)?;
+    // SAFETY: entry が返したのはページテーブルの中のエントリ
+    let v = unsafe { e.read() };
+    (v & PRESENT != 0).then(|| ((v & !0xFFF) as usize, v & 0xFFF))
 }
 
 /// `virt` が対応付けられている物理アドレス

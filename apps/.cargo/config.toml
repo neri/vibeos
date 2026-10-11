@@ -1,0 +1,12 @@
+# apps/ の中で cargo を実行したときだけ効く設定（ユーザアプリ用）
+[build]
+target = "../targets/i686-vibeos.json"
+target-dir = "../target/apps"
+
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
+json-target-spec = true
+
+[target.i686-vibeos]
+rustflags = ["-C", "relocation-model=static"]

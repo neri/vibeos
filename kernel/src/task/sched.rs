@@ -23,6 +23,7 @@ use super::wait::WaitQueue;
 use crate::arch::{cpu, gdt};
 use crate::fs::TaskFs;
 use crate::mm::{paging, pmm};
+use crate::process::UserRef;
 use crate::sync::{IrqMutex, Mutex};
 
 pub type TaskId = u32;
@@ -77,6 +78,10 @@ pub struct Task {
     pub ticks: u32,
     /// 開いているファイル・カレントディレクトリ
     fs: Arc<Mutex<TaskFs>>,
+    /// このタスクのページディレクトリ（カーネルスレッドはカーネルのもの）
+    cr3: usize,
+    /// ユーザプロセスならそのアドレス空間など
+    user: Option<UserRef>,
 }
 
 pub struct TaskInfo {
@@ -88,6 +93,8 @@ pub struct TaskInfo {
 
 struct Scheduler {
     started: bool,
+    /// 今 CR3 に入っているページディレクトリ
+    active_cr3: usize,
     tasks: BTreeMap<TaskId, Box<Task>>,
     ready: VecDeque<TaskId>,
     current: TaskId,
@@ -99,6 +106,7 @@ struct Scheduler {
 
 static SCHED: IrqMutex<Scheduler> = IrqMutex::new(Scheduler {
     started: false,
+    active_cr3: 0,
     tasks: BTreeMap::new(),
     ready: VecDeque::new(),
     current: 0,
@@ -149,11 +157,14 @@ pub fn init() {
                 stack: None,
                 ticks: 0,
                 fs: TaskFs::new_child(&[]),
+                cr3: paging::kernel_page_directory(),
+                user: None,
             }),
         );
         s.current = id;
+        s.active_cr3 = paging::kernel_page_directory();
     }
-    let idle = create("idle", Box::new(idle_loop), false);
+    let idle = create("idle", Start::Kernel(Box::new(idle_loop)), false, None);
     let mut s = SCHED.lock();
     s.idle = idle;
     s.started = true;
@@ -192,14 +203,27 @@ impl Scheduler {
 
 type Entry = Box<dyn FnOnce() + Send + 'static>;
 
-/// カーネルスレッドを作って実行待ちにする
-pub fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> TaskId {
-    create(name, Box::new(f), true)
+/// タスクの始め方
+enum Start {
+    /// カーネルスレッド: 関数を呼ぶ
+    Kernel(Entry),
+    /// ユーザプロセス: (入口, ユーザスタック) で ring 3 に入る
+    User(u32, u32),
 }
 
-fn create(name: &str, entry: Entry, make_ready: bool) -> TaskId {
+/// カーネルスレッドを作って実行待ちにする
+pub fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> TaskId {
+    create(name, Start::Kernel(Box::new(f)), true, None)
+}
+
+/// ユーザプロセスのタスクを作る（そのアドレス空間で `entry` から ring 3 で始まる）
+pub fn spawn_user(name: &str, user: UserRef, entry: u32, user_esp: u32) -> TaskId {
+    create(name, Start::User(entry, user_esp), true, Some(user))
+}
+
+fn create(name: &str, start: Start, make_ready: bool, user: Option<UserRef>) -> TaskId {
     let stack = KernelStack::new().expect("sched: no memory for a kernel stack");
-    let arg = Box::into_raw(Box::new(entry)) as u32;
+    let arg = Box::into_raw(Box::new(start)) as u32;
     // switch_context が pop して ret したときに task_start(arg) が呼ばれるよう積んでおく。
     // 関数の入口で ESP+4 が 16 の倍数になるよう（データレイアウトの S128）、上端に 3 語の詰め物を置く
     let mut sp = stack.top() as *mut u32;
@@ -225,6 +249,10 @@ fn create(name: &str, entry: Entry, make_ready: bool) -> TaskId {
     // カレントディレクトリは作ったタスクから受け継ぐ（ロックの順番を守るため SCHED の外で読む）
     let parent_cwd: Vec<String> = if is_started() { current_fs().lock().cwd_parts().to_vec() } else { Vec::new() };
     let fs = TaskFs::new_child(&parent_cwd);
+    let cr3 = match &user {
+        Some(u) => u.lock().space.page_directory(),
+        None => paging::kernel_page_directory(),
+    };
     let mut s = SCHED.lock();
     let id = s.alloc_id();
     s.tasks.insert(
@@ -237,6 +265,8 @@ fn create(name: &str, entry: Entry, make_ready: bool) -> TaskId {
             stack: Some(stack),
             ticks: 0,
             fs,
+            cr3,
+            user,
         }),
     );
     if make_ready {
@@ -246,12 +276,19 @@ fn create(name: &str, entry: Entry, make_ready: bool) -> TaskId {
 }
 
 extern "C" fn task_start(arg: u32) -> ! {
-    // SAFETY: 新しいタスクは割り込み可能な状態で始める
-    unsafe { cpu::enable_interrupts() };
-    // SAFETY: create が Box::into_raw で渡したもの
-    let entry = unsafe { Box::from_raw(arg as *mut Entry) };
-    entry();
-    exit()
+    // SAFETY: create が Box::into_raw で渡したもの（ここで取り出して Box は解放する）
+    let start = *unsafe { Box::from_raw(arg as *mut Start) };
+    match start {
+        Start::Kernel(entry) => {
+            // SAFETY: 新しいタスクは割り込み可能な状態で始める
+            unsafe { cpu::enable_interrupts() };
+            entry();
+            exit()
+        }
+        // SAFETY: このタスクのアドレス空間にプログラムとスタックが用意されている（process::spawn）。
+        // ユーザモードには戻らない関数で入るので、ここでヒープのものを持っていないこと
+        Start::User(entry, esp) => unsafe { crate::arch::usermode::enter(entry, esp) },
+    }
 }
 
 fn idle_loop() {
@@ -297,8 +334,15 @@ fn schedule() {
             let n = s.task(next);
             n.state = State::Running;
             let new_esp = n.esp;
+            let new_cr3 = n.cr3;
             if let Some(stack) = &n.stack {
                 gdt::set_kernel_stack(stack.top() as u32);
+            }
+            if new_cr3 != s.active_cr3 {
+                // カーネル空間は全アドレス空間で共有しているので、ここで切り替えても続けて動ける
+                // SAFETY: new_cr3 は有効なページディレクトリ
+                unsafe { core::arch::asm!("mov cr3, {}", in(reg) new_cr3, options(nostack, preserves_flags)) };
+                s.active_cr3 = new_cr3;
             }
             let old_esp = &mut s.task(cur).esp as *mut u32;
             Some((old_esp, new_esp))
@@ -357,6 +401,24 @@ pub fn exit() -> ! {
 
 pub fn current_id() -> TaskId {
     SCHED.lock().current
+}
+
+/// 今のタスクがユーザプロセスなら、そのアドレス空間など
+pub fn current_user() -> Option<UserRef> {
+    let mut s = SCHED.lock();
+    let cur = s.current;
+    s.task(cur).user.clone()
+}
+
+pub fn current_name() -> String {
+    let mut s = SCHED.lock();
+    let cur = s.current;
+    s.task(cur).name.clone()
+}
+
+/// タスクがまだある（終わって回収されていない）か
+pub fn exists(id: TaskId) -> bool {
+    SCHED.lock().tasks.contains_key(&id)
 }
 
 /// 今のタスクのファイルシステムの状態

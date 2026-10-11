@@ -240,6 +240,19 @@ pub fn set_palette(p: &[[u8; 3]; 256]) {
     }
 }
 
+/// パレットの一部を設定する（各 6bit）
+pub fn set_palette_range(start: u8, colors: &[[u8; 3]]) {
+    // SAFETY: DAC への書き込みは色を変えるだけ
+    unsafe {
+        outb(DAC_WRITE_INDEX, start);
+        for c in colors {
+            outb(DAC_DATA, c[0] & 0x3F);
+            outb(DAC_DATA, c[1] & 0x3F);
+            outb(DAC_DATA, c[2] & 0x3F);
+        }
+    }
+}
+
 /// 垂直帰線期間の始まりを待つ（VGA が応答しない場合に備えて上限付き）
 #[allow(dead_code)]
 pub fn wait_vsync() {

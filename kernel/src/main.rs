@@ -24,8 +24,10 @@ mod input;
 mod ktest;
 mod mm;
 mod panic;
+mod process;
 mod shell;
 mod sync;
+mod syscall;
 mod task;
 mod util;
 

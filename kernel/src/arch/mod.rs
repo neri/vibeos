@@ -6,3 +6,4 @@ pub mod idt;
 pub mod pic;
 pub mod port;
 pub mod trap;
+pub mod usermode;

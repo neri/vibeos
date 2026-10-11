@@ -85,11 +85,12 @@ pub extern "C" fn dispatch(frame: &mut TrapFrame) {
     match vector {
         0..=31 => exception(frame),
         v if (IRQ_BASE..IRQ_BASE + 16).contains(&v) => irq(v - IRQ_BASE),
-        SYSCALL_VECTOR => {
-            klog!("syscall {} (not implemented)", frame.eax);
-            frame.eax = u32::MAX;
-        }
+        SYSCALL_VECTOR => crate::syscall::dispatch(frame),
         _ => klog!("unexpected interrupt {}", vector),
+    }
+    // ユーザモードへ戻る前に、Ctrl+C で止めるよう頼まれていないか見る
+    if frame.cs & 3 == 3 {
+        crate::process::check_interrupt();
     }
 }
 
@@ -120,6 +121,10 @@ fn exception(f: &TrapFrame) -> ! {
     } else {
         0
     };
+    // ユーザモード（ring 3）で起きた例外は、そのプロセスだけを止める
+    if f.cs & 3 == 3 {
+        crate::process::kill_current(name, f.eip, (f.vector == 14).then_some(cr2));
+    }
     panic!(
         "{name}\nerr={:x} cr2={:08x}\neip={:08x} cs={:x} efl={:08x}\neax={:08x} ebx={:08x}\necx={:08x} edx={:08x}\nesi={:08x} edi={:08x}\nebp={:08x} esp={:08x}",
         f.error,

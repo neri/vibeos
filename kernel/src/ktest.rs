@@ -36,6 +36,9 @@ const TESTS: &[(&str, fn())] = &[
     ("fs_errors", fs_errors),
     ("fs_fd_read_in_chunks", fs_fd_read_in_chunks),
     ("fs_cwd_is_per_task", fs_cwd_is_per_task),
+    ("process_exit_codes", process_exit_codes),
+    ("process_spawn_errors", process_spawn_errors),
+    ("process_reclaims_memory", process_reclaims_memory),
 ];
 
 pub fn run_all() -> ! {
@@ -295,4 +298,39 @@ fn fs_cwd_is_per_task() {
     task::join(id);
     assert_eq!(fs::cwd(), "/");
     assert_eq!(fs::open_count(), 0, "file table must not be shared");
+}
+
+fn run(path: &str, args: &[&str]) -> i32 {
+    let id = crate::process::spawn(path, args).unwrap_or_else(|e| panic!("spawn {path}: error {e}"));
+    crate::process::wait(id).unwrap()
+}
+
+fn process_exit_codes() {
+    assert_eq!(run("/BIN/HELLO.ELF", &["hello"]), 0);
+    assert_eq!(run("/BIN/FAULT.ELF", &["fault", "exit", "42"]), 42);
+    assert_eq!(run("/BIN/FAULT.ELF", &["fault", "null"]), vibe_abi::EXIT_KILLED);
+    assert_eq!(run("/BIN/FAULT.ELF", &["fault", "stack"]), vibe_abi::EXIT_KILLED);
+}
+
+fn process_spawn_errors() {
+    use vibe_abi::err;
+    assert_eq!(crate::process::spawn("/BIN/NOPE.ELF", &["x"]).err(), Some(err::ENOENT));
+    assert_eq!(crate::process::spawn("/HELLO.TXT", &["x"]).err(), Some(err::ENOEXEC));
+    assert_eq!(crate::process::spawn("/KERNEL.SYS", &["x"]).err(), Some(err::ENOEXEC));
+    assert_eq!(crate::process::wait(9999).err(), Some(err::ECHILD));
+}
+
+/// プロセスが終わると、そのページ・ページテーブル・カーネルスタックがすべて返る
+fn process_reclaims_memory() {
+    // カーネルヒープが途中で物理ページを取りに行かないよう、先に余裕を持たせておく
+    drop(vec![0u8; 512 * 1024]);
+    task::yield_now();
+    let (before, _) = pmm::stats();
+    for _ in 0..5 {
+        assert_eq!(run("/BIN/HELLO.ELF", &["hello"]), 0);
+        assert_eq!(run("/BIN/FAULT.ELF", &["fault", "kernel"]), vibe_abi::EXIT_KILLED);
+    }
+    task::yield_now();
+    let (after, _) = pmm::stats();
+    assert_eq!(before, after, "pages leaked by processes");
 }

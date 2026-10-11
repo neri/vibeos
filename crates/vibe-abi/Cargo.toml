@@ -1,0 +1,8 @@
+[package]
+name = "vibe-abi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "カーネルとアプリで共有する定義（システムコール番号・エラー番号・メモリ配置）"
+
+[dependencies]

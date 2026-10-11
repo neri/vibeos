@@ -72,12 +72,30 @@ define make-image
 	mcopy -i $(1).tmp $(2) ::KERNEL.SYS
 	mcopy -s -i $(1).tmp rootfs/* ::/
 	mcopy -s -i $(1).tmp $(GEN_ROOTFS)/* ::/
+	mcopy -s -i $(1).tmp $(APPS_DIR)/* ::/
 	fsck.fat -n $(1).tmp >/dev/null
 	mv $(1).tmp $(1)
 endef
 
 # ディスクに入れるファイル（rootfs/ 以下。8.3 形式の大文字の名前にすること）
 ROOTFS := $(shell find rootfs -type f)
+# ユーザアプリ（apps/ の中のバイナリ）。ディスクの /BIN/名前.ELF に入れる
+APPS := hello fault
+APPS_DIR := $(BUILD)/rootfs-apps
+APPS_STAMP := $(APPS_DIR)/.stamp
+
+$(APPS_STAMP): FORCE | $(BUILD)
+	cd apps && $(CARGO) build --release $(addprefix -p ,$(APPS))
+	mkdir -p $(APPS_DIR)/BIN
+	@for a in $(APPS); do \
+		name=$$(echo $$a | tr a-z A-Z); \
+		$(OBJCOPY) --strip-all target/apps/i686-vibeos/release/$$a $(APPS_DIR)/BIN/$$name.ELF.tmp; \
+		if ! cmp -s $(APPS_DIR)/BIN/$$name.ELF.tmp $(APPS_DIR)/BIN/$$name.ELF; then \
+			mv $(APPS_DIR)/BIN/$$name.ELF.tmp $(APPS_DIR)/BIN/$$name.ELF; touch $@; \
+		else rm $(APPS_DIR)/BIN/$$name.ELF.tmp; fi; \
+	done
+	@test -f $@ || touch $@
+
 # ビルド時に生成してディスクに入れるもの（tools/mkassets）
 GEN_ROOTFS := $(BUILD)/rootfs-gen
 GEN_STAMP := $(GEN_ROOTFS)/.stamp
@@ -87,10 +105,10 @@ $(GEN_STAMP): $(shell find tools/mkassets -type f) | $(BUILD)
 	$(CARGO) run -q --release -p mkassets -- $(GEN_ROOTFS)
 	touch $@
 
-$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP)
+$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
 	$(call make-image,$@,$(BUILD)/kernel.sys)
 
-$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/test/kernel.sys $(ROOTFS) $(GEN_STAMP)
+$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/test/kernel.sys $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
 	$(call make-image,$@,$(BUILD)/test/kernel.sys)
 
 # --- 実行 -------------------------------------------------------------------
@@ -104,7 +122,7 @@ debug: $(IMG)
 test: test-host test-qemu
 
 test-host:
-	$(CARGO) test --workspace --exclude kernel
+	$(CARGO) test --workspace --exclude kernel --exclude vibe-rt $(addprefix --exclude ,$(APPS))
 
 $(VIBE_RUN): FORCE
 	$(CARGO) build --release -p vibe-run

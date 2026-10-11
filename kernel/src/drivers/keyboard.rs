@@ -3,6 +3,8 @@
 //! 割り込みハンドラは生のスキャンコードをリングバッファに積むだけ。
 //! スキャンコードの解釈（vibe-keyboard）は読む側で行う。
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use vibe_keyboard::{Decoder, KeyEvent, US, UsLayout};
 
 use super::ps2;
@@ -21,8 +23,22 @@ pub fn init() {
     trap::set_irq_handler(1, on_irq);
 }
 
+/// Ctrl+C を割り込みの中で見つけるための最小限の状態（文字への変換は読む側で行う）
+static CTRL_DOWN: AtomicBool = AtomicBool::new(false);
+static AFTER_E0: AtomicBool = AtomicBool::new(false);
+
+fn watch_ctrl_c(byte: u8) {
+    let e0 = AFTER_E0.swap(byte == 0xE0, Ordering::Relaxed);
+    match byte & 0x7F {
+        0x1D => CTRL_DOWN.store(byte & 0x80 == 0, Ordering::Relaxed), // 左 Ctrl（E0 付きは右 Ctrl）
+        0x2E if byte & 0x80 == 0 && !e0 && CTRL_DOWN.load(Ordering::Relaxed) => crate::process::request_interrupt(),
+        _ => {}
+    }
+}
+
 fn on_irq() {
     let byte = ps2::read_data_now();
+    watch_ctrl_c(byte);
     if !RAW.lock().push(byte) {
         klog!("keyboard: buffer full, dropped {:#x}", byte);
     }

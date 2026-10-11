@@ -1,0 +1,21 @@
+# Phase 9: ユーザプロセス（ring 3）の起動・引数・ヒープ・終了コード
+timeout 20
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type hello world "two words"
+key ret
+wait-serial Hello from user space!
+wait-serial argv[0] = hello
+wait-serial argv[1] = world
+wait-serial argv[2] = two words
+wait-serial primes below 20000: 2262
+type fault exit 7
+key ret
+wait-serial [fault exited with 7]
+type nosuchprog
+key ret
+wait-serial unknown command: nosuchprog
+type ps
+key ret
+wait-serial shell
+serial-absent PANIC

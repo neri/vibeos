@@ -106,7 +106,9 @@ struct Gate {
 }
 
 const GATE_INTERRUPT_KERNEL: u8 = 0x8E; // present, DPL 0, 32bit 割り込みゲート
-const GATE_INTERRUPT_USER: u8 = 0xEE; // present, DPL 3（int 0x80 をユーザから呼べる）
+// システムコール用: present, DPL 3（int 0x80 をユーザから呼べる）, トラップゲート（割り込みを止めない。
+// システムコールの中で待つことがあるため）
+const GATE_TRAP_USER: u8 = 0xEF;
 const GATE_TASK: u8 = 0x85; // present, DPL 0, タスクゲート
 const DOUBLE_FAULT_VECTOR: usize = 8;
 
@@ -137,7 +139,7 @@ pub fn init() {
         for (i, &stub) in isr_stub_table.iter().enumerate() {
             idt[i] = gate(stub, GATE_INTERRUPT_KERNEL);
         }
-        idt[SYSCALL_VECTOR as usize] = gate(isr_stub_128 as *const () as u32, GATE_INTERRUPT_USER);
+        idt[SYSCALL_VECTOR as usize] = gate(isr_stub_128 as *const () as u32, GATE_TRAP_USER);
         // 二重フォルトは別の TSS（別のスタック）に切り替えて処理する
         idt[DOUBLE_FAULT_VECTOR] = Gate {
             offset_lo: 0,
