@@ -196,6 +196,7 @@ pub fn close_display(p: &mut UserProc) {
         p.custom_palette = false;
     }
     if let Some(id) = p.display.take() {
+        s.set_cursor_visible(false);
         s.destroy_display(id);
         s.present();
     }

@@ -14,6 +14,13 @@ pub const USER_STACK_SIZE: u32 = 64 * 1024;
 
 pub const SYSCALL_VECTOR: u8 = 0x80;
 
+/// gfx_open のフラグ: マウスカーソルを表示する
+pub const GFX_CURSOR: u32 = 1;
+
+/// 画面の大きさ（モード 13h）
+pub const SCREEN_WIDTH: usize = 320;
+pub const SCREEN_HEIGHT: usize = 200;
+
 /// 標準入出力のファイル記述子（コンソール）
 pub const STDIN: i32 = 0;
 pub const STDOUT: i32 = 1;
@@ -49,7 +56,7 @@ pub mod nr {
     /// readdir(path, path_len, &mut [DirEntry], count) -> 書いた数
     pub const READDIR: u32 = 14;
 
-    /// gfx_open() -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）
+    /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
     /// gfx_blit(buf: *const [u8; 64000]) -> 0。画面全体を書き換える
     pub const GFX_BLIT: u32 = 17;

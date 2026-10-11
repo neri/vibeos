@@ -38,8 +38,6 @@ const COMMANDS: &[Command] = &[
     Command { name: "sleep", usage: "sleep [ms]", help: "sleep (default 500ms, checks timing)", run: sleep },
     Command { name: "history", usage: "history", help: "command history", run: history },
     Command { name: "demo", usage: "demo", help: "3 threads draw counters for 5s", run: demo },
-    Command { name: "view", usage: "view file.bmp", help: "show a BMP image (any key to return)", run: view },
-    Command { name: "paint", usage: "paint", help: "draw with the mouse (C clears, Esc quits)", run: paint },
     Command { name: "reboot", usage: "reboot", help: "restart the computer", run: reboot },
     Command { name: "divzero", usage: "divzero", help: "test: divide by zero", run: divzero },
     Command { name: "nullptr", usage: "nullptr", help: "test: read address 0", run: nullptr },
@@ -254,22 +252,6 @@ fn demo(_: &mut Shell, _: &[&str]) {
         klog!("demo finished");
     });
     kprintln!("demo started");
-}
-
-fn view(_: &mut Shell, args: &[&str]) {
-    let Some(path) = args.get(1) else {
-        kprintln!("usage: view file.bmp");
-        return;
-    };
-    match crate::apps::view::run(path) {
-        Ok(info) => kprintln!("view: closed ({info})"),
-        Err(e) => kprintln!("view: {e}"),
-    }
-}
-
-fn paint(_: &mut Shell, _: &[&str]) {
-    crate::apps::paint::run();
-    kprintln!("paint: closed");
 }
 
 fn reboot(_: &mut Shell, _: &[&str]) {

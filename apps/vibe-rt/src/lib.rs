@@ -17,11 +17,14 @@
 
 extern crate alloc;
 
+pub mod gfx;
 pub mod sys;
 
 use core::fmt::{self, Write};
 
 pub use vibe_abi as abi;
+pub use vibe_font as font;
+pub use vibe_gfx as gfx_lib;
 
 // 入口: カーネルはスタックに [argc][argv] を置いて ring 3 の _start に飛んでくる
 core::arch::global_asm!(
@@ -148,5 +151,62 @@ unsafe impl core::alloc::GlobalAlloc for UserHeap {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
         // SAFETY: GlobalAlloc の約束
         unsafe { (*self.heap.get()).dealloc(ptr, layout) }
+    }
+}
+
+/// 簡単な乱数（xorshift）。種は起動からの時間など
+pub struct Rng(u32);
+
+impl Rng {
+    pub fn new(seed: u32) -> Rng {
+        Rng(seed.max(1))
+    }
+
+    pub fn next(&mut self) -> u32 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.0 = x;
+        x
+    }
+
+    /// 0..n
+    pub fn below(&mut self, n: u32) -> u32 {
+        self.next() % n.max(1)
+    }
+}
+
+/// ファイル全体を読む
+pub fn read_file(path: &str) -> Result<alloc::vec::Vec<u8>, i32> {
+    let fd = sys::open(path);
+    if fd < 0 {
+        return Err(-fd);
+    }
+    let mut out = alloc::vec::Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = sys::read(fd, &mut buf);
+        if n < 0 {
+            sys::close(fd);
+            return Err(-n);
+        }
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n as usize]);
+    }
+    sys::close(fd);
+    Ok(out)
+}
+
+/// 何かキーが押されるまで待つ（離したイベントは読み飛ばす）
+pub fn wait_key() -> abi::KeyEvent {
+    loop {
+        if let Some(k) = sys::getkey(false) {
+            if k.pressed() {
+                return k;
+            }
+        }
     }
 }

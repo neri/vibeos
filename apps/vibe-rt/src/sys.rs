@@ -90,8 +90,8 @@ pub fn readdir(path: &str, entries: &mut [DirEntry]) -> i32 {
     syscall(nr::READDIR, path.as_ptr() as u32, path.len() as u32, entries.as_mut_ptr() as u32, entries.len() as u32, 0)
 }
 
-pub fn gfx_open() -> i32 {
-    syscall(nr::GFX_OPEN, 0, 0, 0, 0, 0)
+pub fn gfx_open(flags: u32) -> i32 {
+    syscall(nr::GFX_OPEN, flags, 0, 0, 0, 0)
 }
 
 pub fn gfx_blit(buf: &[u8; 64000]) -> i32 {

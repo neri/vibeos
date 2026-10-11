@@ -8,3 +8,5 @@ description = "ユーザアプリ用のランタイム（_start・システム�
 [dependencies]
 vibe-abi = { path = "../../crates/vibe-abi" }
 vibe-alloc = { path = "../../crates/vibe-alloc" }
+vibe-font = { path = "../../crates/vibe-font" }
+vibe-gfx = { path = "../../crates/vibe-gfx" }

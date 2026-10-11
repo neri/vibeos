@@ -1,0 +1,35 @@
+# Phase 10: アプリ群（mandel / snake / more）
+timeout 40
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+# マンデルブロ集合（決まった絵になる）
+type mandel
+key ret
+wait-serial mandel: rendered
+sleep 200
+expect-screen mandel
+key esc
+sleep 300
+# ヘビのゲーム: 動き続け、矢印で曲がり、Esc で終わる
+type snake
+key ret
+wait-serial snake: started
+expect-change 0 40 640 360 500
+key up
+sleep 300
+key left
+sleep 300
+key esc
+wait-serial snake: best score
+# テキストを 1 画面ずつ
+type more /docs/guide.txt
+key ret
+wait-serial VibeOS GUIDE
+wait-serial -- more (
+key spc
+wait-serial PROGRAMS (/BIN)
+key q
+type echo after more
+key ret
+wait-serial after more
+serial-absent PANIC

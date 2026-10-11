@@ -1,12 +1,12 @@
 //! 入力のまとめ: マウスのパケットを解釈してカーソルを動かすスレッドと、アプリ向けの API
 //!
 //! マウスの状態（位置・ボタン）はこのスレッドが更新し、画面のカーソルも動かす。アプリは
-//! `poll_mouse` でイベントを受け取る。キーボードかマウスのどちらかを待つには `wait`。
+//! `poll_mouse` でイベントを受け取る。
 
 use vibe_keyboard::mouse::{MouseDecoder, MousePacket};
 
 use crate::drivers::vga::{self, SCREEN};
-use crate::drivers::{keyboard, mouse};
+use crate::drivers::mouse;
 use crate::sync::IrqMutex;
 use crate::task::{self, wait::WaitQueue};
 use crate::util::ring::Ring;
@@ -95,9 +95,4 @@ pub fn poll_mouse() -> Option<MouseEvent> {
 /// 前回までのマウスのイベントを捨てる（アプリを始めるときに）
 pub fn clear_mouse_events() {
     while poll_mouse().is_some() {}
-}
-
-/// キーボードかマウスのイベントが来るまで待つ
-pub fn wait() {
-    INPUT_WAIT.wait_until(|| keyboard::has_input() || !EVENTS.lock().is_empty());
 }

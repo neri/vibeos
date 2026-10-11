@@ -13,7 +13,6 @@ extern crate alloc;
 #[macro_use]
 mod print;
 
-mod apps;
 mod arch;
 mod bootinfo;
 mod drivers;

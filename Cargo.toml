@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["kernel", "apps/vibe-rt", "apps/hello", "apps/fault", "crates/vibe-abi", "crates/vibe-alloc", "crates/vibe-fat", "crates/vibe-font", "crates/vibe-gfx", "crates/vibe-keyboard", "crates/vibe-term", "tools/mkassets", "tools/vibe-run"]
+members = ["kernel", "apps/vibe-rt", "apps/hello", "apps/fault", "apps/view", "apps/paint", "apps/mandel", "apps/snake", "apps/more", "crates/vibe-abi", "crates/vibe-alloc", "crates/vibe-fat", "crates/vibe-font", "crates/vibe-gfx", "crates/vibe-keyboard", "crates/vibe-term", "tools/mkassets", "tools/vibe-run"]
 # ルートで cargo build / cargo test したときはホスト向けのものだけを対象にする。
 # kernel は kernel/ に入って（Makefile 経由で）ビルドする。
 default-members = ["crates/vibe-abi", "crates/vibe-alloc", "crates/vibe-fat", "crates/vibe-font", "crates/vibe-gfx", "crates/vibe-keyboard", "crates/vibe-term", "tools/mkassets", "tools/vibe-run"]

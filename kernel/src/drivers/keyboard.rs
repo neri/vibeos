@@ -46,11 +46,6 @@ fn on_irq() {
     input::notify();
 }
 
-/// 届いているキーがあるか（待たない）
-pub fn has_input() -> bool {
-    !RAW.lock().is_empty()
-}
-
 /// 届いているキーイベントがあれば返す（待たない）
 pub fn try_read_event() -> Option<KeyEvent> {
     loop {

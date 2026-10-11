@@ -106,13 +106,15 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
         }
         nr::GFX_OPEN => {
             let mut u = user.lock();
+            let mut s = SCREEN.lock();
             if u.display.is_none() {
-                let mut s = SCREEN.lock();
                 let id = s.create_display();
                 s.set_foreground(id);
-                s.present();
                 u.display = Some(id);
             }
+            s.set_cursor_visible(a & vibe_abi::GFX_CURSOR != 0);
+            s.present();
+            drop(s);
             input::clear_mouse_events();
             Ok(0)
         }
