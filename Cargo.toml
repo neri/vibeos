@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["kernel", "crates/vibe-alloc", "crates/vibe-fat", "crates/vibe-font", "crates/vibe-gfx", "crates/vibe-keyboard", "crates/vibe-term", "tools/vibe-run"]
+members = ["kernel", "crates/vibe-alloc", "crates/vibe-fat", "crates/vibe-font", "crates/vibe-gfx", "crates/vibe-keyboard", "crates/vibe-term", "tools/mkassets", "tools/vibe-run"]
 # ルートで cargo build / cargo test したときはホスト向けのものだけを対象にする。
 # kernel は kernel/ に入って（Makefile 経由で）ビルドする。
-default-members = ["crates/vibe-alloc", "crates/vibe-fat", "crates/vibe-font", "crates/vibe-gfx", "crates/vibe-keyboard", "crates/vibe-term", "tools/vibe-run"]
+default-members = ["crates/vibe-alloc", "crates/vibe-fat", "crates/vibe-font", "crates/vibe-gfx", "crates/vibe-keyboard", "crates/vibe-term", "tools/mkassets", "tools/vibe-run"]
 
 [workspace.package]
 edition = "2024"

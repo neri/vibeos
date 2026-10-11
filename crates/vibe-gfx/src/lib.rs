@@ -5,6 +5,9 @@
 
 #![cfg_attr(not(test), no_std)]
 
+extern crate alloc;
+
+pub mod bmp;
 pub mod palette;
 
 use vibe_font::Font;

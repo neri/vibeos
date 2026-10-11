@@ -71,17 +71,26 @@ define make-image
 	dd if=$(BUILD)/loader.bin of=$(1).tmp conv=notrunc bs=512 seek=1 status=none
 	mcopy -i $(1).tmp $(2) ::KERNEL.SYS
 	mcopy -s -i $(1).tmp rootfs/* ::/
+	mcopy -s -i $(1).tmp $(GEN_ROOTFS)/* ::/
 	fsck.fat -n $(1).tmp >/dev/null
 	mv $(1).tmp $(1)
 endef
 
 # ディスクに入れるファイル（rootfs/ 以下。8.3 形式の大文字の名前にすること）
 ROOTFS := $(shell find rootfs -type f)
+# ビルド時に生成してディスクに入れるもの（tools/mkassets）
+GEN_ROOTFS := $(BUILD)/rootfs-gen
+GEN_STAMP := $(GEN_ROOTFS)/.stamp
 
-$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(BUILD)/kernel.elf $(ROOTFS)
+$(GEN_STAMP): $(shell find tools/mkassets -type f) | $(BUILD)
+	rm -rf $(GEN_ROOTFS)
+	$(CARGO) run -q --release -p mkassets -- $(GEN_ROOTFS)
+	touch $@
+
+$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP)
 	$(call make-image,$@,$(BUILD)/kernel.sys)
 
-$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/test/kernel.sys $(ROOTFS)
+$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/test/kernel.sys $(ROOTFS) $(GEN_STAMP)
 	$(call make-image,$@,$(BUILD)/test/kernel.sys)
 
 # --- 実行 -------------------------------------------------------------------

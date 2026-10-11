@@ -24,6 +24,10 @@ fn panic(info: &PanicInfo) -> ! {
 
     // SAFETY: 同上
     let screen = unsafe { vga::SCREEN.force_get() };
+    // アプリが前面に出ていたり独自のパレットにしていても、コンソールに戻して見えるようにする
+    vga::set_palette(&palette::standard());
+    screen.set_foreground(vga::CONSOLE);
+    screen.set_cursor_visible(false);
     {
         let font = &FONT_8X8;
         let mut s = screen.surface();

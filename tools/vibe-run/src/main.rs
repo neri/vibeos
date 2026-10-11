@@ -19,6 +19,8 @@
 //!   expect-change X Y W H MS  矩形の中身が MS ミリ秒の間に変わることを確認する（動き続けているものの確認）
 //!   key KEYS              キーを押す（例: `key a`, `key shift+a`, `key ret`。QEMU の qcode 名）
 //!   type TEXT             文字列を US 配列で打つ
+//!   mouse-move DX DY      マウスを相対的に動かす（右・下が正）
+//!   mouse-button BTN up|down  マウスのボタン（left / right / middle）
 //!   expect-exit CODE      QEMU が終了コード CODE で終わるのを待つ
 //!                         （isa-debug-exit に v を書くと終了コードは (v << 1) | 1）
 //!
@@ -199,6 +201,26 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
                     return Err(at(format!("region did not change in {ms} ms")));
                 }
             }
+            "mouse-move" => {
+                let v: Vec<i64> = s.arg.split_whitespace().map(|x| x.parse().unwrap_or(i64::MAX)).collect();
+                let [dx, dy] = v[..] else {
+                    return Err(at("expected DX DY".into()));
+                };
+                vm.send_input(json!([
+                    {"type": "rel", "data": {"axis": "x", "value": dx}},
+                    {"type": "rel", "data": {"axis": "y", "value": dy}},
+                ]))
+                .map_err(at)?;
+                thread::sleep(Duration::from_millis(50));
+            }
+            "mouse-button" => {
+                let mut w = s.arg.split_whitespace();
+                let (Some(btn), Some(state)) = (w.next(), w.next()) else {
+                    return Err(at("expected BTN up|down".into()));
+                };
+                vm.send_input(json!([{"type": "btn", "data": {"button": btn, "down": state == "down"}}])).map_err(at)?;
+                thread::sleep(Duration::from_millis(50));
+            }
             "key" => vm.send_key(&s.arg.split('+').collect::<Vec<_>>()).map_err(at)?,
             "type" => {
                 for c in s.arg.chars() {
@@ -349,6 +371,11 @@ impl Vm {
     fn send_key(&mut self, keys: &[&str]) -> Result<()> {
         let keys: Vec<Value> = keys.iter().map(|k| json!({"type": "qcode", "data": k})).collect();
         self.qmp()?.execute("send-key", json!({ "keys": keys }))?;
+        Ok(())
+    }
+
+    fn send_input(&mut self, events: Value) -> Result<()> {
+        self.qmp()?.execute("input-send-event", json!({ "events": events }))?;
         Ok(())
     }
 

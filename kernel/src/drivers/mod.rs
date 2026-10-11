@@ -1,6 +1,8 @@
 pub mod keyboard;
+pub mod mouse;
 pub mod pit;
 pub mod power;
+pub mod ps2;
 pub mod ramdisk;
 pub mod serial;
 pub mod vga;

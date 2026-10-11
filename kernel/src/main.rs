@@ -13,11 +13,13 @@ extern crate alloc;
 #[macro_use]
 mod print;
 
+mod apps;
 mod arch;
 mod bootinfo;
 mod drivers;
 mod fs;
 mod gfx;
+mod input;
 #[cfg(feature = "qemu-test")]
 mod ktest;
 mod mm;
@@ -95,10 +97,19 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     arch::idt::init();
     arch::pic::init();
     drivers::pit::init();
-    drivers::keyboard::init();
+    let ps2 = drivers::ps2::init();
+    if ps2.keyboard {
+        drivers::keyboard::init();
+    }
+    if ps2.mouse {
+        drivers::mouse::init();
+    }
     arch::pic::enable_nmi();
     task::sched::init();
     fs::mount_root(info);
+    if ps2.mouse {
+        input::start_mouse();
+    }
     // SAFETY: IDT・PIC・各ハンドラ・スケジューラの準備ができた
     unsafe { arch::cpu::enable_interrupts() };
     klog!("interrupts enabled");

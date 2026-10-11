@@ -5,7 +5,7 @@
 //! | 0–15    | CGA 互換 16 色               |
 //! | 16–31   | グレースケール 16 段階       |
 //! | 32–247  | 6×6×6 カラーキューブ         |
-//! | 248–255 | システム予約                 |
+//! | 248–255 | システム予約（254/255 はマウスカーソルの黒/白） |
 //!
 //! 値は VGA DAC と同じ 6bit（0〜63）。
 
@@ -29,6 +29,9 @@ pub const WHITE: u8 = 15;
 pub const GRAY_BASE: u8 = 16;
 pub const CUBE_BASE: u8 = 32;
 pub const RESERVED_BASE: u8 = 248;
+/// マウスカーソル用（予約領域）
+pub const CURSOR_BLACK: u8 = 254;
+pub const CURSOR_WHITE: u8 = 255;
 
 const CGA: [[u8; 3]; 16] = [
     [0, 0, 0],
@@ -67,10 +70,11 @@ pub fn standard() -> [[u8; 3]; 256] {
             }
         }
     }
-    // 予約領域は当面白にしておく
+    // 予約領域は当面白にしておく（カーソル用の黒を除く）
     for c in p.iter_mut().skip(RESERVED_BASE as usize) {
         *c = [63, 63, 63];
     }
+    p[CURSOR_BLACK as usize] = [0, 0, 0];
     p
 }
 
@@ -82,6 +86,24 @@ fn cube_index(r: usize, g: usize, b: usize) -> u8 {
 pub fn rgb(r: u8, g: u8, b: u8) -> u8 {
     let level = |v: u8| ((v as usize * 5 + 127) / 255).min(5);
     cube_index(level(r), level(g), level(b))
+}
+
+/// パレット `pal`（各 6bit）の中で 8bit RGB に一番近い色の番号（予約領域は除く）
+pub fn nearest(pal: &[[u8; 3]; 256], r: u8, g: u8, b: u8) -> u8 {
+    let (r, g, b) = ((r >> 2) as i32, (g >> 2) as i32, (b >> 2) as i32);
+    let mut best = (i32::MAX, 0u8);
+    for (i, c) in pal.iter().enumerate().take(RESERVED_BASE as usize) {
+        let (dr, dg, db) = (c[0] as i32 - r, c[1] as i32 - g, c[2] as i32 - b);
+        // 人の目は緑に敏感なので重みを付ける
+        let d = 3 * dr * dr + 4 * dg * dg + 2 * db * db;
+        if d < best.0 {
+            best = (d, i as u8);
+            if d == 0 {
+                break;
+            }
+        }
+    }
+    best.1
 }
 
 #[cfg(test)]
@@ -97,6 +119,17 @@ mod tests {
         assert_eq!(p[CUBE_BASE as usize], [0, 0, 0]);
         assert_eq!(p[CUBE_BASE as usize + 215], [63, 63, 63]);
         assert!(p.iter().flatten().all(|&v| v <= 63));
+    }
+
+    #[test]
+    fn nearest_finds_exact_and_close_colors() {
+        let p = standard();
+        assert_eq!(nearest(&p, 0, 0, 0), BLACK);
+        assert_eq!(nearest(&p, 255, 255, 255), WHITE);
+        assert_eq!(p[nearest(&p, 250, 5, 5) as usize], [63, 0, 0]);
+        let gray = nearest(&p, 128, 128, 128);
+        let c = p[gray as usize];
+        assert!(c[0] == c[1] && c[1] == c[2] && (28..=36).contains(&c[0]), "{c:?}");
     }
 
     #[test]
