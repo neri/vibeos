@@ -33,7 +33,7 @@ fn panic(info: &PanicInfo) -> ! {
         let mut s = screen.surface();
         s.clear(palette::RED);
         s.draw_text(font, 8, 8, "KERNEL PANIC", palette::YELLOW, None);
-        let cols = (vga::WIDTH - 16) / font.width;
+        let cols = (vga::width() - 16) / font.width;
         let (mut col, mut y) = (0, 24);
         for ch in text.as_str().chars() {
             if ch == '\n' || col >= cols {
@@ -47,7 +47,7 @@ fn panic(info: &PanicInfo) -> ! {
             col += 1;
         }
     }
-    screen.mark_dirty(0, vga::HEIGHT);
+    screen.mark_dirty(0, vga::height());
     screen.present();
 
     #[cfg(feature = "qemu-test")]

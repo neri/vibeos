@@ -9,10 +9,13 @@
 ;   2. A20 ライン有効化（BIOS → キーボードコントローラ → Fast A20）
 ;   3. Unreal モードに入る（リアルモードのまま 4GB を 32bit アドレスで触れるようにする）
 ;   4. メモリマップ取得（E820 → E801 → 88h）
-;   5. 画面モード 13h に切り替え、進み具合のバーを描く
+;   5. 画面モード 13h に切り替え、進み具合のバーを描く（読み込み中の表示用）
 ;   6. フロッピー全体を RAMDISK_ADDR に読み込む（RAM ディスク）
 ;   7. RAM ディスク上の FAT12 から KERNEL.SYS を探して KERNEL_ADDR にコピー
-;   8. ブート情報構造体（BI）を埋め、プロテクトモードへ移ってカーネルへジャンプ
+;   8. 画面モードを決める: BOOT.CFG の video=640x480 / video=320x200（無ければ 640x480）。
+;      Shift キーを押していれば 320x200。640x480 は VESA（VBE 2.0 以上・リニアフレームバッファ・
+;      8 ビット）で探し、無ければ 320x200 のまま
+;   9. ブート情報構造体（BI）を埋め、プロテクトモードへ移ってカーネルへジャンプ
 ;      （EAX = BOOT_MAGIC, EBX = BI のアドレス）
 
 bits 16
@@ -67,12 +70,15 @@ start:
 
     call video_init
     call load_disk
+    call fs_layout
     call load_kernel
 
     mov dword [BI + BI_MAGIC], BOOT_MAGIC
     mov dword [BI + BI_VRAM_ADDR], 0xA0000
     mov word [BI + BI_SCREEN_W], 320
     mov word [BI + BI_SCREEN_H], 200
+    mov dword [BI + BI_PITCH], 320
+    call choose_video
 
     mov si, msg_jump
     call print
@@ -128,10 +134,13 @@ serial_putc:
 putc:
     pusha
     call serial_putc
+    cmp byte [vbe_active], 0            ; VESA のモードでは BIOS の文字表示は使えない
+    jne .done
     mov ah, 0x0E
     xor bh, bh
     mov bl, 15                  ; グラフィックモードでの文字色
     int 0x10
+.done:
     popa
     ret
 
@@ -673,7 +682,8 @@ read_chunk:
 ; =============================================================================
 ; RAM ディスク上の FAT12 から KERNEL.SYS を KERNEL_ADDR へコピー
 
-load_kernel:
+; RAM ディスク上の FAT12 の配置を BPB から求める
+fs_layout:
     movzx eax, word [BPB + 0x0E]        ; 予約セクタ数 = FAT の先頭 LBA
     mov [fat_lba], eax
     movzx ebx, byte [BPB + 0x10]        ; FAT の数
@@ -686,10 +696,11 @@ load_kernel:
     shr ecx, 4                          ; 1 セクタに 16 エントリ
     add eax, ecx
     mov [data_lba], eax
+    ret
 
+; ルートディレクトリから EDI（11 バイトの名前）を探す。見つかれば CF = 0 で ESI = エントリ（RAM ディスク上）
+find_root_file:
     call enter_unreal
-
-    ; ルートディレクトリから探す
     mov esi, [root_lba]
     shl esi, 9
     add esi, RAMDISK_ADDR
@@ -701,9 +712,10 @@ load_kernel:
     jnz .search_next
     push ecx
     push esi
-    mov edi, kernel_name
+    push edi
     mov ecx, 11
     a32 repe cmpsb
+    pop edi
     pop esi
     pop ecx
     je .found
@@ -712,6 +724,16 @@ load_kernel:
     dec ecx
     jnz .search
 .not_found:
+    stc
+    ret
+.found:
+    clc
+    ret
+
+load_kernel:
+    mov edi, kernel_name
+    call find_root_file
+    jnc .found
     mov si, msg_no_kernel
     jmp fatal
 
@@ -780,6 +802,154 @@ load_kernel:
     jmp fatal
 
 ; =============================================================================
+; 画面モード
+
+choose_video:
+    mov byte [want_640], 1              ; 既定は 640x480
+    call read_boot_config
+    mov ah, 0x02                        ; Shift キー（bit0 = 右, bit1 = 左）
+    int 0x16
+    test al, 0x03
+    jz .no_shift
+    mov byte [want_640], 0
+    mov si, msg_shift
+    call print
+.no_shift:
+    cmp byte [want_640], 0
+    je .vga
+    call vbe_set_640x480
+    jnc .done
+    mov si, msg_no_vbe
+    call print
+.vga:
+    mov si, msg_mode_320
+    call print
+    ret
+.done:
+    mov si, msg_mode_640
+    call print
+    ret
+
+; BOOT.CFG の先頭（最大 511 バイト）に "video=320x200" があれば want_640 = 0、"video=640x480" なら 1
+read_boot_config:
+    mov edi, config_name
+    call find_root_file
+    jc .none
+    mov ecx, [esi + 28]                 ; 大きさ
+    cmp ecx, 511
+    jbe .size_ok
+    mov ecx, 511
+.size_ok:
+    movzx eax, word [esi + 26]          ; 先頭クラスタ（1 クラスタ = 512 バイトだけ読む）
+    cmp eax, 2
+    jb .none
+    sub eax, 2
+    movzx edx, byte [BPB + 0x0D]
+    imul eax, edx
+    add eax, [data_lba]
+    shl eax, 9
+    lea esi, [eax + RAMDISK_ADDR]
+    mov edi, config_buf
+    push ecx
+    a32 rep movsb
+    pop ecx
+    mov byte [config_buf + ecx], 0
+    ; "video=" を探す
+    mov si, config_buf
+.scan:
+    cmp byte [si], 0
+    je .none
+    push si
+    mov di, key_video
+    mov cx, 6
+    repe cmpsb
+    pop si
+    je .match
+    inc si
+    jmp .scan
+.match:
+    add si, 6
+    cmp dword [si], '320x'
+    jne .not320
+    mov byte [want_640], 0
+.not320:
+    cmp dword [si], '640x'
+    jne .none
+    mov byte [want_640], 1
+.none:
+    ret
+
+; VESA で 640x480・8 ビット・リニアフレームバッファのモードを探して切り替える。だめなら CF = 1
+vbe_set_640x480:
+    push es
+    push fs
+    xor ax, ax
+    mov es, ax
+    mov dword [vbe_info], 'VBE2'        ; VBE 2.0 以上の情報を求める
+    mov di, vbe_info
+    mov ax, 0x4F00
+    int 0x10
+    cmp ax, 0x004F
+    jne .fail
+    cmp dword [vbe_info], 'VESA'
+    jne .fail
+    cmp word [vbe_info + 4], 0x0200
+    jb .fail
+    mov si, [vbe_info + 14]             ; モード番号の一覧（far ポインタ）
+    mov ax, [vbe_info + 16]
+    mov fs, ax
+.next_mode:
+    mov cx, [fs:si]
+    cmp cx, 0xFFFF
+    je .fail
+    add si, 2
+    push si
+    push fs
+    push cx
+    mov ax, 0x4F01
+    mov di, mode_info
+    int 0x10
+    pop cx
+    pop fs
+    pop si
+    cmp ax, 0x004F
+    jne .next_mode
+    mov ax, [mode_info + 0]             ; 属性: 対応・カラー・グラフィックス・リニアフレームバッファ
+    and ax, 0x0099
+    cmp ax, 0x0099
+    jne .next_mode
+    cmp word [mode_info + 18], 640
+    jne .next_mode
+    cmp word [mode_info + 20], 480
+    jne .next_mode
+    cmp byte [mode_info + 25], 8        ; 1 画素 8 ビット
+    jne .next_mode
+    cmp byte [mode_info + 27], 4        ; パックドピクセル
+    jne .next_mode
+    mov bx, cx
+    or bx, 0x4000                       ; リニアフレームバッファで
+    mov ax, 0x4F02
+    int 0x10
+    cmp ax, 0x004F
+    jne .fail
+    mov eax, [mode_info + 40]           ; フレームバッファの物理アドレス
+    mov [BI + BI_VRAM_ADDR], eax
+    movzx eax, word [mode_info + 16]    ; 1 行のバイト数
+    mov [BI + BI_PITCH], eax
+    mov word [BI + BI_SCREEN_W], 640
+    mov word [BI + BI_SCREEN_H], 480
+    mov byte [vbe_active], 1
+    pop fs
+    pop es
+    clc
+    ret
+.fail:
+    pop fs
+    pop es
+    stc
+    ret
+
+; =============================================================================
 ; プロテクトモードへ
 
 enter_protected_mode:
@@ -828,6 +998,8 @@ GDT_DATA32      equ 0x10
 GDT_CODE16      equ 0x18
 
 kernel_name     db "KERNEL  SYS"
+config_name     db "BOOT    CFG"
+key_video       db "video="
 
 msg_hello       db "VIBEOS LOADER", 13, 10, 0
 msg_a20         db "A20 enabled", 13, 10, 0
@@ -835,6 +1007,10 @@ msg_mem         db "memory map entries: ", 0
 msg_disk        db "disk loaded, bytes: ", 0
 msg_kernel      db "kernel loaded, bytes: ", 0
 msg_jump        db "jumping to kernel", 13, 10, 0
+msg_shift       db "Shift is held: using 320x200", 13, 10, 0
+msg_no_vbe      db "VESA 640x480x8 is not available", 13, 10, 0
+msg_mode_320    db "video: 320x200", 13, 10, 0
+msg_mode_640    db "video: 640x480", 13, 10, 0
 msg_crlf        db 13, 10, 0
 msg_error       db 13, 10, "LOADER ERROR: ", 0
 msg_a20_fail    db "cannot enable A20", 13, 10, 0
@@ -848,6 +1024,8 @@ msg_bad_kernel  db "KERNEL.SYS is broken", 13, 10, 0
 
 boot_drive      db 0
 retries         db 0
+want_640        db 0
+vbe_active      db 0
 chunk_sector    db 0
 chunk_head      db 0
 chunk_cyl       dw 0
@@ -861,3 +1039,9 @@ fat_lba         dd 0
 root_lba        dd 0
 data_lba        dd 0
 clusters_left   dd 0
+
+; VESA の情報・設定ファイルの読み込み先
+align 16
+vbe_info        times 512 db 0
+mode_info       times 256 db 0
+config_buf      times 512 db 0

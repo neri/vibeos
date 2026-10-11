@@ -58,8 +58,8 @@ static CONSOLE: IrqMutex<Console> = IrqMutex::new(Console {
 pub fn init() {
     let mut c = CONSOLE.lock();
     c.top = RESERVED_TOP_ROWS * c.font.height;
-    c.cols = vga::WIDTH / c.font.width;
-    c.rows = vga::HEIGHT / c.font.height - RESERVED_TOP_ROWS;
+    c.cols = vga::width() / c.font.width;
+    c.rows = vga::height() / c.font.height - RESERVED_TOP_ROWS;
     c.col = 0;
     c.row = 0;
 }
@@ -247,7 +247,7 @@ impl Console {
             return;
         }
         let (y0, y1) = (self.cell_y(from), self.cell_y(to));
-        screen.surface().fill_rect(0, y0 as i32, vga::WIDTH as i32, (y1 - y0) as i32, self.bg);
+        screen.surface().fill_rect(0, y0 as i32, vga::width() as i32, (y1 - y0) as i32, self.bg);
         screen.mark_dirty(y0, y1);
     }
 
@@ -258,7 +258,7 @@ impl Console {
         }
         let h = self.font.height as i32;
         let (y0, y1) = (self.cell_y(0), self.cell_y(self.rows));
-        screen.surface().scroll_up(0, y0 as i32, vga::WIDTH as i32, (y1 - y0) as i32, h, self.bg);
+        screen.surface().scroll_up(0, y0 as i32, vga::width() as i32, (y1 - y0) as i32, h, self.bg);
         screen.mark_dirty(y0, y1);
     }
 

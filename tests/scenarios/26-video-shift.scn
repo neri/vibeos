@@ -1,0 +1,9 @@
+# Phase 14: 起動中に Shift を押していると 320x200 になる（BOOT.CFG が 640x480 でも）
+timeout 30
+wait-serial VIBEOS LOADER
+key-hold shift
+wait-serial Shift is held: using 320x200
+wait-serial video: 320x200
+key-release shift
+wait-serial VIBEOS READY
+serial-absent paging: framebuffer

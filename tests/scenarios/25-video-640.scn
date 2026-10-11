@@ -1,0 +1,36 @@
+# Phase 14: 640x480（VESA）。コンソールは 80 桁、320x200 のアプリは 2 倍で真ん中に出る
+timeout 30
+wait-serial video: 640x480
+wait-serial paging: framebuffer
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+sleep 200
+expect-pixel 4 4 0 0 168
+expect-screen console-640 0 8 640 16
+type mandel
+key ret
+wait-serial mandel: rendered
+sleep 200
+expect-screen mandel-640
+key esc
+sleep 300
+# お絵かき: マウスは画面の座標で動き、アプリには半分の座標で届く（中央 320,240 = アプリの 160,100）
+type paint
+key ret
+wait-serial paint: started
+sleep 300
+mouse-move -40 0
+mouse-button left down
+mouse-move 20 0
+mouse-move 20 0
+mouse-move 20 0
+mouse-move 20 0
+mouse-button left up
+sleep 300
+# アプリの (140〜180, 100) → 画面の (280〜360, 240〜241)
+expect-pixel 290 240 0 0 0
+expect-pixel 350 241 0 0 0
+expect-pixel 290 260 255 255 255
+key esc
+wait-serial paint: closed
+serial-absent PANIC

@@ -127,7 +127,7 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
             Ok(0)
         }
         nr::GFX_BLIT => {
-            let len = (vga::WIDTH * vga::HEIGHT) as u32;
+            let len = (vga::APP_WIDTH * vga::APP_HEIGHT) as u32;
             check_user(user, a, len, false)?;
             let u = user.lock();
             let id = u.display.ok_or(err::EINVAL)?;
@@ -135,9 +135,9 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
             let src = unsafe { core::slice::from_raw_parts(a as *const u8, len as usize) };
             let mut s = SCREEN.lock();
             if let Some(mut surf) = s.display_surface(id) {
-                surf.blit(0, 0, src, vga::WIDTH, None);
+                surf.blit(0, 0, src, vga::APP_WIDTH, None);
             }
-            s.mark_display_dirty(id, 0, vga::HEIGHT);
+            s.mark_display_dirty(id, 0, vga::APP_HEIGHT);
             s.present();
             Ok(0)
         }
@@ -169,9 +169,11 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
         }
         nr::MOUSE => match input::poll_mouse() {
             Some(m) => {
+                // アプリの画面（320x200）の座標にする
+                let (x, y) = vga::screen_to_app(m.x, m.y);
                 let st = MouseState {
-                    x: m.x,
-                    y: m.y,
+                    x,
+                    y,
                     buttons: m.left as u32 | (m.right as u32) << 1 | (m.middle as u32) << 2,
                 };
                 copy_to_user(user, a, as_bytes(&st))?;

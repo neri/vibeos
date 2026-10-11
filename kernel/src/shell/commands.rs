@@ -330,7 +330,7 @@ fn demo(_: &mut Shell, _: &[&str]) {
                 while pit::ticks().wrapping_sub(start) < 5 * pit::TICK_HZ {
                     n += 1;
                     let text = format!("T{i}:{n:6}");
-                    let x = (vga::WIDTH - text.len() * FONT_8X8.width) as i32;
+                    let x = (vga::width() - text.len() * FONT_8X8.width) as i32;
                     // ステータスバーの下に並べる
                     let y = ((i + 1) * FONT_8X8.height) as i32;
                     {

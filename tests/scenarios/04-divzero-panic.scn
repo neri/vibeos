@@ -1,4 +1,6 @@
 # Phase 3: CPU 例外（0 除算）でパニック画面になる
+# 期待画像は 320x200 のもの
+boot-config video=320x200
 timeout 15
 wait-serial VIBEOS READY
 type divzero

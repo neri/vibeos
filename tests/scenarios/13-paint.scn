@@ -1,4 +1,6 @@
 # Phase 8: マウスで動くカーソルと、マウスで線を描くお絵かき
+# 期待画像は 320x200 のもの
+boot-config video=320x200
 timeout 20
 wait-serial ps2: keyboard true, mouse true
 wait-serial VIBEOS READY

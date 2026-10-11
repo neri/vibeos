@@ -6,6 +6,8 @@
 //! シナリオファイルは 1 行 1 コマンド（`#` 以降はコメント）:
 //!   image PATH            起動するイメージ（既定は --img の値）
 //!   writable              イメージの写し（OUT/NAME.img）を書き込み可能で使う（既定は書き込みを捨てる）
+//!   boot-config TEXT      イメージの写しの BOOT.CFG を TEXT（1 行）にしてから起動する（例: video=320x200）
+//!   key-hold KEY / key-release KEY  キーを押したまま / 離す（起動中に Shift を押しておくなど）
 //!   expect-disk-file PATH TEXT  ディスクのファイル PATH に TEXT が含まれる（mtools で読む。writable のとき）
 //!   expect-disk-clean     ディスクに FAT の不整合が無い（fsck.fat -n。writable のとき）
 //!   quit                  QEMU を終了させる（WAV など終了時に書かれるものを確かめる前に）
@@ -134,7 +136,10 @@ fn parse_scenario(path: &Path) -> Result<Vec<Step>> {
 /// Bochs では動かせないシナリオか（QEMU の引数・マウス・音・QEMU の終了を使うもの）
 fn qemu_only(steps: &[Step]) -> bool {
     steps.iter().any(|s| {
-        matches!(s.cmd.as_str(), "qemu-only" | "qemu-arg" | "mouse-move" | "mouse-button" | "quit" | "expect-wav-sound")
+        matches!(
+            s.cmd.as_str(),
+            "qemu-only" | "qemu-arg" | "mouse-move" | "mouse-button" | "quit" | "expect-wav-sound" | "key-hold"
+        )
     })
 }
 
@@ -147,11 +152,13 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
     let mut img = default_img.to_path_buf();
     let mut extra = Vec::new();
     let mut writable = false;
+    let mut boot_config = None;
     for s in &steps {
         match s.cmd.as_str() {
             "image" => img = PathBuf::from(&s.arg),
             "qemu-arg" => extra.push(s.arg.clone()),
             "writable" => writable = true,
+            "boot-config" => boot_config = Some(s.arg.clone()),
             _ => {}
         }
     }
@@ -159,10 +166,24 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
         return Err(format!("image not found: {}", img.display()));
     }
     // Bochs はイメージに直接書くので、いつも写しを使う
-    if writable || use_bochs {
+    if writable || use_bochs || boot_config.is_some() {
         let copy = out.join(format!("{name}.img"));
         fs::copy(&img, &copy).map_err(|e| format!("copy image: {e}"))?;
         img = copy;
+    }
+    if let Some(text) = &boot_config {
+        let cfg = out.join(format!("{name}.boot.cfg"));
+        fs::write(&cfg, format!("{text}\n")).map_err(|e| e.to_string())?;
+        let st = Command::new("mcopy")
+            .args(["-o", "-i"])
+            .arg(&img)
+            .arg(&cfg)
+            .arg("::BOOT.CFG")
+            .status()
+            .map_err(|e| format!("mcopy: {e}"))?;
+        if !st.success() {
+            return Err("cannot write BOOT.CFG".into());
+        }
     }
 
     let mut vm = if use_bochs { Vm::start_bochs(&img, out, name)? } else { Vm::start(&img, &extra, out, name, !writable)? };
@@ -195,7 +216,12 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
             continue;
         }
         match s.cmd.as_str() {
-            "image" | "qemu-arg" | "writable" | "qemu-only" => {}
+            "image" | "qemu-arg" | "writable" | "qemu-only" | "boot-config" => {}
+            "key-hold" | "key-release" => {
+                let down = s.cmd == "key-hold";
+                vm.send_input(json!([{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": s.arg}}}]))
+                    .map_err(at)?;
+            }
             "expect-disk-file" => {
                 let (path, text) = s.arg.split_once(' ').ok_or_else(|| at("expected PATH TEXT".into()))?;
                 let out = Command::new("mtype")

@@ -31,6 +31,8 @@ pub struct BootInfo {
     pub screen_h: u16,
     pub kernel_addr: u32,
     pub kernel_size: u32,
+    /// 画面 1 行のバイト数
+    pub pitch: u32,
 }
 
 const _: () = {
@@ -41,7 +43,8 @@ const _: () = {
     assert!(offset_of!(BootInfo, screen_w) == 0x318);
     assert!(offset_of!(BootInfo, kernel_addr) == 0x31C);
     assert!(offset_of!(BootInfo, kernel_size) == 0x320);
-    assert!(size_of::<BootInfo>() == 0x324);
+    assert!(offset_of!(BootInfo, pitch) == 0x324);
+    assert!(size_of::<BootInfo>() == 0x328);
 };
 
 impl BootInfo {
@@ -64,6 +67,7 @@ static BOOT_INFO: crate::sync::BootCell<BootInfo> = crate::sync::BootCell::new(B
     screen_h: 0,
     kernel_addr: 0,
     kernel_size: 0,
+    pitch: 0,
 });
 
 /// kmain の最初に 1 回だけ（割り込み禁止・ページング前に）呼ぶ。写しへの参照を返す

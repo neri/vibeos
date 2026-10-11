@@ -40,8 +40,8 @@ pub fn notify() {
 pub fn start_mouse() {
     {
         let mut s = STATE.lock();
-        s.x = (vga::WIDTH / 2) as i32;
-        s.y = (vga::HEIGHT / 2) as i32;
+        s.x = (vga::width() / 2) as i32;
+        s.y = (vga::height() / 2) as i32;
     }
     task::spawn("mouse", || {
         let mut decoder = MouseDecoder::new();
@@ -59,8 +59,8 @@ pub fn start_mouse() {
 fn apply(p: MousePacket) {
     let ev = {
         let mut s = STATE.lock();
-        s.x = (s.x + p.dx as i32).clamp(0, vga::WIDTH as i32 - 1);
-        s.y = (s.y + p.dy as i32).clamp(0, vga::HEIGHT as i32 - 1);
+        s.x = (s.x + p.dx as i32).clamp(0, vga::width() as i32 - 1);
+        s.y = (s.y + p.dy as i32).clamp(0, vga::height() as i32 - 1);
         s.left = p.left;
         s.right = p.right;
         s.middle = p.middle;

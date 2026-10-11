@@ -36,9 +36,9 @@ fn draw() {
     let mut s = SCREEN.lock();
     {
         let mut surf = s.surface();
-        surf.fill_rect(0, 0, vga::WIDTH as i32, font.height as i32, BAR_BG);
+        surf.fill_rect(0, 0, vga::width() as i32, font.height as i32, BAR_BG);
         surf.draw_text(font, font.width as i32, 0, "VibeOS", palette::YELLOW, None);
-        let x = vga::WIDTH - right.len() * font.width;
+        let x = vga::width() - right.len() * font.width;
         surf.draw_text(font, x as i32, 0, &right, BAR_FG, None);
     }
     s.mark_dirty(0, font.height);

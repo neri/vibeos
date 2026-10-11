@@ -128,8 +128,8 @@ fn paging_map_unmap() {
     assert_eq!(paging::unmap(pd, virt), Some(phys));
     assert_eq!(paging::translate(pd, virt), None);
     pmm::free_pages(phys, 1);
-    // カーネル空間で RAM の外にはページテーブルを作らない
-    assert!(paging::map(pd, 0x3F00_0000, phys, paging::WRITABLE).is_err());
+    // カーネル空間で RAM の外にはページテーブルを作らない（0x3F000000 からは装置のメモリの窓なので避ける）
+    assert!(paging::map(pd, 0x3000_0000, phys, paging::WRITABLE).is_err());
 }
 
 /// 譲らずに回り続けるスレッドが 3 つあっても、全員とこのタスクが進む

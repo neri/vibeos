@@ -1,4 +1,6 @@
 # Phase 12: テキストエディタ（新しいファイルを作って保存、既存のファイルを編集、探す・切り取り・貼り付け）
+# 期待画像は 320x200 のもの
+boot-config video=320x200
 writable
 timeout 40
 wait-serial VIBEOS READY

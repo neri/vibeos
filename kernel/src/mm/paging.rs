@@ -17,9 +17,13 @@ use super::pmm;
 pub const PRESENT: u32 = 1 << 0;
 pub const WRITABLE: u32 = 1 << 1;
 pub const USER: u32 = 1 << 2;
+/// 書き込みをキャッシュに溜めない（フレームバッファ用）
+const WRITE_THROUGH: u32 = 1 << 3;
 
 /// カーネル空間の終わり（ここから上はユーザ空間）
 pub const KERNEL_SPACE_END: usize = 0x4000_0000;
+/// カーネル空間の最後の 16MB は、装置のメモリ（フレームバッファなど）を対応付ける窓。RAM はここまで
+pub const MMIO_BASE: usize = 0x3F00_0000;
 const ENTRIES: usize = 1024;
 const TABLE_SPAN: usize = ENTRIES * PAGE_SIZE; // 1 つのページテーブルで 4MB
 
@@ -47,6 +51,29 @@ pub fn init() {
         unsafe { (pd as *mut u32).add(addr / TABLE_SPAN).write(pt as u32 | PRESENT | WRITABLE) };
         addr += TABLE_SPAN;
     }
+    // フレームバッファが同じ番地で対応付けた範囲（RAM）の外にあれば、装置のメモリの窓に対応付ける
+    // （VESA のリニアフレームバッファはふつう 3GB より上にある）。プロセスができる前なので
+    // ここでカーネル空間のページテーブルを足してもよい
+    let (fb, fb_len) = crate::drivers::vga::framebuffer();
+    let mut fb_virt = None;
+    if fb + fb_len > ram_end {
+        let base = fb & !0xFFF;
+        let pages = (fb + fb_len - base).div_ceil(PAGE_SIZE).min((KERNEL_SPACE_END - MMIO_BASE) / PAGE_SIZE);
+        for i in 0..pages {
+            let virt = MMIO_BASE + i * PAGE_SIZE;
+            let pde = (pd as *mut u32).wrapping_add(virt >> 22);
+            // SAFETY: 作ったばかりのページディレクトリとページテーブル
+            unsafe {
+                if pde.read() & PRESENT == 0 {
+                    let pt = pmm::alloc_zeroed_page().expect("paging: no memory for page table");
+                    pde.write(pt as u32 | PRESENT | WRITABLE);
+                }
+                let pt = (pde.read() & !0xFFF) as *mut u32;
+                pt.add((virt >> 12) & 0x3FF).write((base + i * PAGE_SIZE) as u32 | PRESENT | WRITABLE | WRITE_THROUGH);
+            }
+        }
+        fb_virt = Some(MMIO_BASE + (fb - base));
+    }
     KERNEL_PD.store(pd, Ordering::Relaxed);
 
     // SAFETY: 実行中のコード・データ・スタックはすべて同じ番地に対応付けたので、有効にしても続けて動ける
@@ -61,6 +88,11 @@ pub fn init() {
             flags = const CR0_PG | CR0_WP,
             options(nostack),
         );
+    }
+    // ここから先はフレームバッファを仮想アドレスで触る（上で対応付けた）
+    if let Some(v) = fb_virt {
+        crate::drivers::vga::set_framebuffer_address(v);
+        klog!("paging: framebuffer {:#x} mapped at {:#x}", fb, v);
     }
     klog!("paging: enabled, identity mapped up to {:#x}", ram_end);
 }

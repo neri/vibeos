@@ -1,4 +1,6 @@
 # Phase 8: BMP 画像を全画面で表示し、キーでコンソールに戻る
+# 期待画像は 320x200 のもの
+boot-config video=320x200
 timeout 20
 wait-serial VIBEOS READY
 wait-serial VibeOS shell
