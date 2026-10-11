@@ -360,6 +360,8 @@ impl Vm {
             .arg("-drive")
             .arg(format!("file={},format=raw,if=floppy,snapshot={}", img.display(), if snapshot { "on" } else { "off" }))
             .args(["-boot", "a", "-vga", "std", "-nic", "none", "-display", "none", "-serial", "stdio", "-monitor", "none"])
+            // PC の時計はふつう現地時刻（シナリオの qemu-arg で -rtc を指定すればそちらが優先される）
+            .args(["-rtc", "base=localtime"])
             .arg("-qmp")
             .arg(format!("unix:{},server=on,wait=off", sock.display()))
             .args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", "-no-reboot"])

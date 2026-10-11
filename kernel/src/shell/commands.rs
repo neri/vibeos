@@ -42,6 +42,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "mem", usage: "mem", help: "memory usage", run: mem },
     Command { name: "ps", usage: "ps", help: "list tasks", run: ps },
     Command { name: "uptime", usage: "uptime", help: "time since boot", run: uptime },
+    Command { name: "date", usage: "date", help: "current date and time", run: date },
     Command { name: "sleep", usage: "sleep [ms]", help: "sleep (default 500ms, checks timing)", run: sleep },
     Command { name: "history", usage: "history", help: "command history", run: history },
     Command { name: "demo", usage: "demo", help: "3 threads draw counters for 5s", run: demo },
@@ -93,10 +94,13 @@ fn ls(_: &mut Shell, args: &[&str]) {
     match fs::read_dir(path) {
         Ok(entries) => {
             for e in entries {
+                let when = vibe_time::DateTime::from_fat(e.modified.0, e.modified.1)
+                    .map(|t| format!("{:04}-{:02}-{:02} {:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute))
+                    .unwrap_or_default();
                 if e.is_dir() {
-                    kprintln!("  \x1b[94m{:12}\x1b[0m <DIR>", e.name);
+                    kprintln!(" \x1b[94m{:12}\x1b[0m   <DIR> {when}", e.name);
                 } else {
-                    kprintln!("  {:12} {:7}", e.name, e.size);
+                    kprintln!(" {:12} {:7} {when}", e.name, e.size);
                 }
             }
         }
@@ -270,6 +274,14 @@ fn ps(_: &mut Shell, _: &[&str]) {
     kprintln!("  ID NAME       STATE    TICKS");
     for t in sched::tasks() {
         kprintln!("{:4} {:10} {:8} {}", t.id, t.name, format!("{:?}", t.state), t.ticks);
+    }
+}
+
+fn date(_: &mut Shell, _: &[&str]) {
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    match crate::drivers::rtc::now() {
+        Some(t) => kprintln!("{} {}", t, DAYS[t.weekday() as usize]),
+        None => kprintln!("date: no clock"),
     }
 }
 

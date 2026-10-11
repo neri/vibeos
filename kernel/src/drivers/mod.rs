@@ -5,6 +5,7 @@ pub mod pit;
 pub mod power;
 pub mod ps2;
 pub mod ramdisk;
+pub mod rtc;
 pub mod serial;
 pub mod speaker;
 pub mod vga;

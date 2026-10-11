@@ -279,3 +279,25 @@ fn fat16_write() {
     fs.write(&mut f, 0, &data).unwrap();
     host_check(&fs, &[("DATA/X.BIN", &data)]);
 }
+
+#[test]
+fn timestamps_come_from_the_clock() {
+    fn clock() -> (u16, u16) {
+        // 2026-10-11 21:15:36
+        (((2026 - 1980) << 9) | (10 << 5) | 11, (21 << 11) | (15 << 5) | 18)
+    }
+    let mut fs = floppy(&[]);
+    fs.set_clock(clock);
+    let mut f = fs.create(Dir::Root, "TIME.TXT").unwrap();
+    fs.write(&mut f, 0, b"t").unwrap();
+    assert_eq!(fs.lookup(["TIME.TXT"]).unwrap().modified, clock());
+    // mtools でも同じ日時に見える
+    let dir = std::env::temp_dir().join(format!("vibe-fat-time-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let img = dir.join("t.img");
+    std::fs::write(&img, &fs.device().0).unwrap();
+    let out = Command::new("mdir").arg("-i").arg(&img).arg("::TIME.TXT").output().unwrap();
+    let listing = String::from_utf8_lossy(&out.stdout);
+    assert!(listing.contains("2026-10-11") && listing.contains("21:15"), "{listing}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

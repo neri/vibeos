@@ -54,6 +54,7 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
         nr::MKDIR => fs::mkdir(&user_str(user, a, b)?).map(|_| 0).map_err(process::errno_of),
         nr::REMOVE => fs::remove(&user_str(user, a, b)?).map(|_| 0).map_err(process::errno_of),
         nr::SYNC => fs::sync().map_err(process::errno_of),
+        nr::TIME => Ok(crate::drivers::rtc::now_secs()),
         nr::SOUND => {
             crate::drivers::speaker::play(a, b);
             Ok(0)

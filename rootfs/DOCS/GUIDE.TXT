@@ -18,6 +18,7 @@ cd, pwd   change / print directory
 mem       memory usage
 ps        list tasks
 uptime    time since boot
+date      current date and time
 sleep     sleep for some milliseconds
 history   command history
 demo      three threads draw counters

@@ -86,7 +86,8 @@ pub fn mount_root(info: &BootInfo) {
     // SAFETY: RAM ディスクの領域は物理ページの管理から外してあり、カーネル空間で同じ番地に対応付けられている
     let disk = unsafe { RamDisk::new(info.ramdisk_addr as usize, info.ramdisk_size as usize) };
     match FatFs::mount(disk) {
-        Ok(fs) => {
+        Ok(mut fs) => {
+            fs.set_clock(fat_clock);
             klog!(
                 "fs: mounted {:?} ramdisk, {} of {} clusters free",
                 fs.fat_type(),
@@ -96,6 +97,14 @@ pub fn mount_root(info: &BootInfo) {
             *ROOT.lock() = Some(fs);
         }
         Err(e) => klog!("fs: cannot mount ramdisk: {}", e),
+    }
+}
+
+/// ファイルに記録する日時（時計が読めなければ 2026-01-01）
+fn fat_clock() -> (u16, u16) {
+    match crate::drivers::rtc::now() {
+        Some(t) => (t.fat_date(), t.fat_time()),
+        None => (((2026 - 1980) << 9) | (1 << 5) | 1, 0),
     }
 }
 

@@ -1,0 +1,8 @@
+[package]
+name = "vibe-time"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "日付と時刻の計算（1970 年からの秒数・FAT の日付の形式）"
+
+[dependencies]

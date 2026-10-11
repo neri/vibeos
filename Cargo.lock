@@ -101,6 +101,7 @@ dependencies = [
  "vibe-gfx",
  "vibe-keyboard",
  "vibe-term",
+ "vibe-time",
  "xmas-elf",
 ]
 
@@ -312,6 +313,10 @@ dependencies = [
 
 [[package]]
 name = "vibe-term"
+version = "0.1.0"
+
+[[package]]
+name = "vibe-time"
 version = "0.1.0"
 
 [[package]]

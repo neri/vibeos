@@ -26,7 +26,12 @@ fn draw() {
     let secs = pit::ticks() / pit::TICK_HZ;
     let (free_pages, _) = pmm::stats();
     let tasks = sched::tasks().len();
-    let right = format!("up {}:{:02}:{:02}  {}K  T{} ", secs / 3600, secs / 60 % 60, secs % 60, free_pages * 4, tasks);
+    // 時計が読めれば日時、読めなければ起動からの時間
+    let when = match crate::drivers::rtc::now() {
+        Some(t) => format!("{:04}-{:02}-{:02} {:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute),
+        None => format!("up {}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60),
+    };
+    let right = format!("{when}  {}K T{} ", free_pages * 4, tasks);
     let font = &FONT_8X8;
     let mut s = SCREEN.lock();
     {

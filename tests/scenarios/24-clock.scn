@@ -1,0 +1,23 @@
+# Phase 13: CMOS の時計（QEMU の時計を決まった日時にして確かめる）
+qemu-arg -rtc
+qemu-arg base=2026-03-14T15:09:26
+writable
+timeout 20
+wait-serial rtc: 2026-03-14 15:09:2
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type date
+key ret
+wait-serial 2026-03-14 15:09:
+wait-serial Sat
+# 書いたファイルにその日時が記録される（シェルの ls とホスト側の mdir の両方で）
+type write stamp.txt hi
+key ret
+type ls
+key ret
+wait-serial STAMP.TXT          3 2026-03-14 15:09
+type sync
+key ret
+wait-serial sync: saved
+expect-disk-clean
+serial-absent PANIC

@@ -8,6 +8,8 @@ romimage: file=/usr/share/bochs/BIOS-bochs-legacy
 vgaromimage: file=/usr/share/bochs/VGABIOS-lgpl-latest
 floppya: 1_44=$BOCHS_FLOPPY, status=inserted
 boot: floppy
+# PC の時計はふつう現地時刻
+clock: sync=none, time0=local
 display_library: $BOCHS_DISPLAY, options="$BOCHS_DISPLAY_OPTIONS"
 com1: enabled=1, mode=file, dev=$BOCHS_SERIAL
 log: $BOCHS_LOG

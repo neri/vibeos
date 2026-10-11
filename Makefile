@@ -19,7 +19,7 @@ OBJCOPY ?= llvm-objcopy
 
 QEMU_FLAGS := -m 32M -cpu pentium2 \
 	-drive file=$(IMG),format=raw,if=floppy \
-	-boot a -vga std -nic none -no-reboot
+	-boot a -vga std -nic none -rtc base=localtime -no-reboot
 
 KERNEL_ELF := target/i686-vibeos/release/kernel
 TEST_KERNEL_ELF := target/test/i686-vibeos/release/kernel

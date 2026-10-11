@@ -7,9 +7,6 @@ use alloc::vec;
 
 use super::*;
 
-/// 日付は時計が無いので 2026-01-01 に固定（FAT の形式: 年は 1980 から）
-const FIXED_DATE: u16 = ((2026 - 1980) << 9) | (1 << 5) | 1;
-
 impl<D: BlockDevice> FatFs<D> {
     fn end_of_chain(&self) -> u32 {
         match self.kind {
@@ -76,11 +73,16 @@ impl<D: BlockDevice> FatFs<D> {
         Ok(())
     }
 
-    /// エントリの大きさと先頭クラスタを書き戻す
-    fn update_entry(&mut self, e: &DirEntry) -> Result<()> {
+    /// エントリの大きさ・先頭クラスタ・更新日時を書き戻す
+    fn update_entry(&mut self, e: &mut DirEntry) -> Result<()> {
         let loc = e.loc.ok_or(FsError::InvalidName)?;
+        let (date, time) = (self.clock)();
+        e.modified = (date, time);
         let mut raw = self.read_entry(loc)?;
+        raw[18..20].copy_from_slice(&date.to_le_bytes()); // 最終アクセス日
         raw[20..22].copy_from_slice(&[0, 0]);
+        raw[22..24].copy_from_slice(&time.to_le_bytes());
+        raw[24..26].copy_from_slice(&date.to_le_bytes());
         raw[26..28].copy_from_slice(&(e.first_cluster as u16).to_le_bytes());
         raw[28..32].copy_from_slice(&e.size.to_le_bytes());
         self.write_entry(loc, &raw)
@@ -108,8 +110,9 @@ impl<D: BlockDevice> FatFs<D> {
             return Err(FsError::AlreadyExists);
         }
         let loc = self.free_slot(dir)?;
-        self.write_entry(loc, &raw_entry(&raw_name, attr, first_cluster, 0))?;
-        Ok(DirEntry { name: display, attr, size: 0, first_cluster, loc: Some(loc) })
+        let now = (self.clock)();
+        self.write_entry(loc, &raw_entry(&raw_name, attr, first_cluster, 0, now))?;
+        Ok(DirEntry { name: display, attr, size: 0, first_cluster, loc: Some(loc), modified: now })
     }
 
     /// 空のファイルを作る
@@ -126,8 +129,9 @@ impl<D: BlockDevice> FatFs<D> {
             Dir::Cluster(p) => p,
         };
         let mut first = vec![0u8; self.cluster_bytes()];
-        first[0..32].copy_from_slice(&raw_entry(b".          ", ATTR_DIRECTORY, c, 0));
-        first[32..64].copy_from_slice(&raw_entry(b"..         ", ATTR_DIRECTORY, parent, 0));
+        let now = (self.clock)();
+        first[0..32].copy_from_slice(&raw_entry(b".          ", ATTR_DIRECTORY, c, 0, now));
+        first[32..64].copy_from_slice(&raw_entry(b"..         ", ATTR_DIRECTORY, parent, 0, now));
         self.dev.write_blocks(self.cluster_lba(c), &first)?;
         match self.new_entry(dir, name, ATTR_DIRECTORY, c) {
             Ok(e) => {
@@ -273,13 +277,15 @@ pub(crate) fn name_to_raw(name: &str) -> Result<[u8; 11]> {
     Ok(raw)
 }
 
-fn raw_entry(name: &[u8; 11], attr: u8, cluster: u32, size: u32) -> [u8; DIR_ENTRY_SIZE] {
+fn raw_entry(name: &[u8; 11], attr: u8, cluster: u32, size: u32, (date, time): (u16, u16)) -> [u8; DIR_ENTRY_SIZE] {
     let mut e = [0u8; DIR_ENTRY_SIZE];
     e[0..11].copy_from_slice(name);
     e[11] = attr;
-    e[16..18].copy_from_slice(&FIXED_DATE.to_le_bytes()); // 作成日
-    e[18..20].copy_from_slice(&FIXED_DATE.to_le_bytes()); // 最終アクセス日
-    e[24..26].copy_from_slice(&FIXED_DATE.to_le_bytes()); // 更新日
+    e[14..16].copy_from_slice(&time.to_le_bytes()); // 作成時刻
+    e[16..18].copy_from_slice(&date.to_le_bytes()); // 作成日
+    e[18..20].copy_from_slice(&date.to_le_bytes()); // 最終アクセス日
+    e[22..24].copy_from_slice(&time.to_le_bytes()); // 更新時刻
+    e[24..26].copy_from_slice(&date.to_le_bytes()); // 更新日
     e[26..28].copy_from_slice(&(cluster as u16).to_le_bytes());
     e[28..32].copy_from_slice(&size.to_le_bytes());
     e

@@ -109,6 +109,8 @@ pub struct DirEntry {
     pub first_cluster: u32,
     /// ディスク上の位置（ルートディレクトリそのものを表すエントリは None）
     pub loc: Option<EntryLoc>,
+    /// 更新日時（FAT の形式の日付, 時刻）
+    pub modified: (u16, u16),
 }
 
 impl DirEntry {
@@ -137,11 +139,20 @@ struct Layout {
     clusters: u32,
 }
 
+/// 今の日時を FAT の形式（日付, 時刻）で返す関数
+pub type Clock = fn() -> (u16, u16);
+
+/// 時計が無いときの日時: 2026-01-01 00:00
+fn fixed_clock() -> (u16, u16) {
+    (((2026 - 1980) << 9) | (1 << 5) | 1, 0)
+}
+
 pub struct FatFs<D: BlockDevice> {
     dev: D,
     kind: FatType,
     layout: Layout,
     fat: Vec<u8>,
+    clock: Clock,
 }
 
 fn le16(b: &[u8], off: usize) -> u32 {
@@ -200,7 +211,12 @@ impl<D: BlockDevice> FatFs<D> {
             data_start,
             clusters,
         };
-        Ok(FatFs { dev, kind, layout, fat })
+        Ok(FatFs { dev, kind, layout, fat, clock: fixed_clock })
+    }
+
+    /// 書き込みのときに記録する日時を決める関数を設定する
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.clock = clock;
     }
 
     pub fn fat_type(&self) -> FatType {
@@ -312,14 +328,22 @@ impl<D: BlockDevice> FatFs<D> {
             if name == "." || name == ".." {
                 continue;
             }
-            out.push(DirEntry { name, attr, size: le32(&e, 28), first_cluster: le16(&e, 26), loc: Some(loc) });
+            out.push(DirEntry {
+                name,
+                attr,
+                size: le32(&e, 28),
+                first_cluster: le16(&e, 26),
+                loc: Some(loc),
+                modified: (le16(&e, 24) as u16, le16(&e, 22) as u16),
+            });
         }
         Ok(out)
     }
 
     /// パス（名前の並び）を探す。空ならルートを表すエントリを返す
     pub fn lookup<'a>(&self, path: impl IntoIterator<Item = &'a str>) -> Result<DirEntry> {
-        let mut cur = DirEntry { name: String::from("/"), attr: ATTR_DIRECTORY, size: 0, first_cluster: 0, loc: None };
+        let mut cur =
+            DirEntry { name: String::from("/"), attr: ATTR_DIRECTORY, size: 0, first_cluster: 0, loc: None, modified: (0, 0) };
         for part in path {
             let dir = cur.as_dir()?;
             cur = self

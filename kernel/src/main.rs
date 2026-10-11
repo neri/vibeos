@@ -98,6 +98,7 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     arch::idt::init();
     arch::pic::init();
     drivers::pit::init();
+    drivers::rtc::init();
     let ps2 = drivers::ps2::init();
     if ps2.keyboard {
         drivers::keyboard::init();

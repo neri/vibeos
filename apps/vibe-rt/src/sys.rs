@@ -142,3 +142,8 @@ pub fn mouse() -> Option<MouseState> {
 pub fn sound(freq: u32, ms: u32) {
     syscall(nr::SOUND, freq, ms, 0, 0, 0);
 }
+
+/// 今の時刻（1970 年からの秒, 現地時刻）。時計が無ければ 0
+pub fn time() -> u32 {
+    syscall(nr::TIME, 0, 0, 0, 0, 0) as u32
+}

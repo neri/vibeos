@@ -72,6 +72,8 @@ pub mod nr {
     pub const SYNC: u32 = 23;
     /// sound(freq, ms) -> 0。PC スピーカーで鳴らす（待たない）。freq 0 で止める
     pub const SOUND: u32 = 24;
+    /// time() -> 1970 年からの秒（現地時刻）。時計が無ければ 0
+    pub const TIME: u32 = 25;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
