@@ -1,0 +1,75 @@
+# README 用のスクリーンショット: 640x480 のデスクトップ（端末・マンデルブロ・時計・ライフゲーム）
+# マウスは相対移動なので、各行の末尾にカーソルの絶対位置を書いておく（初めは真ん中 320,240）
+# 時計が見栄えのよい 10 時 10 分を指すように、QEMU の時計を決めておく
+qemu-arg -rtc
+qemu-arg base=2026-10-12T10:09:50
+timeout 30
+wait-serial gui: desktop 640x480
+wait-serial VibeOS shell
+type ls /bin
+key ret
+type date
+key ret
+wait-serial Mon
+# マンデルブロ（中身 120,47 に 320x200）を左上（中身 12,26）へ
+type mandel &
+key ret
+wait-serial mandel: rendered
+sleep 500
+mouse-move -180 -199
+# → 140,41（タイトルバー）
+mouse-button left down
+sleep 100
+mouse-move -54 -10
+mouse-move -54 -11
+# → 32,20
+mouse-button left up
+sleep 300
+# 端末の見えているところをクリック
+mouse-move 388 380
+# → 420,400
+mouse-button left down
+mouse-button left up
+sleep 300
+# 時計（中身 144,67 に 136x156）を右上（中身 496,26）へ
+type clock &
+key ret
+wait-serial clock: started
+sleep 500
+mouse-move -220 -340
+# → 200,60（タイトルバー）
+mouse-button left down
+sleep 100
+mouse-move 176 -20
+mouse-move 176 -21
+# → 552,19
+mouse-button left up
+sleep 300
+mouse-move -132 381
+# → 420,400（端末）
+mouse-button left down
+mouse-button left up
+sleep 300
+# ライフゲーム（中身 168,87 に 192x144）を時計の下（中身 440,202）へ
+type life &
+key ret
+wait-serial life: started
+sleep 500
+mouse-move -200 -320
+# → 220,80（タイトルバー）
+mouse-button left down
+sleep 100
+mouse-move 136 57
+mouse-move 136 58
+# → 492,195
+mouse-button left up
+sleep 300
+type r
+key spc
+wait-serial life: running
+sleep 1500
+# カーソルは背景へ
+mouse-move 98 245
+# → 590,440
+sleep 300
+screendump desktop

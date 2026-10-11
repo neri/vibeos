@@ -28,7 +28,7 @@ SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 予約領域 LBA 1〜63
 
-.PHONY: all run debug bochs test test-host test-qemu test-bochs clean FORCE
+.PHONY: all run debug bochs test test-host test-qemu test-bochs screenshots clean FORCE
 
 all: $(IMG)
 
@@ -139,6 +139,12 @@ test-qemu: $(IMG) $(TEST_IMG) $(VIBE_RUN)
 
 test-bochs: $(IMG) $(TEST_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --bochs --img $(IMG) --out $(BUILD)/test-out-bochs $(SCENARIOS)
+
+# --- スクリーンショット（README 用。docs/images/ に置く）----------------------
+screenshots: $(IMG) $(VIBE_RUN)
+	$(VIBE_RUN) test --img $(IMG) --out $(BUILD)/screenshots tools/screenshots/*.scn
+	mkdir -p docs/images
+	cp $(BUILD)/screenshots/desktop.png $(BUILD)/screenshots/shell-320.png $(BUILD)/screenshots/editor-320.png docs/images/
 
 clean:
 	rm -rf $(BUILD)
