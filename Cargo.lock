@@ -30,6 +30,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit"
+version = "0.1.0"
+dependencies = [
+ "vibe-edit",
+ "vibe-rt",
+]
+
+[[package]]
 name = "fault"
 version = "0.1.0"
 dependencies = [
@@ -256,6 +264,10 @@ version = "0.1.0"
 
 [[package]]
 name = "vibe-alloc"
+version = "0.1.0"
+
+[[package]]
+name = "vibe-edit"
 version = "0.1.0"
 
 [[package]]

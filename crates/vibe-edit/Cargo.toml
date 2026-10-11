@@ -1,0 +1,8 @@
+[package]
+name = "vibe-edit"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "テキストエディタの中身（行の編集・カーソル・表示範囲）。入出力はしない"
+
+[dependencies]

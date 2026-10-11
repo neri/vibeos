@@ -1,0 +1,67 @@
+# Phase 12: テキストエディタ（新しいファイルを作って保存、既存のファイルを編集、探す・切り取り・貼り付け）
+writable
+timeout 40
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+# 新しいファイル
+type edit /docs/note.txt
+key ret
+wait-serial /docs/note.txt (new)
+type Hello editor
+key ret
+type second line
+key up
+key end
+type !
+sleep 200
+expect-screen edit-new 0 16 640 64
+key ctrl+s
+wait-serial Saved 26 bytes
+key ctrl+q
+type cat /docs/note.txt
+key ret
+wait-serial Hello editor!
+wait-serial second line
+# 保存するとフロッピー（ホスト側のイメージ）にも書き戻される
+expect-disk-file DOCS/NOTE.TXT Hello editor!
+# 既存のファイル: 1 行目を切り取り、末尾に 1 行足してから貼り付ける
+#   → second line / third / Hello editor! / （空の行）
+type edit /docs/note.txt
+key ret
+key ctrl+k
+key ctrl+end
+key ret
+type third
+key ret
+key ctrl+u
+key ctrl+s
+wait-serial Saved
+key ctrl+q
+type cat /docs/note.txt
+key ret
+wait-serial second line
+wait-serial third
+wait-serial Hello editor!
+# 保存せずに終わろうとすると確かめる
+type edit /docs/note.txt
+key ret
+type x
+key ctrl+q
+wait-serial Unsaved changes!
+key ctrl+q
+type cat /docs/note.txt
+key ret
+wait-serial second line
+# 探す（大文字小文字を区別しない）
+type edit /docs/guide.txt
+key ret
+key ctrl+f
+type programs
+key ret
+wait-serial Found at line 42
+key ctrl+g
+type 3
+key ret
+key ctrl+q
+expect-disk-clean
+serial-absent PANIC

@@ -82,7 +82,7 @@ endef
 # ディスクに入れるファイル（rootfs/ 以下。8.3 形式の大文字の名前にすること）
 ROOTFS := $(shell find rootfs -type f)
 # ユーザアプリ（apps/ の中のバイナリ）。ディスクの /BIN/名前.ELF に入れる
-APPS := hello fault view paint mandel snake more fstest
+APPS := hello fault view paint mandel snake more fstest edit
 APPS_DIR := $(BUILD)/rootfs-apps
 APPS_STAMP := $(APPS_DIR)/.stamp
 

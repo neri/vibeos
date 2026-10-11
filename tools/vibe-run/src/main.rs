@@ -176,8 +176,10 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
     let _ = fs::write(out.join(format!("{name}.serial.log")), &serial);
     result.map(|_| true).map_err(|e| {
         let tail: Vec<&str> = serial.lines().rev().take(15).collect();
-        let tail: Vec<&str> = tail.into_iter().rev().collect();
-        format!("{e}\n--- serial (last lines) ---\n{}\n---", tail.join("\n"))
+        let tail: String = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+        // 改行を出さない画面描画（エディタなど）で長くなりすぎないよう、最後の 2000 文字まで
+        let start = tail.char_indices().rev().nth(2000).map_or(0, |(i, _)| i);
+        format!("{e}\n--- serial (last lines) ---\n{}\n---", &tail[start..])
     })
 }
 

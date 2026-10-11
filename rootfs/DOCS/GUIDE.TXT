@@ -48,6 +48,10 @@ mandel    the Mandelbrot set
           (arrows move, + and - zoom)
 snake     the snake game (arrows)
 more      read a text file page by page
+edit      text editor
+          ^S save (and sync), ^Q quit,
+          ^F find, ^G go to line,
+          ^K cut line, ^U paste
 fault     misbehave on purpose (tests)
 
 Any name that is not a shell command is

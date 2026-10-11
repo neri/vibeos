@@ -203,8 +203,15 @@ impl KeyEvent {
 /// よく使うキー（`KeyEvent::key` の値）
 pub mod key {
     pub const ESCAPE: u8 = 0x01;
+    pub const BACKSPACE: u8 = 0x0E;
+    pub const TAB: u8 = 0x0F;
     pub const ENTER: u8 = 0x1C;
     pub const SPACE: u8 = 0x39;
+    pub const HOME: u8 = 0x80 | 0x47;
+    pub const PAGE_UP: u8 = 0x80 | 0x49;
+    pub const END: u8 = 0x80 | 0x4F;
+    pub const PAGE_DOWN: u8 = 0x80 | 0x51;
+    pub const DELETE: u8 = 0x80 | 0x53;
     pub const UP: u8 = 0x80 | 0x48;
     pub const DOWN: u8 = 0x80 | 0x50;
     pub const LEFT: u8 = 0x80 | 0x4B;
