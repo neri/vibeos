@@ -2,8 +2,9 @@
 //!
 //! 2 つのモードがある:
 //! - **全画面**（320x200）: 前面のウィンドウ 1 つだけを画面いっぱいに出す（これまでの動き）
-//! - **デスクトップ**（640x480）: 上端のバー、背景、重なったウィンドウ（タイトルバーと枠付き）を出す。
-//!   クリックで前に出す（フォーカス）、タイトルバーのドラッグで動かす、[x] で閉じる
+//! - **デスクトップ**（640x480）: 上端のバー（メニュー・ウィンドウのボタン。bar.rs）、背景、重なった
+//!   ウィンドウ（タイトルバーと枠付き）を出す。クリックで前に出す（フォーカス）、タイトルバーのドラッグで
+//!   動かす、[_] で最小化、[x] で閉じる。Alt+Tab でウィンドウを順に前に出す（全画面でも）
 //!
 //! 端末（シェルの画面）もウィンドウの 1 つ。0 番のウィンドウは最初の端末（コンソール）で、バッファは
 //! 静的な領域（起動直後から使うため）。ほかの端末とアプリのウィンドウのバッファはヒープから取る。
@@ -18,6 +19,8 @@
 //!
 //! 入力: キーはフォーカスのあるウィンドウ（全画面では前面）に、マウスはその中の座標にして届ける。
 //! ウィンドウの持ち主はそれぞれのキューから読む（`read_key` / `poll_mouse`）。
+
+mod bar;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -110,20 +113,26 @@ struct Window {
     tty: Option<WinId>,
     /// 端末のとき: シェルが終わるのを待っているプロセス（Ctrl+C で止める相手）
     fg_proc: Option<TaskId>,
+    /// 最小化している（バーのボタンだけになる）
+    minimized: bool,
 }
 
 /// マウスの操作の結果、ロックの外で行うこと
-#[derive(Clone, Copy)]
 enum MouseAction {
     /// プロセスを止める（gfx_open の画面の [x]）
     Kill(TaskId),
     /// 端末を閉じる（シェルとその端末のプロセスを止める）
     CloseTerminal(WinId),
+    /// メニューを開く（項目を読む）
+    OpenMenu,
+    /// メニューの項目を起動する
+    Launch(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Part {
     Title,
+    Minimize,
     Close,
     Client,
 }
@@ -154,6 +163,11 @@ pub struct Screen {
     capture: Option<WinId>,
     buttons: u8,
     placed: u32,
+    /// デスクトップのバーの右に出す状態の表示
+    status_text: String,
+    /// バーを描き直す
+    bar_dirty: bool,
+    menu: Option<bar::Menu>,
 }
 
 /// 画面。コンソール（gfx::console の CONSOLE）と両方取るときはコンソールを先に取ること
@@ -176,6 +190,9 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     capture: None,
     buttons: 0,
     placed: 0,
+    status_text: String::new(),
+    bar_dirty: false,
+    menu: None,
 });
 
 /// キー・マウス・閉じる要求が届いたら起こされる
@@ -233,11 +250,7 @@ pub fn start_desktop() -> bool {
     s.surface().clear(palette::BLACK);
     s.refresh_titlebars();
     s.cursor_visible = true;
-    // 上端のバーを塗っておく
-    let w = s.width;
-    // SAFETY: BAR_BUF は SCREEN のロックの中でだけ触る
-    let bar = unsafe { &mut (&mut *BAR_BUF.as_ptr())[..w * BAR_H] };
-    bar.fill(palette::BLUE);
+    s.bar_dirty = true;
     let h = s.height;
     s.mark_rows(0, h);
     s.present();
@@ -277,6 +290,7 @@ fn new_window(
         terminal: false,
         tty: None,
         fg_proc: None,
+        minimized: false,
     }
 }
 
@@ -512,14 +526,16 @@ impl Screen {
         self.order.last().copied().unwrap_or(CONSOLE)
     }
 
-    /// キーを受け取るウィンドウ
+    /// キーを受け取るウィンドウ（最小化していない一番手前のもの）
     fn focused(&self) -> Option<WinId> {
-        self.order.last().copied()
+        self.order.iter().rev().copied().find(|id| self.windows.get(id).is_some_and(|w| !w.minimized))
     }
 
-    /// 前に出す
+    /// 前に出す（最小化していれば戻す）
     fn raise(&mut self, id: WinId) {
-        if self.focused() == Some(id) || !self.windows.contains_key(&id) {
+        let Some(w) = self.windows.get_mut(&id) else { return };
+        let was_minimized = core::mem::take(&mut w.minimized);
+        if !was_minimized && self.order.last() == Some(&id) {
             return;
         }
         self.order.retain(|&w| w != id);
@@ -527,10 +543,42 @@ impl Screen {
         self.focus_changed();
     }
 
-    /// 重なりの順やフォーカスが変わった: タイトルバー・パレットを直して全体を描き直す
+    /// 最小化する（デスクトップだけ）
+    fn minimize(&mut self, id: WinId) {
+        if self.mode != Mode::Desktop {
+            return;
+        }
+        let Some(w) = self.windows.get_mut(&id) else { return };
+        w.minimized = true;
+        if self.drag.is_some_and(|d| d.0 == id) {
+            self.drag = None;
+        }
+        if self.capture == Some(id) {
+            self.capture = None;
+        }
+        self.focus_changed();
+    }
+
+    /// Alt+Tab: 一番奥の（最小化していない）ウィンドウを前に出す。前に出せるものが 1 つしか
+    /// なければ、最小化したものを戻す
+    fn cycle_windows(&mut self) {
+        let visible: Vec<WinId> =
+            self.order.iter().copied().filter(|id| self.windows.get(id).is_some_and(|w| !w.minimized)).collect();
+        let next = if visible.len() >= 2 {
+            Some(visible[0])
+        } else {
+            self.order.iter().copied().find(|id| self.windows.get(id).is_some_and(|w| w.minimized))
+        };
+        if let Some(id) = next {
+            self.raise(id);
+        }
+    }
+
+    /// 重なりの順やフォーカスが変わった: タイトルバー・パレット・バーを直して全体を描き直す
     fn focus_changed(&mut self) {
         self.refresh_titlebars();
         self.apply_palette();
+        self.bar_dirty = true;
         let h = self.height;
         self.mark_rows(0, h);
     }
@@ -559,15 +607,21 @@ impl Screen {
     fn hit(&self, x: i32, y: i32) -> Option<(WinId, Part)> {
         for &id in self.order.iter().rev() {
             let w = &self.windows[&id];
+            if w.minimized {
+                continue;
+            }
             let (left, right) = (w.x - 1, w.x + w.w as i32);
             let (top, bottom) = (w.y - TITLE_H as i32 - 1, w.y + w.h as i32);
             if x < left || x > right || y < top || y > bottom {
                 continue;
             }
             if y < w.y {
-                let close_x = w.x + w.w as i32 - CLOSE_W as i32 - 2;
-                if w.closable && x >= close_x && x < close_x + CLOSE_W as i32 {
+                let on = |bx: Option<i32>| bx.is_some_and(|bx| x >= w.x + bx && x < w.x + bx + CLOSE_W as i32);
+                if on(w.close_box_x()) {
                     return Some((id, Part::Close));
+                }
+                if on(Some(w.minimize_box_x())) {
+                    return Some((id, Part::Minimize));
                 }
                 return Some((id, Part::Title));
             }
@@ -605,12 +659,33 @@ impl Screen {
             return None;
         }
 
+        if self.menu.is_some() {
+            self.menu_hover(x, y);
+            if left && !was_left {
+                // メニューが開いていれば、どこを押しても閉じる（項目なら起動する）
+                let item = self.menu_item_at(x, y).flatten();
+                let name = item.and_then(|i| self.menu.as_ref().map(|m| m.items[i].clone()));
+                self.close_menu();
+                return name.map(MouseAction::Launch);
+            }
+            return None;
+        }
+
         if let Some((id, dx, dy)) = self.drag {
             if left {
                 self.move_window(id, x - dx, y - dy);
                 return None;
             }
             self.drag = None;
+        } else if left && !was_left && y < BAR_H as i32 && self.capture.is_none() {
+            match self.bar_hit(x) {
+                Some(bar::BarHit::Menu) => return Some(MouseAction::OpenMenu),
+                // フォーカスのあるウィンドウのボタンなら最小化、ほかは前に出す（最小化していれば戻す）
+                Some(bar::BarHit::Window(id)) if self.focused() == Some(id) => self.minimize(id),
+                Some(bar::BarHit::Window(id)) => self.raise(id),
+                None => {}
+            }
+            return None;
         } else if left && !was_left {
             match self.hit(x, y) {
                 Some((id, Part::Title)) => {
@@ -622,6 +697,10 @@ impl Screen {
                 Some((id, Part::Close)) => {
                     self.raise(id);
                     return self.request_close(id);
+                }
+                Some((id, Part::Minimize)) => {
+                    self.minimize(id);
+                    return None;
                 }
                 Some((id, Part::Client)) => {
                     self.raise(id);
@@ -666,7 +745,14 @@ impl Screen {
 
     /// 入力スレッドから: キーをフォーカスのあるウィンドウへ
     fn on_key(&mut self, ev: KeyEvent) {
-        let target = self.focused().unwrap_or(CONSOLE);
+        // Alt+Tab: ウィンドウの切り替え（押す・離すのどちらもアプリには渡さない）
+        if ev.key == KeyCode::TAB && ev.mods.alt() {
+            if ev.pressed {
+                self.cycle_windows();
+            }
+            return;
+        }
+        let Some(target) = self.focused() else { return };
         if let Some(w) = self.windows.get_mut(&target) {
             // 端末の Ctrl+C は、シェルが待っている前面のプロセスを止めるのに使った（キーボードの割り込みで）。
             // 入力としては渡さない（後でシェルが ^C として読んでしまわないように）
@@ -708,6 +794,9 @@ impl Screen {
 
     /// 書き換えた行を重ね合わせて VRAM へ送る
     pub fn present(&mut self) {
+        if self.bar_dirty && self.mode == Mode::Desktop {
+            self.render_bar();
+        }
         if self.dirty_lo >= self.dirty_hi {
             return;
         }
@@ -776,12 +865,16 @@ impl Screen {
                 for &id in &self.order {
                     self.draw_window_row(id, y as i32, row);
                 }
+                self.draw_menu_row(y, row);
             }
         }
     }
 
     fn draw_window_row(&self, id: WinId, y: i32, row: &mut [u8]) {
         let w = &self.windows[&id];
+        if w.minimized {
+            return;
+        }
         let top = w.y - TITLE_H as i32 - 1;
         let bottom = w.y + w.h as i32;
         if y < top || y > bottom {
@@ -849,19 +942,36 @@ fn push_mouse(w: &mut Window, ev: MouseEvent) {
     }
 }
 
-/// タイトルバーを描く（フォーカスがあれば青、なければ灰色。閉じられるなら右端に [x]）
+impl Window {
+    /// タイトルバーの [x] の左端（中身の左端から）。閉じられなければ None
+    fn close_box_x(&self) -> Option<i32> {
+        self.closable.then(|| (self.w - CLOSE_W - 2) as i32)
+    }
+
+    /// タイトルバーの [_] の左端（[x] の左、[x] が無ければ右端）
+    fn minimize_box_x(&self) -> i32 {
+        let x = (self.w - CLOSE_W - 2) as i32;
+        if self.closable { x - CLOSE_W as i32 - 2 } else { x }
+    }
+}
+
+/// タイトルバーを描く（フォーカスがあれば青、なければ灰色。右端に [_] と、閉じられるなら [x]）
 fn render_titlebar(w: &mut Window, focused: bool) {
+    let close_x = w.close_box_x();
+    let min_x = w.minimize_box_x();
     w.titlebar.resize(w.w * TITLE_H, 0);
     let mut s = Surface::new(&mut w.titlebar, w.w, TITLE_H);
     s.clear(if focused { TITLE_ACTIVE } else { TITLE_INACTIVE });
-    let room = w.w.saturating_sub(8 + CLOSE_W + 4) / FONT_8X8.width;
+    let room = (min_x - 8).max(0) as usize / FONT_8X8.width;
     let title: String = w.title.chars().take(room).collect();
     s.draw_text(&FONT_8X8, 4, 2, &title, palette::WHITE, None);
-    if w.closable {
-        let x = (w.w - CLOSE_W - 2) as i32;
-        s.fill_rect(x, 1, CLOSE_W as i32, CLOSE_W as i32, palette::LIGHT_GRAY);
-        s.line(x + 2, 3, x + CLOSE_W as i32 - 3, CLOSE_W as i32 - 2, palette::BLACK);
-        s.line(x + CLOSE_W as i32 - 3, 3, x + 2, CLOSE_W as i32 - 2, palette::BLACK);
+    let c = CLOSE_W as i32;
+    s.fill_rect(min_x, 1, c, c, palette::LIGHT_GRAY);
+    s.hline(min_x + 2, c - 2, c - 4, palette::BLACK);
+    if let Some(x) = close_x {
+        s.fill_rect(x, 1, c, c, palette::LIGHT_GRAY);
+        s.line(x + 2, 3, x + c - 3, c - 2, palette::BLACK);
+        s.line(x + c - 3, 3, x + 2, c - 2, palette::BLACK);
     }
 }
 
@@ -894,9 +1004,51 @@ pub fn on_mouse(x: i32, y: i32, buttons: u8) {
     match action {
         Some(MouseAction::Kill(pid)) => crate::process::request_kill(pid),
         Some(MouseAction::CloseTerminal(tty)) => crate::process::kill_tty(tty),
+        Some(MouseAction::OpenMenu) => {
+            let items = menu_items();
+            let mut s = SCREEN.lock();
+            s.open_menu(items);
+            s.present();
+        }
+        Some(MouseAction::Launch(name)) => launch(&name),
         None => {}
     }
     INPUT_WAIT.notify_all();
+}
+
+/// メニューの項目: "Terminal" と /BIN のアプリ（小文字の名前、拡張子なし）
+fn menu_items() -> Vec<String> {
+    let mut apps: Vec<String> = crate::fs::read_dir("/BIN")
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|e| !e.is_dir())
+                .filter_map(|e| e.name.strip_suffix(".ELF").map(|n| n.to_ascii_lowercase()))
+                .collect()
+        })
+        .unwrap_or_default();
+    apps.sort();
+    let mut items = vec![String::from(MENU_TERMINAL)];
+    items.append(&mut apps);
+    items
+}
+
+const MENU_TERMINAL: &str = "Terminal";
+
+/// メニューから起動する。アプリは最初の端末につながる（出力はそこに出る）。終わるのは誰も待たない
+fn launch(name: &str) {
+    if name == MENU_TERMINAL {
+        crate::gfx::console::open_terminal(None);
+        return;
+    }
+    let path = crate::process::resolve_program(name);
+    match crate::process::spawn(&path, &[name]) {
+        Ok(id) => {
+            crate::process::detach(id);
+            klog!("menu: started {name} ({id})");
+        }
+        Err(e) => klog!("menu: {name}: {}", vibe_abi::err::name(e)),
+    }
 }
 
 /// キーボードのスレッドから
@@ -910,7 +1062,11 @@ pub fn on_key(ev: KeyEvent) {
             return;
         }
     }
-    SCREEN.lock().on_key(ev);
+    {
+        let mut s = SCREEN.lock();
+        s.on_key(ev);
+        s.present();
+    }
     INPUT_WAIT.notify_all();
 }
 

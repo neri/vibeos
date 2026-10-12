@@ -1,4 +1,5 @@
-//! 画面の一番上の行のステータスバー（専用のスレッドが 1 秒ごとに描き直す）
+//! ステータスバー（専用のスレッドが 1 秒ごとに描き直す）。全画面では一番上の行に自分で描き、
+//! デスクトップでは上端のバーの右側に出す文字列を gui に渡す
 
 use alloc::format;
 
@@ -35,20 +36,30 @@ fn draw() {
         None => format!("up {}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60),
     };
     let right = format!("{when}  {}K T{} ", free_pages * 4, tasks);
-    let font = &FONT_8X8;
     let mut s = SCREEN.lock();
+    if desktop {
+        // デスクトップのバーは gui が描く（メニュー・ウィンドウのボタンと並べる）
+        // 長さが変わる数は幅をそろえ、アドレスの位置が動かないようにする
+        let fixed = format!("{when}  {:>5}K T{:<2} ", free_pages * 4, tasks);
+        let text = match ip {
+            Some(ip) => format!("{ip}  {fixed}"),
+            None => fixed,
+        };
+        s.set_status_text(&text);
+        s.present();
+        return;
+    }
+    let font = &FONT_8X8;
     s.draw_status_bar(|surf| {
         let w = surf.width() as i32;
-        // デスクトップのバーは 1 ピクセルずつ上下に余白がある
-        let (h, y) = if desktop { (crate::gui::BAR_H as i32, 1) } else { (font.height as i32, 0) };
-        surf.fill_rect(0, 0, w, h, BAR_BG);
-        surf.draw_text(font, font.width as i32, y, "VibeOS", palette::YELLOW, None);
+        surf.fill_rect(0, 0, w, font.height as i32, BAR_BG);
+        surf.draw_text(font, font.width as i32, 0, "VibeOS", palette::YELLOW, None);
         // ネットワークのアドレスは左側（右側は長さが変わるので、位置が動かないように）
         if let Some(ip) = ip {
-            surf.draw_text(font, 8 * font.width as i32, y, &format!("{ip}"), palette::LIGHT_CYAN, None);
+            surf.draw_text(font, 8 * font.width as i32, 0, &format!("{ip}"), palette::LIGHT_CYAN, None);
         }
         let x = w - (right.len() * font.width) as i32;
-        surf.draw_text(font, x, y, &right, BAR_FG, None);
+        surf.draw_text(font, x, 0, &right, BAR_FG, None);
     });
     s.present();
 }
