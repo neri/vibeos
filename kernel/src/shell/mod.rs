@@ -21,13 +21,17 @@ const SH_PATH: &str = "/BIN/SH.ELF";
 
 /// 端末のシェルを動かす（端末のスレッドから呼ぶ）: /BIN/SH.ELF を起動して終わるのを待つ。
 /// `command` があれば `sh -c command`。起動できなければ予備のシェルを動かす。
-/// 最初の端末は閉じないので、sh が終わったら起動し直す
+/// 最初の端末は閉じないので、sh が終わったら起動し直す。最初の端末で最初に起動する sh は `sh -l`
+/// （/AUTORUN.SH があれば実行してから対話する）
 pub fn run_terminal(command: Option<String>) {
     let tty = sched::current_tty();
+    let mut first = tty == crate::gui::CONSOLE;
     loop {
         let mut argv = alloc::vec!["sh"];
         if let Some(c) = &command {
             argv.extend(["-c", c.as_str()]);
+        } else if core::mem::take(&mut first) {
+            argv.push("-l");
         }
         let id = match crate::process::spawn_ex(SH_PATH, &argv, &[], None) {
             Ok(id) => id,

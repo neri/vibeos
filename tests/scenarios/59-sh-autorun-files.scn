@@ -1,0 +1,35 @@
+# ユーザ空間のシェル S4: 起動時の /AUTORUN.SH、files から .SH を新しい端末で動かす、$(…)
+disk-put tests/scripts/autorun.sh /AUTORUN.SH
+disk-put tests/scripts/hi.sh /DOCS/HI.SH
+timeout 30
+wait-serial gui: desktop 640x480
+wait-serial VibeOS shell
+wait-serial autorun: hello from /AUTORUN.SH
+wait-serial autorun: sum 6
+# AUTORUN.SH はこのシェルの中で動いたので、その変数が見える。$(…) はコマンドの出力
+type echo now $(echo sub | fault upper) $AUTO
+key ret
+wait-serial now SUB set-by-autorun
+# files: ↓ で DOCS → Enter で入る（.. を選んだ状態）→ ↓↓ で HI.SH（GUIDE.TXT の次）→ Enter
+type files &
+key ret
+wait-serial files: started
+sleep 300
+key down
+key ret
+wait-serial files: dir /DOCS
+key down
+key down
+key ret
+wait-serial term: opened terminal 2
+wait-serial files: opened /DOCS/HI.SH with sh -i in a terminal
+wait-serial hi: n1 n2 n3 (/DOCS/HI.SH)
+# スクリプトの後も、その端末で打てる。exit で端末が閉じる
+sleep 500
+type echo in terminal 2
+key ret
+wait-serial in terminal 2
+type exit
+key ret
+wait-serial term: closed terminal 2
+serial-absent PANIC

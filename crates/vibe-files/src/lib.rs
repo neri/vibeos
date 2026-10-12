@@ -33,6 +33,8 @@ pub const ASSOCIATIONS: &[(&str, Opener)] = &[
     ("MD", Opener::Terminal("edit")),
     ("HTM", Opener::Terminal("edit")),
     ("ELF", Opener::Run),
+    // スクリプト: 新しい端末で動かし、終わった後もその端末で打てるようにする（sh -i）
+    ("SH", Opener::Terminal("sh -i")),
 ];
 
 /// 拡張子（"." の後ろ。無ければ None）
@@ -144,6 +146,7 @@ mod tests {
         assert_eq!(opener_for("PLASMA.BMP"), Some(Opener::App("view")));
         assert_eq!(opener_for("/DOCS/guide.txt"), Some(Opener::Terminal("edit")));
         assert_eq!(opener_for("/BIN/CALC.ELF"), Some(Opener::Run));
+        assert_eq!(opener_for("/DOCS/HI.SH"), Some(Opener::Terminal("sh -i")));
         assert_eq!(opener_for("DATA.BIN"), None);
         assert_eq!(opener_for("NOEXT"), None);
         assert_eq!(opener_for("/A.B/NOEXT"), None, "the dot is in the directory name");

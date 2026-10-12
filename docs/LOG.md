@@ -498,3 +498,10 @@
 - /BIN のアプリが 41 本になり、`55-pipe-builtins` の数と `more-ls`、メニューの clock が 6 つ目になった `46-desktop-bar` と `bar-menu` を直した。`57-shell-fallback` は予備のシェルに `ls` が無いことを見るようにした
 - 詰まったこと: 前の作業でできた `BIN/*.ELF` が `build/rootfs-apps` に残っていて、別の作業の状態のイメージに入っていた（Makefile は消えたアプリの ELF を消さない）。気づきにくいので、アプリを減らしたときは `build/rootfs-apps` を消して作り直す
 - 圧縮しないイメージの空きは 22,016 バイト（`SH.ELF` は 107,584 バイト）
+
+## 2026-10-12 ユーザ空間のシェル S4: AUTORUN.SH と files の .SH（Phase 44）
+
+- 起動したときの最初の端末で、カーネルは最初の sh を `sh -l` で起動する（起動し直すときは付けない）。`sh -l` は `/AUTORUN.SH` があれば、対話する前にこのシェルの中で実行する（`$0` は `/AUTORUN.SH`。変数は後で打つコマンドからも見える）
+- `sh -i FILE [引数]`: スクリプトを実行してから対話する。`vibe-files` の拡張子の対応に `SH` → 新しい端末で `sh -i` を足した（スクリプトが終わってもすぐに端末が閉じない。ホストのテストを 1 行足した）
+- `$(…)` は S2 の `interp` で作ってあった（子の sh の標準出力をパイプで読む）。シナリオでも確かめた
+- シナリオ `59-sh-autorun-files`（`AUTORUN.SH` の出力と変数、`$(echo sub | fault upper)`、files のキーボードで `/DOCS/HI.SH` を開くと新しい端末で動き、`exit` で閉じる）。テスト用のスクリプトは `tests/scripts/autorun.sh`・`hi.sh`
