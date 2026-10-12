@@ -14,6 +14,7 @@ use crate::gui;
 const HISTORY_MAX: usize = 32;
 const LINE_MAX: usize = 256;
 
+#[derive(Clone)]
 pub struct LineEditor {
     history: VecDeque<String>,
 }

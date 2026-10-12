@@ -319,7 +319,8 @@ fn with_file<R>(fd: Fd, f: impl FnOnce(&mut OpenFile) -> Result<R>) -> Result<R>
     }
 }
 
-/// 読んだバイト数を返す（終わりなら 0）
+/// ファイルから読んだバイト数を返す（終わりなら 0。テスト用。ほかの種類も読むなら io::read）
+#[allow(dead_code)]
 pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
     with_file(fd, |file| read_open(file, buf))
 }

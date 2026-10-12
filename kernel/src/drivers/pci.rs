@@ -42,25 +42,6 @@ impl Device {
         (v & 1 == 0 && v & !0xF != 0).then_some(v & !0xF)
     }
 
-    pub fn class_name(&self) -> &'static str {
-        match (self.class, self.subclass) {
-            (0x01, 0x01) => "IDE controller",
-            (0x01, _) => "storage",
-            (0x02, 0x00) => "Ethernet",
-            (0x02, _) => "network",
-            (0x03, _) => "display",
-            (0x04, _) => "multimedia",
-            (0x05, _) => "memory",
-            (0x06, 0x00) => "host bridge",
-            (0x06, 0x01) => "ISA bridge",
-            (0x06, 0x04) => "PCI bridge",
-            (0x06, _) => "bridge",
-            (0x0C, 0x03) => "USB",
-            (0x0C, _) => "serial bus",
-            _ => "other",
-        }
-    }
-
     fn read16(&self, off: u8) -> u16 {
         let v = read32(self.bus, self.dev, self.func, off & !3);
         (v >> ((off & 2) * 8)) as u16

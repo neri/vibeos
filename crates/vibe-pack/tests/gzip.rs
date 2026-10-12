@@ -78,6 +78,13 @@ fn errors() {
     let mut b = g.clone();
     b[n - 1] = 0xFF; // 4GB 近い ISIZE でメモリを取りに行かない
     assert_eq!(gunzip(&b, MAX), Err(GzipError::TooLarge));
+    // deflate の部分（ヘッダ 10 バイトと末尾 8 バイトを除く）の 1032 倍までしか出せない
+    let deflate_len = n - 10 - 8;
+    let mut b = g.clone();
+    b[n - 4..].copy_from_slice(&((deflate_len * 1032 + 1) as u32).to_le_bytes());
+    assert_eq!(gunzip(&b, usize::MAX), Err(GzipError::TooLarge));
+    b[n - 4..].copy_from_slice(&((deflate_len * 1032) as u32).to_le_bytes());
+    assert_eq!(gunzip(&b, usize::MAX), Err(GzipError::SizeMismatch));
     // deflate の後ろに余分なデータ
     let mut b = g[..n - 8].to_vec();
     b.extend_from_slice(b"junk");

@@ -83,13 +83,17 @@ fn skip_header(b: &[u8]) -> Result<usize, GzipError> {
     Ok(p)
 }
 
-/// 展開する。展開後の大きさが `max_size` を越えるものは `TooLarge`
+/// deflate で 1 バイトから出せる最大のバイト数（長さ 258 の一致を 2 ビットで書いたとき）
+const MAX_EXPANSION: usize = 1032;
+
+/// 展開する。展開後の大きさが `max_size` を越えるもの、deflate の部分の大きさからは出せないもの
+/// （途中で切れたファイルの末尾をサイズと読んだときなど）は、メモリを取りに行かずに `TooLarge`
 pub fn gunzip(src: &[u8], max_size: usize) -> Result<Vec<u8>, GzipError> {
     let start = skip_header(src)?;
     let end = src.len() - TRAILER;
     let crc = u32_at(src, end);
     let size = u32_at(src, end + 4) as usize;
-    if size > max_size {
+    if size > max_size || size > (end - start).saturating_mul(MAX_EXPANSION) {
         return Err(GzipError::TooLarge);
     }
     let mut out = Vec::new();

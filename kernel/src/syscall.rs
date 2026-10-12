@@ -12,7 +12,8 @@ use alloc::vec::Vec;
 use alloc::sync::Arc;
 
 use vibe_abi::{
-    DirEntry, KeyEvent, MouseState, NetInfo, PollFd, ProcInfo, SockAddr, SpawnArgs, Stat, SysInfo, WinEvent, err, nr,
+    ArpEntry, DirEntry, FsInfo, KeyEvent, MouseState, NetInfo, PciInfo, PollFd, ProcInfo, SockAddr, SockInfo, SpawnArgs,
+    Stat, SysInfo, WinEvent, err, nr,
 };
 use vibe_net::Ipv4;
 
@@ -51,7 +52,7 @@ pub fn dispatch(f: &mut TrapFrame) {
 
 fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysResult {
     match n {
-        nr::SOCKET..=nr::POLL => net_call(user, n, a, b, c, d, e),
+        nr::SOCKET..=nr::POLL | nr::ARP_LIST..=nr::SOCK_LIST => net_call(user, n, a, b, c, d, e),
         nr::CTRL_C => match a {
             vibe_abi::CTRL_C_CATCH => process::catch_ctrl_c(true).map(|_| 0),
             vibe_abi::CTRL_C_DEFAULT => process::catch_ctrl_c(false).map(|_| 0),
@@ -104,8 +105,12 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
         nr::KILL => process::kill(a).map(|_| 0),
         nr::SYS_INFO => {
             let (free, total) = crate::mm::pmm::stats();
+            let (heap_free, heap_total, heap_blocks) = crate::mm::heap::stats();
             let desktop = SCREEN.lock().mode() == gui::Mode::Desktop;
             let info = SysInfo {
+                heap_free: heap_free as u32,
+                heap_total: heap_total as u32,
+                heap_blocks: heap_blocks as u32,
                 free_kb: (free * 4) as u32,
                 total_kb: (total * 4) as u32,
                 ticks: pit::ticks(),
@@ -179,6 +184,36 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
         nr::DUP2 => fs::dup2(a as usize, b as usize).map(|fd| fd as u32).map_err(process::errno_of),
         nr::FD_KIND => fs::get(a as usize).map(|d| d.kind()).map_err(process::errno_of),
         nr::SPAWN_EX => sys_spawn_ex(user, a),
+        nr::FS_INFO => {
+            let (free, total) = fs::space().map_err(process::errno_of)?;
+            let info = FsInfo { free_bytes: free as u32, total_bytes: total as u32, dirty_sectors: fs::dirty_sectors() };
+            copy_to_user(user, a, as_bytes(&info))?;
+            Ok(0)
+        }
+        nr::PCI_LIST => {
+            use crate::drivers::pci;
+            if !pci::present() {
+                return Err(err::ENODEV);
+            }
+            let list: Vec<PciInfo> = pci::scan()
+                .iter()
+                .take(b as usize)
+                .map(|d| PciInfo {
+                    bus: d.bus,
+                    dev: d.dev,
+                    func: d.func,
+                    class: d.class,
+                    subclass: d.subclass,
+                    irq: d.irq,
+                    vendor: d.vendor,
+                    device: d.device,
+                    io: d.io_base(0).map_or(0, u32::from),
+                    mem: if d.io_base(0).is_some() { 0 } else { d.mem_base(0).unwrap_or(0) },
+                    ..Default::default()
+                })
+                .collect();
+            copy_slice_to_user(user, a, &list)
+        }
         nr::SBRK => user.lock().space.sbrk(a as i32).ok_or(err::ENOMEM),
         nr::SLEEP => {
             pit::sleep_ms(a);
@@ -457,6 +492,14 @@ fn user_bytes_str(user: &UserRef, addr: u32, len: u32) -> Result<String, i32> {
     core::str::from_utf8(bytes).map(String::from).map_err(|_| err::EINVAL)
 }
 
+/// repr(C) の構造体の並びを写し、数を返す（構造体は詰め物の無いものだけにすること）
+fn copy_slice_to_user<T: Copy>(user: &UserRef, addr: u32, list: &[T]) -> SysResult {
+    // SAFETY: repr(C) の値の並びをバイト列として読むだけ
+    let bytes = unsafe { core::slice::from_raw_parts(list.as_ptr() as *const u8, core::mem::size_of_val(list)) };
+    copy_to_user(user, addr, bytes)?;
+    Ok(list.len() as u32)
+}
+
 fn as_bytes<T: Copy>(v: &T) -> &[u8] {
     // SAFETY: repr(C) の値をバイト列として読むだけ
     unsafe { core::slice::from_raw_parts(v as *const T as *const u8, core::mem::size_of::<T>()) }
@@ -544,7 +587,9 @@ fn net_call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> S
         }
         nr::NET_INFO => {
             let info = net::info().ok_or(err::ENODEV)?;
-            let mut ni = NetInfo { mac: info.mac.0, ..Default::default() };
+            let mut ni = NetInfo { mac: info.mac.0, io: info.io, irq: info.irq, ..Default::default() };
+            vibe_abi::set_fixed_str(&mut ni.card, info.card);
+            ni.rx_dropped = info.stats.rx_dropped;
             if let Some(c) = info.config {
                 ni.flags |= vibe_abi::NET_CONFIGURED;
                 ni.addr = c.addr.0;
@@ -563,6 +608,42 @@ fn net_call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> S
             ni.tx_bytes = info.stats.tx_bytes;
             copy_to_user(user, a, as_bytes(&ni))?;
             Ok(0)
+        }
+        nr::ARP_LIST => {
+            let list: Vec<ArpEntry> = net::arp_entries()
+                .into_iter()
+                .take(b as usize)
+                .map(|(ip, mac)| ArpEntry { ip: ip.0, mac: mac.0, _pad: 0 })
+                .collect();
+            copy_slice_to_user(user, a, &list)
+        }
+        nr::ARP_RESOLVE => {
+            check_user(user, c, 6, true)?;
+            let mac = net::arp_resolve(Ipv4(a.to_le_bytes()), b)?;
+            copy_to_user(user, c, &mac.0)?;
+            Ok(0)
+        }
+        nr::SOCK_LIST => {
+            let list: Vec<SockInfo> = net::socket_list()
+                .into_iter()
+                .take(b as usize)
+                .map(|so| {
+                    let mut si = SockInfo {
+                        local_port: so.local_port,
+                        recv_queued: so.recv_queued as u32,
+                        send_queued: so.send_queued as u32,
+                        ..Default::default()
+                    };
+                    vibe_abi::set_fixed_str(&mut si.kind, so.kind);
+                    vibe_abi::set_fixed_str(&mut si.state, so.state);
+                    if let Some((ip, port)) = so.remote {
+                        si.remote = ip.0;
+                        si.remote_port = port;
+                    }
+                    si
+                })
+                .collect();
+            copy_slice_to_user(user, a, &list)
         }
         nr::POLL => {
             if b > MAX_POLL {

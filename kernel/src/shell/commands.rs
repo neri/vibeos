@@ -1,4 +1,8 @@
-//! シェルのコマンド
+//! シェルの内蔵コマンド
+//!
+//! 出力は `out!`・`outln!`（今のタスクの fd 1）、エラーは `errln!`（fd 2）。fd 1 が端末なら今までどおり
+//! 画面とシリアルに出る。書けなかったとき（パイプの先が閉じた・止めるよう頼まれた）は `?` で抜ける。
+//! パイプの中では短い間だけのカーネルスレッドで動く（`shell::run_pipeline`）。
 
 use alloc::format;
 use alloc::string::String;
@@ -9,18 +13,19 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use vibe_font::FONT_8X8;
 use vibe_gfx::palette;
 
-use super::Shell;
-use crate::gui::SCREEN;
+use vibe_abi::err;
+
+use super::{Out, Shell, out_bytes, stdout_is_console};
 use crate::drivers::{pit, power};
-use crate::fs;
-use crate::mm::{heap, pmm};
+use crate::gui::SCREEN;
 use crate::task::{self, sched};
+use crate::{fs, io};
 
 pub struct Command {
     pub name: &'static str,
     pub usage: &'static str,
     pub help: &'static str,
-    pub run: fn(&mut Shell, &[&str]),
+    pub run: fn(&mut Shell, &[&str]) -> Out,
 }
 
 const COMMANDS: &[Command] = &[
@@ -28,22 +33,16 @@ const COMMANDS: &[Command] = &[
     Command { name: "clear", usage: "clear", help: "clear the screen", run: clear },
     Command { name: "echo", usage: "echo [text...]", help: "print text", run: echo },
     Command { name: "ls", usage: "ls [dir]", help: "list a directory", run: ls },
-    Command { name: "cat", usage: "cat file...", help: "print files", run: cat },
-    Command { name: "hexdump", usage: "hexdump file", help: "dump a file in hex", run: hexdump },
+    Command { name: "cat", usage: "cat [file...]", help: "print files (or standard input)", run: cat },
     Command { name: "write", usage: "write file text...", help: "write text to a file (replaces it)", run: write },
     Command { name: "append", usage: "append file text...", help: "add a line of text to a file", run: append },
     Command { name: "cp", usage: "cp from to", help: "copy a file", run: cp },
     Command { name: "rm", usage: "rm path", help: "remove a file or an empty directory", run: rm },
     Command { name: "mv", usage: "mv from to", help: "rename or move a file or directory", run: mv },
     Command { name: "mkdir", usage: "mkdir dir", help: "make a directory", run: mkdir },
-    Command { name: "df", usage: "df", help: "disk space and unsaved changes", run: df },
     Command { name: "sync", usage: "sync", help: "save changes to the floppy disk", run: sync },
     Command { name: "cd", usage: "cd [dir]", help: "change directory", run: cd },
     Command { name: "pwd", usage: "pwd", help: "print current directory", run: pwd },
-    Command { name: "mem", usage: "mem", help: "memory usage", run: mem },
-    Command { name: "ps", usage: "ps", help: "list tasks", run: ps },
-    Command { name: "uptime", usage: "uptime", help: "time since boot", run: uptime },
-    Command { name: "date", usage: "date", help: "current date and time", run: date },
     Command { name: "hwclock", usage: "hwclock", help: "read the CMOS clock", run: hwclock },
     Command { name: "sleep", usage: "sleep [ms]", help: "sleep (default 500ms, checks timing)", run: sleep },
     Command { name: "history", usage: "history", help: "command history", run: history },
@@ -56,9 +55,6 @@ const COMMANDS: &[Command] = &[
     },
     Command { name: "demo", usage: "demo", help: "3 threads draw counters for 5s", run: demo },
     Command { name: "beep", usage: "beep [hz] [ms]", help: "sound the PC speaker", run: beep },
-    Command { name: "net", usage: "net", help: "network card, address, sockets", run: net_cmd },
-    Command { name: "arp", usage: "arp [ip]", help: "find the MAC address of an IP (or list)", run: arp },
-    Command { name: "pci", usage: "pci", help: "list PCI devices", run: pci },
     Command { name: "reboot", usage: "reboot", help: "restart the computer", run: reboot },
     Command { name: "divzero", usage: "divzero", help: "test: divide by zero", run: divzero },
     Command { name: "nullptr", usage: "nullptr", help: "test: read address 0", run: nullptr },
@@ -70,13 +66,13 @@ pub fn find(name: &str) -> Option<&'static Command> {
     COMMANDS.iter().find(|c| c.name == name)
 }
 
-fn help(_: &mut Shell, args: &[&str]) {
+fn help(_: &mut Shell, args: &[&str]) -> Out {
     if let Some(name) = args.get(1) {
         match find(name) {
-            Some(c) => kprintln!("{}\n  {}", c.usage, c.help),
-            None => kprintln!("help: no such command: {name}"),
+            Some(c) => outln!("{}\n  {}", c.usage, c.help),
+            None => errln!("help: no such command: {name}"),
         }
-        return;
+        return Ok(());
     }
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
     // 端末の幅に収まるように並べる
@@ -84,120 +80,120 @@ fn help(_: &mut Shell, args: &[&str]) {
     let mut line = String::new();
     for n in names {
         if line.len() + n.len() + 1 > width - 2 {
-            kprintln!("{line}");
+            outln!("{line}");
             line.clear();
         }
         line.push_str(n);
         line.push(' ');
     }
-    kprintln!("{line}");
-    kprintln!("'help <command>' for details");
+    outln!("{line}");
+    outln!("'help <command>' for details. Other commands are programs in /BIN");
+    Ok(())
 }
 
-fn clear(_: &mut Shell, _: &[&str]) {
-    kprint!("\x1b[2J\x1b[H");
+fn clear(_: &mut Shell, _: &[&str]) -> Out {
+    out!("\x1b[2J\x1b[H");
+    Ok(())
 }
 
-fn echo(_: &mut Shell, args: &[&str]) {
-    kprintln!("{}", args[1..].join(" "));
+fn echo(_: &mut Shell, args: &[&str]) -> Out {
+    outln!("{}", args[1..].join(" "));
+    Ok(())
 }
 
-fn ls(_: &mut Shell, args: &[&str]) {
+fn ls(_: &mut Shell, args: &[&str]) -> Out {
     let path = args.get(1).copied().unwrap_or(".");
+    // 色は端末に出すときだけ
+    let color = stdout_is_console();
     match fs::read_dir(path) {
         Ok(entries) => {
             for e in entries {
                 let when = vibe_time::DateTime::from_fat(e.modified.0, e.modified.1)
                     .map(|t| format!("{:04}-{:02}-{:02} {:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute))
                     .unwrap_or_default();
-                if e.is_dir() {
-                    kprintln!(" \x1b[94m{:12}\x1b[0m   <DIR> {when}", e.name);
+                if e.is_dir() && color {
+                    outln!(" \x1b[94m{:12}\x1b[0m   <DIR> {when}", e.name);
+                } else if e.is_dir() {
+                    outln!(" {:12}   <DIR> {when}", e.name);
                 } else {
-                    kprintln!(" {:12} {:7} {when}", e.name, e.size);
+                    outln!(" {:12} {:7} {when}", e.name, e.size);
                 }
             }
         }
-        Err(e) => kprintln!("ls: {path}: {e}"),
+        Err(e) => errln!("ls: {path}: {e}"),
     }
+    Ok(())
 }
 
-fn cat(_: &mut Shell, args: &[&str]) {
+fn cat(_: &mut Shell, args: &[&str]) -> Out {
     if args.len() < 2 {
-        kprintln!("usage: cat file...");
+        return copy_fd(0, false);
     }
     for path in &args[1..] {
-        if let Err(e) = cat_file(path) {
-            kprintln!("cat: {path}: {e}");
-        }
+        let fd = match fs::open(path) {
+            Ok(fd) => fd,
+            Err(e) => {
+                errln!("cat: {path}: {e}");
+                continue;
+            }
+        };
+        let r = copy_fd(fd, true);
+        let _ = fs::close(fd);
+        r?;
     }
+    Ok(())
 }
 
-/// ファイルを少しずつ読んで表示する（表示できない文字は '.'）
-fn cat_file(path: &str) -> fs::Result<()> {
-    let fd = fs::open(path)?;
+/// fd を終わりまで読んで fd 1 に書く。端末に出すときは表示できない文字を '.' にし、
+/// `newline` なら最後に改行が無ければ足す
+fn copy_fd(fd: fs::Fd, newline: bool) -> Out {
+    let console = stdout_is_console();
     let mut buf = [0u8; 256];
     let mut last = b'\n';
-    let result = loop {
-        let n = match fs::read(fd, &mut buf) {
-            Ok(0) => break Ok(()),
+    loop {
+        let n = match io::read(fd, &mut buf) {
+            Ok(0) => break,
             Ok(n) => n,
-            Err(e) => break Err(e),
+            Err(err::EINTR) => return Err(err::EINTR),
+            Err(e) => {
+                errln!("cat: {}", err::name(e));
+                break;
+            }
         };
-        let text: String =
-            buf[..n].iter().map(|&b| if b == b'\n' || (0x20..0x7F).contains(&b) { b as char } else { '.' }).collect();
-        kprint!("{text}");
-        last = buf[n - 1];
-    };
-    if last != b'\n' {
-        kprintln!();
+        let data = &mut buf[..n];
+        if console {
+            for b in data.iter_mut() {
+                if *b != b'\n' && !(0x20..0x7F).contains(b) {
+                    *b = b'.';
+                }
+            }
+        }
+        out_bytes(data)?;
+        last = data[n - 1];
     }
-    fs::close(fd)?;
-    result
+    if newline && console && last != b'\n' {
+        outln!();
+    }
+    Ok(())
 }
 
-fn hexdump(_: &mut Shell, args: &[&str]) {
+fn write(_: &mut Shell, args: &[&str]) -> Out {
     let Some(path) = args.get(1) else {
-        kprintln!("usage: hexdump file");
-        return;
-    };
-    let fd = match fs::open(path) {
-        Ok(fd) => fd,
-        Err(e) => {
-            kprintln!("hexdump: {path}: {e}");
-            return;
-        }
-    };
-    // 40 桁の画面に合わせて 1 行 8 バイト
-    let mut buf = [0u8; 8];
-    let mut offset = 0u32;
-    while let Ok(n) = fs::read(fd, &mut buf) {
-        if n == 0 {
-            break;
-        }
-        let hex: String = buf[..n].iter().map(|b| format!("{b:02x} ")).collect();
-        let text: String = buf[..n].iter().map(|&b| if (0x20..0x7F).contains(&b) { b as char } else { '.' }).collect();
-        kprintln!("{offset:05x} {hex:24}{text}");
-        offset += n as u32;
-    }
-    let _ = fs::close(fd);
-}
-
-fn write(_: &mut Shell, args: &[&str]) {
-    let Some(path) = args.get(1) else {
-        kprintln!("usage: write file text...");
-        return;
+        errln!("usage: write file text...");
+        return Ok(());
     };
     let mut text = args[2..].join(" ");
     text.push('\n');
     if let Err(e) = fs::write_file(path, text.as_bytes()) {
-        kprintln!("write: {path}: {e}");
+        errln!("write: {path}: {e}");
     }
+    Ok(())
 }
 
-fn append(_: &mut Shell, args: &[&str]) {
+fn append(_: &mut Shell, args: &[&str]) -> Out {
     let Some(path) = args.get(1) else {
-        kprintln!("usage: append file text...");
-        return;
+        errln!("usage: append file text...");
+        return Ok(());
     };
     let mut text = args[2..].join(" ");
     text.push('\n');
@@ -207,126 +203,97 @@ fn append(_: &mut Shell, args: &[&str]) {
         r
     });
     if let Err(e) = r {
-        kprintln!("append: {path}: {e}");
+        errln!("append: {path}: {e}");
     }
+    Ok(())
 }
 
-fn cp(_: &mut Shell, args: &[&str]) {
+fn cp(_: &mut Shell, args: &[&str]) -> Out {
     let [_, from, to] = args else {
-        kprintln!("usage: cp from to");
-        return;
+        errln!("usage: cp from to");
+        return Ok(());
     };
     match fs::read_file(from) {
         Ok(data) => {
             if let Err(e) = fs::write_file(to, &data) {
-                kprintln!("cp: {to}: {e}");
+                errln!("cp: {to}: {e}");
             }
         }
-        Err(e) => kprintln!("cp: {from}: {e}"),
+        Err(e) => errln!("cp: {from}: {e}"),
     }
+    Ok(())
 }
 
-fn mv(_: &mut Shell, args: &[&str]) {
+fn mv(_: &mut Shell, args: &[&str]) -> Out {
     let [_, from, to] = args else {
-        kprintln!("usage: mv from to");
-        return;
+        errln!("usage: mv from to");
+        return Ok(());
     };
     if let Err(e) = fs::rename(from, to) {
-        kprintln!("mv: {from}: {e}");
+        errln!("mv: {from}: {e}");
     }
+    Ok(())
 }
 
-fn rm(_: &mut Shell, args: &[&str]) {
+fn rm(_: &mut Shell, args: &[&str]) -> Out {
     let Some(path) = args.get(1) else {
-        kprintln!("usage: rm path");
-        return;
+        errln!("usage: rm path");
+        return Ok(());
     };
     if let Err(e) = fs::remove(path) {
-        kprintln!("rm: {path}: {e}");
+        errln!("rm: {path}: {e}");
     }
+    Ok(())
 }
 
-fn mkdir(_: &mut Shell, args: &[&str]) {
+fn mkdir(_: &mut Shell, args: &[&str]) -> Out {
     let Some(path) = args.get(1) else {
-        kprintln!("usage: mkdir dir");
-        return;
+        errln!("usage: mkdir dir");
+        return Ok(());
     };
     if let Err(e) = fs::mkdir(path) {
-        kprintln!("mkdir: {path}: {e}");
+        errln!("mkdir: {path}: {e}");
     }
+    Ok(())
 }
 
-fn df(_: &mut Shell, _: &[&str]) {
-    match fs::space() {
-        Ok((free, total)) => kprintln!("{} KB free of {} KB", free / 1024, total / 1024),
-        Err(e) => kprintln!("df: {e}"),
-    }
-    let dirty = fs::dirty_sectors();
-    if dirty > 0 {
-        kprintln!("{dirty} sectors not saved (use sync)");
-    }
-}
-
-fn sync(_: &mut Shell, _: &[&str]) {
+fn sync(_: &mut Shell, _: &[&str]) -> Out {
     match fs::sync() {
-        Ok(0) => kprintln!("sync: nothing to save"),
-        Ok(n) => kprintln!("sync: saved {n} sectors"),
-        Err(e) => kprintln!("sync: {e}"),
+        Ok(0) => outln!("sync: nothing to save"),
+        Ok(n) => outln!("sync: saved {n} sectors"),
+        Err(e) => errln!("sync: {e}"),
     }
+    Ok(())
 }
 
-fn cd(_: &mut Shell, args: &[&str]) {
+fn cd(_: &mut Shell, args: &[&str]) -> Out {
     let path = args.get(1).copied().unwrap_or("/");
     if let Err(e) = fs::chdir(path) {
-        kprintln!("cd: {path}: {e}");
+        errln!("cd: {path}: {e}");
     }
+    Ok(())
 }
 
-fn pwd(_: &mut Shell, _: &[&str]) {
-    kprintln!("{}", fs::cwd());
+fn pwd(_: &mut Shell, _: &[&str]) -> Out {
+    outln!("{}", fs::cwd());
+    Ok(())
 }
 
-fn mem(_: &mut Shell, _: &[&str]) {
-    let (free, total) = pmm::stats();
-    kprintln!("pages: {} KB free / {} KB", free * 4, total * 4);
-    let (hfree, htotal, blocks) = heap::stats();
-    kprintln!("heap: {hfree} / {htotal} bytes free, {blocks} blocks");
-}
-
-fn ps(_: &mut Shell, _: &[&str]) {
-    kprintln!("  ID NAME       STATE    TICKS");
-    for t in sched::tasks().into_iter().filter(|t| t.state != sched::State::Dead) {
-        kprintln!("{:4} {:10} {:8} {}", t.id, t.name, format!("{:?}", t.state), t.ticks);
-    }
-}
-
-fn date(_: &mut Shell, _: &[&str]) {
-    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    match crate::drivers::rtc::now() {
-        Some(t) => kprintln!("{} {}", t, DAYS[t.weekday() as usize]),
-        None => kprintln!("date: no clock"),
-    }
-}
-
-fn hwclock(_: &mut Shell, _: &[&str]) {
+fn hwclock(_: &mut Shell, _: &[&str]) -> Out {
     match crate::drivers::rtc::read_cmos() {
-        Ok(t) => kprintln!("cmos: {t}"),
-        Err(raw) => kprintln!("hwclock: invalid time {raw:02x?}"),
+        Ok(t) => outln!("cmos: {t}"),
+        Err(raw) => errln!("hwclock: invalid time {raw:02x?}"),
     }
+    Ok(())
 }
 
-fn uptime(_: &mut Shell, _: &[&str]) {
-    let t = pit::ticks();
-    kprintln!("up {}.{:02} s ({} ticks)", t / pit::TICK_HZ, t % pit::TICK_HZ, t);
-}
-
-fn sleep(_: &mut Shell, args: &[&str]) {
+fn sleep(_: &mut Shell, args: &[&str]) -> Out {
     let ms: u32 = match args.get(1).map(|s| s.parse()) {
         None => 500,
         Some(Ok(ms)) => ms,
         Some(Err(_)) => {
-            kprintln!("usage: sleep [ms]");
-            return;
+            errln!("usage: sleep [ms]");
+            return Ok(());
         }
     };
     let start = pit::ticks();
@@ -334,45 +301,49 @@ fn sleep(_: &mut Shell, args: &[&str]) {
     let elapsed = pit::ticks().wrapping_sub(start);
     let expected = (ms * pit::TICK_HZ).div_ceil(1000);
     let ok = elapsed >= expected && elapsed <= expected + expected / 5 + 2;
-    kprintln!("slept {} ticks: {}", elapsed, if ok { "sleep ok" } else { "sleep NG" });
+    outln!("slept {} ticks: {}", elapsed, if ok { "sleep ok" } else { "sleep NG" });
+    Ok(())
 }
 
-fn wallpaper(_: &mut Shell, args: &[&str]) {
+fn wallpaper(_: &mut Shell, args: &[&str]) -> Out {
     use vibe_gfx::wallpaper::parse_setting;
     match args.get(1..) {
         Some(["none"]) => crate::gfx::wallpaper::clear(),
         Some(rest) if !rest.is_empty() => match parse_setting(&rest.join(" ")) {
             Some((path, fit)) => {
                 if let Err(e) = crate::gfx::wallpaper::load(path, fit) {
-                    kprintln!("wallpaper: {path}: {e}");
+                    errln!("wallpaper: {path}: {e}");
                 }
             }
-            None => kprintln!("usage: wallpaper file.bmp [tile|center] | none"),
+            None => errln!("usage: wallpaper file.bmp [tile|center] | none"),
         },
-        _ => kprintln!("usage: wallpaper file.bmp [tile|center] | none"),
+        _ => errln!("usage: wallpaper file.bmp [tile|center] | none"),
     }
+    Ok(())
 }
 
-fn term(_: &mut Shell, _: &[&str]) {
+fn term(_: &mut Shell, _: &[&str]) -> Out {
     match crate::gfx::console::open_terminal(None, None) {
         Some(_) => {}
-        None => kprintln!("term: too many terminals"),
+        None => errln!("term: too many terminals"),
     }
+    Ok(())
 }
 
-fn history(shell: &mut Shell, _: &[&str]) {
+fn history(shell: &mut Shell, _: &[&str]) -> Out {
     for (i, h) in shell.editor.history().enumerate() {
-        kprintln!("{:3} {h}", i + 1);
+        outln!("{:3} {h}", i + 1);
     }
+    Ok(())
 }
 
 static DEMO_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// 3 つのスレッドが画面の右上にそれぞれのカウンタを描き続ける（5 秒で終わる）
-fn demo(_: &mut Shell, _: &[&str]) {
+fn demo(_: &mut Shell, _: &[&str]) -> Out {
     if DEMO_RUNNING.swap(true, Ordering::Relaxed) {
-        kprintln!("demo is already running");
-        return;
+        errln!("demo is already running");
+        return Ok(());
     }
     let colors = [palette::LIGHT_RED, palette::LIGHT_GREEN, palette::LIGHT_CYAN];
     let tty = sched::current_tty();
@@ -410,36 +381,41 @@ fn demo(_: &mut Shell, _: &[&str]) {
         DEMO_RUNNING.store(false, Ordering::Relaxed);
         klog!("demo finished");
     });
-    kprintln!("demo started");
+    outln!("demo started");
+    Ok(())
 }
 
-fn beep(_: &mut Shell, args: &[&str]) {
+fn beep(_: &mut Shell, args: &[&str]) -> Out {
     let freq = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(880);
     let ms = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
     crate::drivers::speaker::play(freq, ms);
     pit::sleep_ms(ms);
+    Ok(())
 }
 
-fn reboot(_: &mut Shell, _: &[&str]) {
-    kprintln!("rebooting...");
+fn reboot(_: &mut Shell, _: &[&str]) -> Out {
+    outln!("rebooting...");
     power::reboot();
 }
 
-fn divzero(_: &mut Shell, _: &[&str]) {
+fn divzero(_: &mut Shell, _: &[&str]) -> Out {
     // Rust の割り算はゼロ除算を事前に検査して panic するので、CPU の例外を起こすには div 命令を直接使う
     // SAFETY: わざと #DE を起こす（例外ハンドラの確認用）
     unsafe { asm!("div {0}", in(reg) 0u32, inout("eax") 1u32 => _, inout("edx") 0u32 => _) };
+    Ok(())
 }
 
-fn nullptr(_: &mut Shell, _: &[&str]) {
+fn nullptr(_: &mut Shell, _: &[&str]) -> Out {
     // SAFETY: わざと 0 番地を読んでページフォルトを起こす（ページングの確認用）
     let v = unsafe { core::ptr::read_volatile(core::ptr::null::<u32>()) };
-    kprintln!("read {v:#x} from address 0 (should not happen)");
+    outln!("read {v:#x} from address 0 (should not happen)");
+    Ok(())
 }
 
-fn overflow(_: &mut Shell, _: &[&str]) {
-    kprintln!("overflowing the stack...");
+fn overflow(_: &mut Shell, _: &[&str]) -> Out {
+    outln!("overflowing the stack...");
     recurse(0);
+    Ok(())
 }
 
 /// スタックを使い切るまで再帰する（ガードページと二重フォルト処理の確認用）
@@ -452,85 +428,9 @@ fn recurse(depth: u32) -> u32 {
     core::hint::black_box(&buf)[0] as u32 + r
 }
 
-fn panic_cmd(_: &mut Shell, _: &[&str]) {
+fn panic_cmd(_: &mut Shell, _: &[&str]) -> Out {
     panic!("panic requested from the shell");
 }
 
-fn net_cmd(_: &mut Shell, _: &[&str]) {
-    use crate::net::OptIp;
-    let Some(i) = crate::net::info() else {
-        kprintln!("net: no network card");
-        return;
-    };
-    kprintln!("card: {} at {:#x} irq {}", i.card, i.io, i.irq);
-    kprintln!("mac:  {}", i.mac);
-    match i.config {
-        Some(c) => {
-            kprintln!("ip:   {}/{} ({})", c.addr, c.prefix, if i.dhcp { "dhcp" } else { "static" });
-            kprintln!("gw:   {}", OptIp(c.gateway));
-            kprintln!("dns:  {}", OptIp(c.dns));
-        }
-        None => kprintln!("ip:   (waiting for DHCP)"),
-    }
-    if let Some(ntp) = i.settings.ntp {
-        kprintln!("ntp:  {ntp}");
-    }
-    let s = i.stats;
-    kprintln!("rx:   {} packets, {} bytes ({} dropped)", s.rx_frames, s.rx_bytes, s.rx_dropped);
-    kprintln!("tx:   {} packets, {} bytes", s.tx_frames, s.tx_bytes);
-    for (ip, mac) in crate::net::arp_entries() {
-        kprintln!("arp:  {ip} is at {mac}");
-    }
-    let socks = crate::net::socket_list();
-    kprintln!("sockets: {}", socks.len());
-    for so in socks {
-        let remote = so.remote.map(|(ip, p)| format!("{ip}:{p}")).unwrap_or_default();
-        kprintln!("  {} {} {} {} r{} s{}", so.kind, so.local_port, remote, so.state, so.recv_queued, so.send_queued);
-    }
-}
 
-fn arp(_: &mut Shell, args: &[&str]) {
-    let Some(arg) = args.get(1) else {
-        for (ip, mac) in crate::net::arp_entries() {
-            kprintln!("{ip} is at {mac}");
-        }
-        return;
-    };
-    let Some(ip) = vibe_net::Ipv4::parse(arg) else {
-        kprintln!("arp: bad address: {arg}");
-        return;
-    };
-    match crate::net::arp_resolve(ip, 3000) {
-        Ok(mac) => kprintln!("{ip} is at {mac}"),
-        Err(e) => kprintln!("arp: {ip}: {}", vibe_abi::err::name(e)),
-    }
-}
 
-fn pci(_: &mut Shell, _: &[&str]) {
-    use crate::drivers::pci;
-    if !pci::present() {
-        kprintln!("pci: no PCI bus");
-        return;
-    }
-    for d in pci::scan() {
-        let mut res = String::new();
-        if let Some(io) = d.io_base(0) {
-            res = format!(" io {io:#x}");
-        } else if let Some(m) = d.mem_base(0) {
-            res = format!(" mem {m:#x}");
-        }
-        if d.irq != 0 && d.irq != 0xFF {
-            res.push_str(&format!(" irq {}", d.irq));
-        }
-        kprintln!(
-            "{:02x}:{:02x}.{} {:04x}:{:04x} {}{}",
-            d.bus,
-            d.dev,
-            d.func,
-            d.vendor,
-            d.device,
-            d.class_name(),
-            res
-        );
-    }
-}

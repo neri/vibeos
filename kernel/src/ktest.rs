@@ -552,8 +552,12 @@ fn process_runs_gzip_and_plain_elf() {
     bad_data[n / 2] ^= 0x55;
     let mut too_big = packed.clone();
     too_big[n - 1] = 0xFF; // ISIZE がユーザ空間より大きい
-    let mut huge = packed.clone();
-    huge[n - 1] = 0x7F; // ISIZE が 2GB 近い: 出力先を取れない（取れなかった分は残らない）
+    // ISIZE が 36MB: deflate の部分（約 40KB。ヘッダと末尾の 18 バイトを除く）の 1032 倍までなので
+    // 出せる大きさだが、メモリ（32MB）より大きいので出力先を取れない（取れなかった分は残らない）
+    let mut huge = fs::read_file("/BIN/FILES.ELF").unwrap();
+    let m = huge.len();
+    assert!((m - 18) * 1032 > 36 << 20, "FILES.ELF is too small for this test ({m} bytes)");
+    huge[m - 4..].copy_from_slice(&(36u32 << 20).to_le_bytes());
     fs::write_file("/HUGE.ELF", &huge).unwrap();
     assert_eq!(crate::process::spawn("/HUGE.ELF", &["x"]).err(), Some(err::ENOMEM));
     fs::remove("/HUGE.ELF").unwrap();

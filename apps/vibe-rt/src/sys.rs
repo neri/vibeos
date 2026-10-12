@@ -2,7 +2,7 @@
 
 use core::arch::asm;
 
-use vibe_abi::{DirEntry, MouseState, ProcInfo, SpawnArgs, Stat, SysInfo, nr};
+use vibe_abi::{DirEntry, FsInfo, MouseState, PciInfo, ProcInfo, SpawnArgs, Stat, SysInfo, nr};
 
 /// システムコール。引数は EBX, ECX, EDX, ESI, EDI の順。
 ///
@@ -260,4 +260,25 @@ pub fn clip_get() -> alloc::string::String {
     let n = syscall(nr::CLIP_GET, buf.as_mut_ptr() as u32, buf.len() as u32, 0, 0, 0).max(0) as usize;
     buf.truncate(n.min(4096));
     alloc::string::String::from_utf8(buf).unwrap_or_default()
+}
+
+/// ディスクの空きと、まだ書き戻していないセクタの数
+pub fn fs_info() -> Result<FsInfo, i32> {
+    let mut info = FsInfo::default();
+    match syscall(nr::FS_INFO, &mut info as *mut FsInfo as u32, 0, 0, 0, 0) {
+        0 => Ok(info),
+        e => Err(-e),
+    }
+}
+
+/// PCI の機器の一覧（PCI が無ければ ENODEV）
+pub fn pci_list() -> Result<alloc::vec::Vec<PciInfo>, i32> {
+    let mut v = alloc::vec![PciInfo::default(); 64];
+    match syscall(nr::PCI_LIST, v.as_mut_ptr() as u32, v.len() as u32, 0, 0, 0) {
+        n if n >= 0 => {
+            v.truncate(n as usize);
+            Ok(v)
+        }
+        e => Err(-e),
+    }
 }

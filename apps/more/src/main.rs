@@ -1,6 +1,7 @@
 //! テキストを 1 画面ずつ表示する
 //!
-//! スペース = 次の画面、Enter = 1 行進む、q / Esc = 終わり。
+//! more [ファイル]。ファイルが無ければ標準入力を読む（`ls | more`）。キーは端末から読む。
+//! スペース = 次の画面、Enter = 1 行進む、q / Esc = 終わり。出力が端末でなければ止めずに全部書く。
 
 #![no_std]
 #![no_main]
@@ -10,7 +11,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use vibe_rt::{abi, print, println, sys};
+use vibe_rt::{abi, eprintln, print, println, sys};
 
 vibe_rt::entry!(main);
 
@@ -18,17 +19,24 @@ vibe_rt::entry!(main);
 const DEFAULT_SIZE: (usize, usize) = (40, 24);
 
 fn main() -> i32 {
-    let Some(path) = vibe_rt::args().nth(1) else {
-        println!("usage: more file");
-        return 2;
+    let data = match vibe_rt::args().nth(1) {
+        Some(path) => vibe_rt::read_file(path).map_err(|e| (path, e)),
+        None if !vibe_rt::isatty(abi::STDIN) => vibe_rt::io::read_to_end(abi::STDIN).map_err(|e| ("-", e)),
+        None => {
+            eprintln!("usage: more [file]");
+            return 2;
+        }
     };
-    let data = match vibe_rt::read_file(path) {
+    let data = match data {
         Ok(d) => d,
-        Err(e) => {
-            println!("more: {path}: {}", abi::err::name(e));
+        Err((path, e)) => {
+            eprintln!("more: {path}: {}", abi::err::name(e));
             return 1;
         }
     };
+    if !vibe_rt::isatty(abi::STDOUT) {
+        return if vibe_rt::io::write_all(abi::STDOUT, &data).is_ok() { 0 } else { 1 };
+    }
     // 1 画面の行数（1 行はプロンプト用に残す）
     let (cols, rows) = sys::term_size().unwrap_or(DEFAULT_SIZE);
     let page = rows - 1;

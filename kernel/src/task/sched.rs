@@ -458,6 +458,11 @@ pub fn set_current_tty(tty: u32) {
     s.task(cur).tty = tty;
 }
 
+/// ユーザプロセスか（割り込みの中から呼んでよい）
+pub fn is_user(id: TaskId) -> bool {
+    SCHED.lock().tasks.get(&id).is_some_and(|t| t.user.is_some())
+}
+
 /// タスクがまだある（終わって回収されていない）か
 pub fn exists(id: TaskId) -> bool {
     SCHED.lock().tasks.contains_key(&id)

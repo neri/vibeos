@@ -19,6 +19,7 @@ extern crate alloc;
 
 pub mod env;
 pub mod gfx;
+pub mod io;
 pub mod net;
 pub mod process;
 pub mod sys;
@@ -129,6 +130,32 @@ macro_rules! println {
     ($($arg:tt)*) => { $crate::_print(format_args!("{}\n", format_args!($($arg)*))) };
 }
 
+pub struct Stderr;
+
+impl Write for Stderr {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        sys::write(abi::STDERR, s.as_bytes());
+        Ok(())
+    }
+}
+
+#[doc(hidden)]
+pub fn _eprint(args: fmt::Arguments) {
+    let _ = Stderr.write_fmt(args);
+}
+
+/// 標準エラーに書く
+#[macro_export]
+macro_rules! eprint {
+    ($($arg:tt)*) => { $crate::_eprint(format_args!($($arg)*)) };
+}
+
+#[macro_export]
+macro_rules! eprintln {
+    () => { $crate::eprint!("\n") };
+    ($($arg:tt)*) => { $crate::_eprint(format_args!("{}\n", format_args!($($arg)*))) };
+}
+
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     println!("\npanic: {}", info);
@@ -202,21 +229,9 @@ pub fn read_file(path: &str) -> Result<alloc::vec::Vec<u8>, i32> {
     if fd < 0 {
         return Err(-fd);
     }
-    let mut out = alloc::vec::Vec::new();
-    let mut buf = [0u8; 1024];
-    loop {
-        let n = sys::read(fd, &mut buf);
-        if n < 0 {
-            sys::close(fd);
-            return Err(-n);
-        }
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n as usize]);
-    }
+    let r = io::read_to_end(fd);
     sys::close(fd);
-    Ok(out)
+    r
 }
 
 /// 何かキーが押されるまで待つ（離したイベントは読み飛ばす）

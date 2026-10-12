@@ -9,4 +9,6 @@ build-std-features = ["compiler-builtins-mem"]
 json-target-spec = true
 
 [target.i486-vibeos]
-rustflags = ["-C", "relocation-model=static"]
+# -n（nmagic）: ファイルの中でセグメントをページの境目にそろえない（詰め物の 0 が無くなる。カーネルは
+# セグメントを番地へ写すだけなので、ファイルの位置と番地がページの中でそろっている必要は無い）
+rustflags = ["-C", "relocation-model=static", "-C", "link-arg=-n"]

@@ -1,0 +1,8 @@
+[package]
+name = "vibe-text"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "テキストのフィルタの中身（grep・wc・head・tail・sort の数え方・並べ方・オプション）"
+
+[dependencies]

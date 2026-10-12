@@ -9,6 +9,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "arp"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -51,6 +58,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "date"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+]
+
+[[package]]
+name = "df"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
 ]
 
 [[package]]
@@ -118,7 +139,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "grep"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+ "vibe-text",
+]
+
+[[package]]
+name = "head"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+ "vibe-text",
+]
+
+[[package]]
 name = "hello"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+]
+
+[[package]]
+name = "hexdump"
 version = "0.1.0"
 dependencies = [
  "vibe-rt",
@@ -178,6 +222,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mem"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -223,6 +274,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "net"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+]
+
+[[package]]
 name = "ntp"
 version = "0.1.0"
 dependencies = [
@@ -231,6 +289,13 @@ dependencies = [
 
 [[package]]
 name = "paint"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+]
+
+[[package]]
+name = "pci"
 version = "0.1.0"
 dependencies = [
  "vibe-rt",
@@ -263,6 +328,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "ps"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
 ]
 
 [[package]]
@@ -330,6 +402,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sort"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+ "vibe-text",
+]
+
+[[package]]
 name = "syn"
 version = "3.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -341,6 +421,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tail"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+ "vibe-text",
+]
+
+[[package]]
 name = "tasks"
 version = "0.1.0"
 dependencies = [
@@ -349,10 +437,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tee"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+
+[[package]]
+name = "uptime"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+]
 
 [[package]]
 name = "vibe-abi"
@@ -453,6 +555,10 @@ name = "vibe-term"
 version = "0.1.0"
 
 [[package]]
+name = "vibe-text"
+version = "0.1.0"
+
+[[package]]
 name = "vibe-time"
 version = "0.1.0"
 
@@ -470,6 +576,14 @@ name = "view"
 version = "0.1.0"
 dependencies = [
  "vibe-rt",
+]
+
+[[package]]
+name = "wc"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+ "vibe-text",
 ]
 
 [[package]]

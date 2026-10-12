@@ -4,9 +4,9 @@
 
 use alloc::vec::Vec;
 
-pub use vibe_abi::{NetInfo, PollFd, SockAddr};
+pub use vibe_abi::{ArpEntry, NetInfo, PollFd, SockAddr, SockInfo};
 use vibe_abi::{SOCK_DGRAM, SOCK_STREAM, err, nr};
-pub use vibe_net::{Ipv4, dns, http, sntp};
+pub use vibe_net::{Ipv4, Mac, dns, http, sntp};
 
 use crate::sys::{self, syscall};
 
@@ -198,4 +198,29 @@ impl Drop for Socket {
     fn drop(&mut self) {
         sys::close(self.0);
     }
+}
+
+/// ARP の表
+pub fn arp_list() -> Vec<ArpEntry> {
+    let mut v = alloc::vec![ArpEntry::default(); 64];
+    let n = syscall(nr::ARP_LIST, v.as_mut_ptr() as u32, v.len() as u32, 0, 0, 0).max(0) as usize;
+    v.truncate(n);
+    v
+}
+
+/// ARP で MAC アドレスを引く（最大 timeout_ms 待つ）
+pub fn arp_resolve(ip: Ipv4, timeout_ms: u32) -> Result<Mac, i32> {
+    let mut mac = [0u8; 6];
+    match syscall(nr::ARP_RESOLVE, u32::from_le_bytes(ip.0), timeout_ms, mac.as_mut_ptr() as u32, 0, 0) {
+        0 => Ok(Mac(mac)),
+        e => Err(-e),
+    }
+}
+
+/// ソケットの一覧（全プロセスの分）
+pub fn sock_list() -> Vec<SockInfo> {
+    let mut v = alloc::vec![SockInfo::default(); 64];
+    let n = syscall(nr::SOCK_LIST, v.as_mut_ptr() as u32, v.len() as u32, 0, 0, 0).max(0) as usize;
+    v.truncate(n);
+    v
 }

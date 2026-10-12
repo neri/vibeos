@@ -1,0 +1,89 @@
+# パイプ P3: 内蔵コマンドをパイプとリダイレクトで使う、フィルタのアプリ、more と cat が標準入力を読む
+# （more の画面は 320x200 の全画面の端末で比べる）
+boot-config video=320x200
+timeout 40
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+# 内蔵の ls をアプリでつなぐ。/BIN のアプリは 36 本で、全部 .ELF
+type ls /BIN | grep ELF | wc -l
+key ret
+wait-serial 36
+# 内蔵コマンドのリダイレクト
+type ls /BIN > A.TXT
+key ret
+type grep -c .ELF A.TXT
+key ret
+wait-serial 36
+type grep -n HELLO A.TXT
+key ret
+wait-serial HELLO.ELF
+# 内蔵コマンドだけのパイプも止まらずに通る（同時に動く）
+type echo pipedword | cat | cat
+key ret
+wait-serial pipedword
+wait-serial pipedword
+type echo after
+key ret
+wait-serial after
+wait-serial after
+# sort・head・tail・grep
+type echo cherry > F.TXT
+key ret
+type echo apple >> F.TXT
+key ret
+type echo zebra >> F.TXT
+key ret
+type echo banana >> F.TXT
+key ret
+type cat F.TXT | sort | head -3
+key ret
+wait-serial apple
+wait-serial banana
+wait-serial cherry
+type cat F.TXT | sort -r | head -n 2 | tail -1 > G.TXT
+key ret
+type cat G.TXT
+key ret
+wait-serial cherry
+# cat は < のファイル（標準入力）を読む
+type cat < F.TXT | grep -n an
+key ret
+wait-serial 4:banana
+type grep -iv ZEBRA F.TXT | wc -l
+key ret
+wait-serial 3
+# tee と、内蔵コマンドの標準エラー
+type echo teed | tee T.TXT | cat
+key ret
+wait-serial teed
+wait-serial teed
+type cat nope.txt 2> E.TXT
+key ret
+type echo done1
+key ret
+wait-serial done1
+serial-absent cat: nope.txt: not found
+type cat E.TXT T.TXT
+key ret
+wait-serial cat: nope.txt: not found
+wait-serial teed
+# アプリにした情報のコマンド
+type uptime | grep ticks
+key ret
+wait-serial ticks)
+type ps | grep shell
+key ret
+wait-serial shell
+# ls | more: 1 画面で止まり、スペースで進む（ディスク上の並びはホストで変わるので sort を挟む。
+# 名前の列だけを比べる。大きさと日時はビルドごとに変わる）
+type ls /BIN | sort | more
+key ret
+wait-serial -- more (
+sleep 300
+expect-screen more-ls 0 16 208 384
+key spc
+wait-serial WC.ELF
+type echo after more
+key ret
+wait-serial after more
+serial-absent PANIC

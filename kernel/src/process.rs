@@ -427,8 +427,10 @@ fn mark_ctrl_c(me: TaskId) -> bool {
 pub fn request_interrupt() {
     let targets = SCREEN.lock().interrupt_targets();
     let ids = targets.ids();
+    // "^C" はユーザプロセスの最後の 1 つが出す（内蔵コマンドのスレッドはユーザモードに戻らないので出さない）
+    let echo = ids.iter().rposition(|&id| sched::is_user(id));
     for (i, &id) in ids.iter().enumerate() {
-        request_kill_with(id, Reason::CtrlC(i + 1 == ids.len()));
+        request_kill_with(id, Reason::CtrlC(Some(i) == echo));
     }
 }
 

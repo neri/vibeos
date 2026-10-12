@@ -144,6 +144,16 @@ pub mod nr {
     pub const FD_KIND: u32 = 53;
     /// spawn_ex(&SpawnArgs) -> タスク ID。引数・環境・標準入出力を指定して起動する
     pub const SPAWN_EX: u32 = 54;
+    /// fs_info(&mut FsInfo) -> 0。ディスクの空きと、まだ書き戻していないセクタの数
+    pub const FS_INFO: u32 = 55;
+    /// pci_list(&mut [PciInfo], n) -> 書いた数。PCI の機器の一覧（PCI が無ければ -ENODEV）
+    pub const PCI_LIST: u32 = 56;
+    /// arp_list(&mut [ArpEntry], n) -> 書いた数。ARP の表
+    pub const ARP_LIST: u32 = 57;
+    /// arp_resolve(ip: [u8; 4] を詰めた u32, timeout_ms, &mut [u8; 6]) -> 0。ARP で MAC を引く
+    pub const ARP_RESOLVE: u32 = 58;
+    /// sock_list(&mut [SockInfo], n) -> 書いた数。ソケットの一覧（全プロセスの分）
+    pub const SOCK_LIST: u32 = 59;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -369,6 +379,96 @@ pub struct SysInfo {
     pub screen_height: u32,
     /// SYS_DESKTOP など
     pub flags: u32,
+    /// カーネルのヒープ（空きバイト数, 全体のバイト数, 空きのかたまりの数）
+    pub heap_free: u32,
+    pub heap_total: u32,
+    pub heap_blocks: u32,
+}
+
+/// ディスクの情報（fs_info）
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FsInfo {
+    pub free_bytes: u32,
+    pub total_bytes: u32,
+    /// RAM ディスクで変えたが、まだフロッピーに書き戻していないセクタの数
+    pub dirty_sectors: u32,
+}
+
+/// PCI の機器（pci_list）
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PciInfo {
+    pub bus: u8,
+    pub dev: u8,
+    pub func: u8,
+    pub class: u8,
+    pub subclass: u8,
+    /// 割り込みの線（0 か 0xFF なら無し）
+    pub irq: u8,
+    pub _pad: u16,
+    pub vendor: u16,
+    pub device: u16,
+    /// BAR 0 が I/O ならその番地、メモリならその番地（どちらかだけ。無ければ 0）
+    pub io: u32,
+    pub mem: u32,
+}
+
+/// PCI の機器の種類の名前
+pub fn pci_class_name(class: u8, subclass: u8) -> &'static str {
+    match (class, subclass) {
+        (0x01, 0x01) => "IDE controller",
+        (0x01, _) => "storage",
+        (0x02, 0x00) => "Ethernet",
+        (0x02, _) => "network",
+        (0x03, _) => "display",
+        (0x04, _) => "multimedia",
+        (0x05, _) => "memory",
+        (0x06, 0x00) => "host bridge",
+        (0x06, 0x01) => "ISA bridge",
+        (0x06, 0x04) => "PCI bridge",
+        (0x06, _) => "bridge",
+        (0x0C, 0x03) => "USB",
+        (0x0C, _) => "serial bus",
+        _ => "other",
+    }
+}
+
+/// ARP の表の 1 件（arp_list）
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ArpEntry {
+    pub ip: [u8; 4],
+    pub mac: [u8; 6],
+    pub _pad: u16,
+}
+
+/// ソケットの 1 件（sock_list）
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SockInfo {
+    /// "tcp" など（0 で終わる）
+    pub kind: [u8; 8],
+    /// "ESTABLISHED" など（0 で終わる）
+    pub state: [u8; 16],
+    pub local_port: u16,
+    pub remote_port: u16,
+    /// 相手（無ければ 0.0.0.0）
+    pub remote: [u8; 4],
+    pub recv_queued: u32,
+    pub send_queued: u32,
+}
+
+/// 0 で終わる固定長の名前を文字列に
+pub fn fixed_str(bytes: &[u8]) -> &str {
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    core::str::from_utf8(&bytes[..len]).unwrap_or("?")
+}
+
+/// 文字列を 0 で終わる固定長に入れる（入りきらない分は捨てる。最後の 1 バイトは 0 のまま）
+pub fn set_fixed_str(out: &mut [u8], s: &str) {
+    let n = s.len().min(out.len().saturating_sub(1));
+    out[..n].copy_from_slice(&s.as_bytes()[..n]);
 }
 
 /// 画面がデスクトップ（ウィンドウを重ねて出す）
@@ -471,6 +571,14 @@ pub struct NetInfo {
     pub tx_packets: u32,
     pub rx_bytes: u32,
     pub tx_bytes: u32,
+    /// 受け取れずに捨てたフレームの数
+    pub rx_dropped: u32,
+    /// カードの名前（0 で終わる）
+    pub card: [u8; 16],
+    /// カードの I/O ポートと IRQ
+    pub io: u16,
+    pub irq: u8,
+    pub _pad: u8,
 }
 
 /// アドレスが決まっている
