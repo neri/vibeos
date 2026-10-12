@@ -9,6 +9,7 @@
 | 2026-10-11 | serde_json（ホスト） | 1 | vibe-run の QMP 通信 | ホスト側ツール |
 | 2026-10-11 | png（ホスト） | 0.17 | vibe-run の画面比較 | ホスト側ツール |
 | 2026-10-11 | font8x8 | 0.3（default-features なし） | 8×8 フォントのデータ | DESIGN.md §3.4 で可としたもの。描画は自作 |
+| 2026-10-12 | miniz_oxide | 0.9（default-features なし） | アプリ（gzip）の deflate の展開（`crates/vibe-pack` 経由でカーネルが使う） | DESIGN.md §3.4 で可としたもの（D-035）。gzip の枠は自作。ホストのテストでは deflate の圧縮にも使う |
 
 ---
 
@@ -342,4 +343,16 @@
 - シナリオ: `42-kernel-uncompressed`（`build/vibeos-raw.img`）、`43-kernel-broken`（`build/vibeos-broken.img`、圧縮したデータの 40000 バイト目から 4 バイトを書き換え → `KERNEL.SYS is broken`）。`01-loader` に `kernel compressed` の行を足した
 - K3: テスト用カーネルに `boot/unlzsa2_test.asm` を NASM の elf32 で組んでリンクし（`kernel/build.rs`）、`vibe-lzsa` の境目のデータのうち 20KB までのものと大きいもの 3 つを、貪欲と最適の 2 通りで圧縮して埋め込んだ。ktest `lzsa_asm_decodes_samples`・`lzsa_asm_rejects_broken_data` が通った。テスト用カーネルは 621,600 バイト（圧縮後 344,220）になった
 - 486 に無い命令は使っていない（`llvm-objdump` で確かめた）
+
+## 2026-10-12 アプリの圧縮（Phase 30〜31）
+
+- オーナーの指摘（「アプリは展開の制限が無いので LZSA に拘る理由は小さい。deflate のようなメジャーな形式の方が良い可能性」）で候補を測り直し、gzip（deflate）にした（D-035, [計画書](plans/app-compress.md)）
+- A1: `crates/vibe-pack` に `gzip` モジュール（ヘッダ・FHCRC・CRC32・ISIZE は自作、deflate は `miniz_oxide`）。テストの gzip はテストの中で組み立てる（ホストの `gzip` に頼らない）。Makefile で `build/rootfs-apps-gz/BIN/*.ELF` を `gzip -9 -n` で作り、`COMPRESS=1` ならそれをイメージに入れる。`make test-apps-gz`（`zcat` して元と一致・合計が 45% 以下）を `make test` に足した
+- A2: `process::spawn` で先頭が `1F 8B` なら展開する。カーネルの `vibe-pack` の依存を `qemu-test` のときだけから通常に戻した（`gzip` の feature だけ。LZSA の圧縮器は入らない）
+- 詰まったこと:
+  - Makefile の `%.vpk: %.sys $(VIBE_LZSA)` が、`VIBE_LZSA` を定義する前に読まれていて、ツールが依存に入っていなかった（Phase 28 から。ツールを手でビルドしていたので気づかなかった）。LZSA の自作のコミットの状態でツールをビルドし直したため `pack` の無いツールが残り、今回表に出た。定義を先頭（`VIBE_RUN` の隣）に移した
+  - ktest で RAM ディスクにファイルを書いて消したまま次へ進むと、後の `fdc_read_matches_ramdisk`（フロッピーと RAM ディスクを比べる）が失敗した。テストの最後で `fs::sync()` するようにした
+  - ISIZE を 2GB 近くにしたファイルは、上限（ユーザ空間の大きさ）の内側なので `ENOEXEC` ではなく `ENOMEM` になった。ヒープは連続したページを一度に取るので、失敗しても何も残らない。この振る舞いのままにし、テストを「ユーザ空間より大きい → ENOEXEC」「2GB → ENOMEM」に分けた
+- 結果: アプリ 372,352 → 160,732（43.1%）。カーネルは `miniz_oxide` の分 308,528 → 324,624（圧縮後 135,173 → 144,182）。フロッピーの空きは 1,021,952 バイト（圧縮する前は約 645KB）
+- `make test`（QEMU 43 本・ホスト・LZSA の往復・アプリの gzip）と Bochs の 3 本、`COMPRESS=0` のイメージでの `16-apps` が通った。カーネルは 486 に無い命令も SSE の命令も使っていない（`llvm-objdump` で確かめた）
 

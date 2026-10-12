@@ -40,6 +40,7 @@ const TESTS: &[(&str, fn())] = &[
     ("fs_cwd_is_per_task", fs_cwd_is_per_task),
     ("process_exit_codes", process_exit_codes),
     ("process_spawn_errors", process_spawn_errors),
+    ("process_runs_gzip_and_plain_elf", process_runs_gzip_and_plain_elf),
     ("process_reclaims_memory", process_reclaims_memory),
     ("fdc_read_matches_ramdisk", fdc_read_matches_ramdisk),
     ("fs_write_and_sync", fs_write_and_sync),
@@ -410,6 +411,46 @@ fn process_spawn_errors() {
     assert_eq!(crate::process::spawn("/HELLO.TXT", &["x"]).err(), Some(err::ENOEXEC));
     assert_eq!(crate::process::spawn("/KERNEL.SYS", &["x"]).err(), Some(err::ENOEXEC));
     assert_eq!(crate::process::wait(9999).err(), Some(err::ECHILD));
+}
+
+/// アプリは gzip で置いてある。圧縮していない ELF も動き、壊れた gzip は ENOEXEC で落ちない
+fn process_runs_gzip_and_plain_elf() {
+    use vibe_abi::err;
+    use vibe_pack::gzip;
+    let packed = fs::read_file("/BIN/HELLO.ELF").unwrap();
+    assert!(gzip::is_gzip(&packed), "apps on the disk should be gzip");
+    let elf = gzip::gunzip(&packed, 1 << 24).unwrap();
+    assert!(elf.starts_with(b"\x7fELF"));
+
+    fs::write_file("/PLAIN.ELF", &elf).unwrap();
+    assert_eq!(run("/PLAIN.ELF", &["hello"]), 0);
+
+    let n = packed.len();
+    let mut bad_crc = packed.clone();
+    bad_crc[n - 8] ^= 1;
+    let mut bad_data = packed.clone();
+    bad_data[n / 2] ^= 0x55;
+    let mut too_big = packed.clone();
+    too_big[n - 1] = 0xFF; // ISIZE がユーザ空間より大きい
+    let mut huge = packed.clone();
+    huge[n - 1] = 0x7F; // ISIZE が 2GB 近い: 出力先を取れない（取れなかった分は残らない）
+    fs::write_file("/HUGE.ELF", &huge).unwrap();
+    assert_eq!(crate::process::spawn("/HUGE.ELF", &["x"]).err(), Some(err::ENOMEM));
+    fs::remove("/HUGE.ELF").unwrap();
+    for (name, data) in [
+        ("/BADCRC.ELF", &bad_crc[..]),
+        ("/BADDATA.ELF", &bad_data[..]),
+        ("/TOOBIG.ELF", &too_big[..]),
+        ("/CUT.ELF", &packed[..n / 2]),
+        ("/HEADER.ELF", &packed[..12]),
+    ] {
+        fs::write_file(name, data).unwrap();
+        assert_eq!(crate::process::spawn(name, &["x"]).err(), Some(err::ENOEXEC), "{name}");
+        fs::remove(name).unwrap();
+    }
+    fs::remove("/PLAIN.ELF").unwrap();
+    // 書いた分をフロッピーにも書き戻す（後の fdc_read_matches_ramdisk が両者を比べる）
+    fs::sync().unwrap();
 }
 
 /// プロセスが終わると、そのページ・ページテーブル・カーネルスタックがすべて返る

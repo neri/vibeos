@@ -15,8 +15,11 @@
 
 #![cfg_attr(not(test), no_std)]
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "gzip"))]
 extern crate alloc;
+
+#[cfg(feature = "gzip")]
+pub mod gzip;
 
 pub const MAGIC: [u8; 4] = *b"VPK1";
 pub const HEADER_SIZE: usize = 20;

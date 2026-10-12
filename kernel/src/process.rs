@@ -59,8 +59,24 @@ pub fn errno_of(e: fs::VfsError) -> i32 {
 }
 
 /// ELF を読み込んでプロセスを作る。`args[0]` はプログラムの名前として渡す
-pub fn spawn(path: &str, args: &[&str]) -> Result<TaskId, i32> {
+/// プログラムのファイルを読む。gzip（先頭が 1F 8B）なら展開する（アプリはディスクに gzip で
+/// 置いている。docs/plans/app-compress.md）。圧縮していない ELF はそのまま
+fn read_program(path: &str) -> Result<Vec<u8>, i32> {
+    use vibe_pack::gzip::{self, GzipError};
     let data = fs::read_file(path).map_err(fs_errno)?;
+    if !gzip::is_gzip(&data) {
+        return Ok(data);
+    }
+    // 展開後の大きさの上限: ユーザ空間のプログラムを置ける範囲
+    let max = (USER_STACK_TOP - USER_STACK_SIZE - USER_BASE) as usize;
+    gzip::gunzip(&data, max).map_err(|e| match e {
+        GzipError::OutOfMemory => err::ENOMEM,
+        _ => err::ENOEXEC,
+    })
+}
+
+pub fn spawn(path: &str, args: &[&str]) -> Result<TaskId, i32> {
+    let data = read_program(path)?;
     let elf = ElfFile::new(&data).map_err(|_| err::ENOEXEC)?;
     let h = &elf.header;
     if h.pt1.class() != Class::ThirtyTwo

@@ -365,6 +365,7 @@ version = "0.1.0"
 name = "vibe-pack"
 version = "0.1.0"
 dependencies = [
+ "miniz_oxide 0.9.1",
  "vibe-lzsa",
 ]
 

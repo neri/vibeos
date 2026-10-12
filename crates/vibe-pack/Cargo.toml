@@ -3,12 +3,20 @@ name = "vibe-pack"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "圧縮したカーネルのファイルの形（ヘッダ・x86 の BCJ フィルタ・CRC32）"
+description = "圧縮したカーネルのファイルの形（ヘッダ・x86 の BCJ フィルタ・CRC32）とアプリの gzip の展開"
 
 [features]
-default = ["alloc"]
+default = ["alloc", "gzip"]
 # 作る側（pack）と Vec を返す展開。カーネルでは default-features = false
 alloc = ["vibe-lzsa/alloc"]
+# gzip の展開（アプリ。alloc を使うが LZSA の圧縮器は要らない）
+gzip = ["dep:miniz_oxide"]
 
 [dependencies]
 vibe-lzsa = { path = "../vibe-lzsa", default-features = false }
+# deflate の展開。FPU/SSE を使う simd などの feature は入れない（カーネルでも使うため）
+miniz_oxide = { version = "0.9", default-features = false, optional = true }
+
+[dev-dependencies]
+# テストの gzip を作るため（deflate の圧縮）
+miniz_oxide = "0.9"

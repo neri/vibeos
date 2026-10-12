@@ -14,7 +14,8 @@
 #   make lzsa-bench  自作の LZSA と本家の圧縮後の大きさの表
 #   make lzsa-ref    本家の lzsa を GitHub から取ってきてビルドする（build/ext/lzsa。DECISIONS.md D-033）
 #   make size-report KERNEL.SYS の圧縮前後の大きさとフロッピーの空き
-#   make COMPRESS=0  カーネルを圧縮しないイメージを作る（ローダは印の無い KERNEL.SYS をそのまま写す）
+#   make COMPRESS=0  カーネルとアプリを圧縮しないイメージを作る（ローダは印の無い KERNEL.SYS を
+#                    そのまま写し、カーネルは gzip でない ELF をそのまま読む）
 #   make clean
 
 BUILD   := build
@@ -27,7 +28,8 @@ FRAG_IMG := $(BUILD)/vibeos-frag.img
 RAW_IMG := $(BUILD)/vibeos-raw.img
 # 圧縮したカーネルの中身を壊したイメージ（ローダが CRC32 などで気づいて止まるかのテスト用）
 BROKEN_IMG := $(BUILD)/vibeos-broken.img
-# 1 ならカーネルを LZSA2 + BCJ で圧縮して KERNEL.SYS にする（docs/plans/compress.md）
+# 1 ならカーネルを LZSA2 + BCJ で圧縮して KERNEL.SYS にし（docs/plans/compress.md）、
+# アプリを gzip で圧縮して /BIN/*.ELF にする（docs/plans/app-compress.md）
 COMPRESS ?= 1
 QEMU    ?= qemu-system-i386
 CARGO   ?= cargo
@@ -48,11 +50,12 @@ QEMU_FLAGS := -m 32M -cpu 486 \
 KERNEL_ELF := target/i486-vibeos/release/kernel
 TEST_KERNEL_ELF := target/test/i486-vibeos/release/kernel
 VIBE_RUN   := target/release/vibe-run
+VIBE_LZSA  := target/release/vibe-lzsa
 SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 0x8000 に読み込む。中継バッファ（0x10000）の手前まで
 
-.PHONY: all run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref lzsa-bench lzsa-ref size-report screenshots clean FORCE
+.PHONY: all run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref test-apps-gz lzsa-bench lzsa-ref size-report screenshots clean FORCE
 
 all: $(IMG)
 
@@ -109,7 +112,7 @@ endif
 # ボリュームシリアルを固定して、同じ入力なら同じイメージになるようにする。
 # BPB は boot.asm にも同じ値で書いてあり、mkfs.fat の BPB（オフセット 11〜61）と
 # 一致することを確かめてから boot.bin で上書きする。
-# $(1) = 出力イメージ, $(2) = kernel.sys
+# $(1) = 出力イメージ, $(2) = kernel.sys, $(3) = アプリのディレクトリ（BIN/*.ELF）
 define make-image
 	rm -f $(1).tmp
 	mkfs.fat -C -F 12 -R 1 -i 56494245 -n VIBEOS $(1).tmp 1440 >/dev/null
@@ -120,7 +123,7 @@ define make-image
 	mcopy -i $(1).tmp $(2) ::KERNEL.SYS
 	mcopy -s -i $(1).tmp rootfs/* ::/
 	mcopy -s -i $(1).tmp $(GEN_ROOTFS)/* ::/
-	mcopy -s -i $(1).tmp $(APPS_DIR)/* ::/
+	mcopy -s -i $(1).tmp $(3)/* ::/
 	fsck.fat -n $(1).tmp >/dev/null
 	mv $(1).tmp $(1)
 endef
@@ -144,6 +147,25 @@ $(APPS_STAMP): FORCE | $(BUILD)
 	done
 	@test -f $@ || touch $@
 
+# gzip で圧縮したアプリ（名前は .ELF のまま。カーネルが先頭の 1F 8B で見分けて展開する）。
+# -n: 名前と時刻を入れない（同じ入力なら同じイメージになるように）
+APPS_GZ_DIR := $(BUILD)/rootfs-apps-gz
+APPS_GZ_STAMP := $(APPS_GZ_DIR)/.stamp
+
+$(APPS_GZ_STAMP): $(APPS_STAMP)
+	rm -rf $(APPS_GZ_DIR)
+	mkdir -p $(APPS_GZ_DIR)/BIN
+	for f in $(APPS_DIR)/BIN/*.ELF; do gzip -9 -n -c $$f > $(APPS_GZ_DIR)/BIN/$$(basename $$f) || exit 1; done
+	touch $@
+
+ifeq ($(COMPRESS),1)
+APPS_IMG_DIR := $(APPS_GZ_DIR)
+APPS_IMG_STAMP := $(APPS_GZ_STAMP)
+else
+APPS_IMG_DIR := $(APPS_DIR)
+APPS_IMG_STAMP := $(APPS_STAMP)
+endif
+
 # ビルド時に生成してディスクに入れるもの（tools/mkassets）
 GEN_ROOTFS := $(BUILD)/rootfs-gen
 GEN_STAMP := $(GEN_ROOTFS)/.stamp
@@ -153,14 +175,15 @@ $(GEN_STAMP): $(shell find tools/mkassets -type f) | $(BUILD)
 	$(CARGO) run -q --release -p mkassets -- $(GEN_ROOTFS)
 	touch $@
 
-$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(KERNEL_FILE) $(COMPRESS_STAMP) $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
-	$(call make-image,$@,$(KERNEL_FILE))
+$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(KERNEL_FILE) $(COMPRESS_STAMP) $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
+	$(call make-image,$@,$(KERNEL_FILE),$(APPS_IMG_DIR))
 
-$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(TEST_KERNEL_FILE) $(COMPRESS_STAMP) $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
-	$(call make-image,$@,$(TEST_KERNEL_FILE))
+$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(TEST_KERNEL_FILE) $(COMPRESS_STAMP) $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
+	$(call make-image,$@,$(TEST_KERNEL_FILE),$(APPS_IMG_DIR))
 
+# カーネルもアプリも圧縮しない（COMPRESS=0 と同じ中身）
 $(RAW_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
-	$(call make-image,$@,$(BUILD)/kernel.sys)
+	$(call make-image,$@,$(BUILD)/kernel.sys,$(APPS_DIR))
 
 # 圧縮したデータの途中（先頭から 40000 バイト目）を書き換える。元と変わったことも確かめる
 $(BUILD)/kernel-broken.vpk: $(BUILD)/kernel.vpk
@@ -168,8 +191,8 @@ $(BUILD)/kernel-broken.vpk: $(BUILD)/kernel.vpk
 	printf '\245\132\245\132' | dd of=$@ bs=1 seek=40000 conv=notrunc status=none
 	! cmp -s $< $@
 
-$(BROKEN_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel-broken.vpk $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
-	$(call make-image,$@,$(BUILD)/kernel-broken.vpk)
+$(BROKEN_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel-broken.vpk $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
+	$(call make-image,$@,$(BUILD)/kernel-broken.vpk,$(APPS_IMG_DIR))
 
 # 先頭の LOADER.SYS を消し、空いた所に 1 クラスタのファイルを並べて 1 つおきに消してから
 # 置き直す。LOADER.SYS は 1 クラスタずつの飛び地と、後ろの空き領域の連続した塊に分かれる
@@ -197,7 +220,7 @@ bochs: $(IMG)
 		BOCHS_DISPLAY=x BOCHS_DISPLAY_OPTIONS= bochs -q -f tools/bochs/bochsrc.txt -rc tools/bochs/continue.rc
 
 # --- テスト -----------------------------------------------------------------
-test: test-host test-qemu test-lzsa
+test: test-host test-qemu test-lzsa test-apps-gz
 
 test-host:
 	$(CARGO) test --workspace --exclude kernel --exclude vibe-rt $(addprefix --exclude ,$(APPS))
@@ -232,7 +255,6 @@ test-wan: $(IMG) $(VIBE_RUN)
 # make test は本家に頼らない（自作の圧縮 → 自作の展開だけ。DECISIONS.md D-033）
 LZSA_REF_COMMIT := 15ee2dfe118eeb8f7683ca44f64821c3a61ca1e5
 LZSA_REF := $(BUILD)/ext/lzsa/lzsa
-VIBE_LZSA := target/release/vibe-lzsa
 # 圧縮して比べる実物: カーネルとアプリ（make のたびに中身が変わる）
 LZSA_FILES = $(BUILD)/kernel.sys $(sort $(wildcard $(BUILD)/rootfs-apps/BIN/*.ELF))
 
@@ -257,10 +279,27 @@ test-lzsa: $(IMG) $(BUILD)/kernel.vpk $(VIBE_LZSA)
 test-lzsa-ref: $(IMG) $(LZSA_REF) $(VIBE_LZSA)
 	$(VIBE_LZSA) compat --ref $(LZSA_REF) --work $(BUILD)/lzsa-work $(LZSA_FILES)
 
-size-report: $(IMG) $(BUILD)/kernel.vpk
+# イメージの /BIN/*.ELF がすべて gzip で、展開すると元の ELF と一致する（ホストの gzip との互換）。
+# 合計が元の 45% 以下（docs/plans/app-compress.md A1）。COMPRESS=0 のときは何もしない
+test-apps-gz: $(IMG)
+ifeq ($(COMPRESS),1)
+	@orig=0; packed=0; for f in $(APPS_DIR)/BIN/*.ELF; do \
+		n=$$(basename $$f); \
+		mcopy -n -i $(IMG) ::BIN/$$n $(BUILD)/app.gz.tmp || exit 1; \
+		zcat $(BUILD)/app.gz.tmp | cmp - $$f || { echo "BIN/$$n: zcat differs"; exit 1; }; \
+		orig=$$((orig + $$(stat -c %s $$f))); packed=$$((packed + $$(stat -c %s $(BUILD)/app.gz.tmp))); \
+	done; rm -f $(BUILD)/app.gz.tmp; \
+	echo "apps: $$orig -> $$packed bytes"; \
+	if [ $$((packed * 100)) -gt $$((orig * 45)) ]; then echo "apps are not under 45%"; exit 1; fi
+endif
+
+size-report: $(IMG) $(BUILD)/kernel.vpk $(APPS_GZ_STAMP)
 	@orig=$$(stat -c %s $(BUILD)/kernel.sys); packed=$$(stat -c %s $(BUILD)/kernel.vpk); \
 		echo "| kernel.sys | $$orig |"; \
 		echo "| kernel.vpk (LZSA2 + BCJ) | $$packed | $$((packed * 1000 / orig / 10)).$$((packed * 1000 / orig % 10))% |"; \
+		orig=$$(cat $(APPS_DIR)/BIN/*.ELF | wc -c); packed=$$(cat $(APPS_GZ_DIR)/BIN/*.ELF | wc -c); \
+		echo "| apps /BIN/*.ELF | $$orig |"; \
+		echo "| apps gzip -9 | $$packed | $$((packed * 1000 / orig / 10)).$$((packed * 1000 / orig % 10))% |"; \
 		echo "| free on $(IMG) | $$(mdir -i $(IMG) :: | sed -n 's/ *\([0-9 ]*\) bytes free/\1/p' | tr -d ' ') |"
 
 lzsa-bench: $(IMG) $(LZSA_REF) $(VIBE_LZSA)

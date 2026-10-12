@@ -1,4 +1,4 @@
-# 圧縮していない KERNEL.SYS（make COMPRESS=0 と同じ）でも、ローダはそのまま写して起動する
+# 圧縮していない KERNEL.SYS とアプリ（make COMPRESS=0 と同じ）でも、ローダはそのまま写して起動し、アプリも動く
 # （イメージの作り方は Makefile の RAW_IMG）
 image build/vibeos-raw.img
 timeout 15
@@ -7,3 +7,9 @@ wait-serial kernel loaded, bytes: 000
 wait-serial VIBEOS READY
 serial-absent kernel compressed
 serial-absent LOADER ERROR
+# アプリも圧縮していない（RAW_IMG は COMPRESS=0 と同じ中身）。そのまま ELF として動く
+wait-serial VibeOS shell
+type hello
+key ret
+wait-serial primes below 20000: 2262
+serial-absent PANIC

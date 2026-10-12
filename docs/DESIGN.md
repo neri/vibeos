@@ -354,7 +354,7 @@ pub struct BootInfo {
 | 割り込みの入口で全レジスタを `TrapFrame` に保存する（§3.3） | タスク切り替えのために割り込み処理を作り直すことになる |
 
 ### 6.5 ユーザプロセス
-- `kernel/src/process.rs`。ELF（静的リンク, 32bit, `ET_EXEC`）の LOAD セグメントを新しいアドレス空間（`mm/space.rs`）に置き、スタック（`0xBFFF_F000` から下へ 64KB、その下はガードページ）に `[argc][argv...][NULL]` と文字列を積んで ring 3 で始める
+- `kernel/src/process.rs`。ファイルの先頭が gzip の印（`1F 8B`）なら先に展開する（§7.3）。ELF（静的リンク, 32bit, `ET_EXEC`）の LOAD セグメントを新しいアドレス空間（`mm/space.rs`）に置き、スタック（`0xBFFF_F000` から下へ 64KB、その下はガードページ）に `[argc][argv...][NULL]` と文字列を積んで ring 3 で始める
 - ヒープはプログラムの終わりから `sbrk` で広げる（上限はスタックのガードページの下）
 - 切り替え時に CR3 を入れ替える（カーネル空間は全アドレス空間で共有）。TSS の esp0 は各タスクのカーネルスタック
 - ユーザモードで例外が起きたら、そのプロセスだけを終了コード -128 で止める（カーネルは止まらない）
@@ -416,7 +416,7 @@ pub struct BootInfo {
 ### 6.7 アプリ
 - `apps/` の下に 1 アプリ 1 クレート（`apps/.cargo/config.toml` でカーネルと同じターゲット、`target/apps` に出力）。ランタイム `apps/vibe-rt` が `_start`・システムコール・ヒープ（`vibe-alloc` を `sbrk` の上で使う）・`println!`・panic を提供する
 - リンカスクリプトは `targets/app.ld`（0x40000000 から、コードとデータを別のページに）。各アプリの `build.rs` で指定する
-- Makefile の `APPS` に名前を足すと、デバッグ情報を除いて `/BIN/名前.ELF` としてディスクに入る
+- Makefile の `APPS` に名前を足すと、デバッグ情報を除き gzip で圧縮して `/BIN/名前.ELF` としてディスクに入る（`COMPRESS=0` なら圧縮しない）
 
 ## 7. ストレージとファイルシステム
 
@@ -447,6 +447,7 @@ pub trait BlockDevice {
 
 ### 7.3 実行ファイル形式
 - **ELF32**（静的リンク, `PT_LOAD` のみ対応）。拡張子 `.ELF`。ヘッダの解析は `xmas-elf`、メモリへの配置と実行は自作（§6.5）
+- **gzip で圧縮した ELF**: ディスクのアプリは gzip（RFC 1952、`gzip -9 -n`）で圧縮して置く。名前は `.ELF` のままで、カーネルは先頭の `1F 8B` で見分けて展開してから ELF として読む。印が無ければ圧縮していない ELF としてそのまま読む（ホストから入れたアプリも動く）。枠（ヘッダ・CRC32・大きさ）は `crates/vibe-pack` の `gzip` で自作し、中の deflate は `miniz_oxide` で展開する（DECISIONS.md D-035）。展開後の大きさ（ISIZE）がユーザ空間より大きい・CRC32 や大きさが合わない・壊れているときは `ENOEXEC`、出力先を取れなければ `ENOMEM`。ホストでは `zcat` でそのまま元の ELF が取り出せる
 
 ---
 
@@ -562,7 +563,7 @@ vibeos/
 │   ├── vibe-keyboard/        # スキャンコード（セット 1）の解釈とキー配列
 │   ├── vibe-lzsa/            # LZSA1/LZSA2 の展開（ヒープ不要）と圧縮（本家の lzsa と互換）
 │   ├── vibe-net/             # TCP/IP（Ethernet・ARP・IPv4・ICMP・UDP・TCP・DHCP・DNS・SNTP・HTTP）
-│   ├── vibe-pack/            # 圧縮したカーネルの形（ヘッダ・BCJ・CRC32）
+│   ├── vibe-pack/            # 圧縮したカーネルの形（ヘッダ・BCJ・CRC32）とアプリの gzip の展開
 │   ├── vibe-term/            # 制御文字・ANSI エスケープシーケンスの解釈
 │   └── vibe-time/            # 日付と時刻の計算（1970 年からの秒・FAT の形式）
 ├── apps/
@@ -612,7 +613,7 @@ qemu-system-i386 -m 32M -cpu 486 \
 | 起動テスト | 一定時間内にシリアルに `VIBEOS READY` が出るか確認 |
 | ネットワーク | シナリオの `net` で QEMU にカードを付け、テストランナーがフレームを記録・解析し、DNS・NTP・HTTP に答える（§12.6） |
 | TCP/IP の単体テスト | `crates/vibe-net` をホストで。2 つのスタックを直結し、落とす・重ねる・入れ替える回線で通信させる |
-| 圧縮（LZSA） | `crates/vibe-lzsa`・`crates/vibe-pack` の `cargo test` と `make test-lzsa`（カーネル・アプリ・境目のデータを自作で圧縮 → 展開して比べる。kernel.vpk が元の 50% 以下）。ローダの展開ルーチンは、テスト用カーネルにも 32 ビットで組み込み、ホストで圧縮した境目のデータを ktest で展開させる。カーネルは自分の `KERNEL.SYS` を Rust で展開してメモリ上の `.text`・`.rodata` と比べる。圧縮していない・壊れた `KERNEL.SYS` のイメージでの起動もシナリオで確かめる。本家の `lzsa` との突き合わせ（`make test-lzsa-ref`）と率の表（`make lzsa-bench`）は `make test` に含めない（DECISIONS.md D-033） |
+| 圧縮 | `crates/vibe-lzsa`・`crates/vibe-pack` の `cargo test`（gzip のテストデータはテストの中で作る）と `make test-apps-gz`（イメージのアプリを `zcat` して元と一致、合計が元の 45% 以下）と `make test-lzsa`（カーネル・アプリ・境目のデータを自作で圧縮 → 展開して比べる。kernel.vpk が元の 50% 以下）。ローダの展開ルーチンは、テスト用カーネルにも 32 ビットで組み込み、ホストで圧縮した境目のデータを ktest で展開させる。カーネルは自分の `KERNEL.SYS` を Rust で展開してメモリ上の `.text`・`.rodata` と比べる。圧縮していない・壊れた `KERNEL.SYS` のイメージでの起動もシナリオで確かめる。本家の `lzsa` との突き合わせ（`make test-lzsa-ref`）と率の表（`make lzsa-bench`）は `make test` に含めない（DECISIONS.md D-033） |
 
 `isa-debug-exit` への書き込みはテスト用ビルドのときだけ行う（実機ではそのポートに何があるか分からないため）。
 
