@@ -1,0 +1,18 @@
+# Bochs でも NE2000 のドライバ・DHCP・ARP・ping が動く（make test-bochs で流す）。
+# ネットワークは Bochs の中だけの仮想のもの（vnet: ホスト 192.168.10.1 が DHCP・ARP・ping に答える）
+# IRQ 10・11 は Bochs の PCI の割り込みが使うので、カードは IRQ 5（BOOT.CFG で指定）
+bochs-only
+net
+boot-config net=ne2000,0x300,5
+timeout 30
+wait-serial net: NE2000 at 0x300 irq 5, MAC 52:54:00:12:34:56
+wait-serial VIBEOS READY
+# シェルの表示とアドレスが決まる順番は決まっていない（キーは先に打っても溜まる）
+wait-serial net: address 192.168.10.15/24 gateway 192.168.10.1
+type arp 192.168.10.1
+key ret
+wait-serial 192.168.10.1 is at
+type ping -c 3 192.168.10.1
+key ret
+wait-serial 3 packets transmitted, 3 received, 0% packet loss
+serial-absent PANIC

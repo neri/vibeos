@@ -60,12 +60,18 @@ struct OpenFile {
     flags: u32,
 }
 
+/// ファイルの表の 1 件: ファイルかソケット
+enum Open {
+    File(OpenFile),
+    Socket(Arc<crate::net::Socket>),
+}
+
 pub use vibe_abi::{OPEN_APPEND, OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
 
 /// タスクごとのファイルシステムの状態
 pub struct TaskFs {
     cwd: Vec<String>,
-    files: Vec<Option<OpenFile>>,
+    files: Vec<Option<Open>>,
 }
 
 impl TaskFs {
@@ -184,25 +190,51 @@ pub fn open_with(path: &str, flags: u32) -> Result<Fd> {
         }
         Err(e) => return Err(e),
     };
+    add(Open::File(OpenFile { entry, pos: 0, flags }))
+}
+
+/// 表の空いている番号に入れる
+fn add(open: Open) -> Result<Fd> {
     let tfs = current();
     let mut t = tfs.lock();
-    let file = Some(OpenFile { entry, pos: 0, flags });
     if let Some(fd) = t.files.iter().position(Option::is_none) {
-        t.files[fd] = file;
+        t.files[fd] = Some(open);
         return Ok(fd);
     }
     if t.files.len() >= MAX_FILES {
         return Err(VfsError::TooManyFiles);
     }
-    t.files.push(file);
+    t.files.push(Some(open));
     Ok(t.files.len() - 1)
+}
+
+/// ソケットを表に入れる
+pub fn add_socket(sock: Arc<crate::net::Socket>) -> Result<Fd> {
+    add(Open::Socket(sock))
+}
+
+/// その番号がソケットなら、それを返す
+pub fn socket(fd: Fd) -> Option<Arc<crate::net::Socket>> {
+    let tfs = current();
+    let t = tfs.lock();
+    match t.files.get(fd)? {
+        Some(Open::Socket(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn file_mut(t: &mut TaskFs, fd: Fd) -> Result<&mut OpenFile> {
+    match t.files.get_mut(fd) {
+        Some(Some(Open::File(f))) => Ok(f),
+        _ => Err(VfsError::BadFd),
+    }
 }
 
 /// 読んだバイト数を返す（終わりなら 0）
 pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
     let tfs = current();
     let mut t = tfs.lock();
-    let file = t.files.get_mut(fd).and_then(Option::as_mut).ok_or(VfsError::BadFd)?;
+    let file = file_mut(&mut t, fd)?;
     let n = with_root(|fs| Ok(fs.read(&file.entry, file.pos, buf)?))?;
     file.pos += n as u32;
     Ok(n)
@@ -212,7 +244,7 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
 pub fn write(fd: Fd, data: &[u8]) -> Result<usize> {
     let tfs = current();
     let mut t = tfs.lock();
-    let file = t.files.get_mut(fd).and_then(Option::as_mut).ok_or(VfsError::BadFd)?;
+    let file = file_mut(&mut t, fd)?;
     if file.flags & OPEN_WRITE == 0 {
         return Err(VfsError::NotWritable);
     }
@@ -276,9 +308,13 @@ pub fn space() -> Result<(u64, u64)> {
 
 pub fn close(fd: Fd) -> Result<()> {
     let tfs = current();
-    let mut t = tfs.lock();
-    let slot = t.files.get_mut(fd).ok_or(VfsError::BadFd)?;
-    slot.take().ok_or(VfsError::BadFd)?;
+    let open = {
+        let mut t = tfs.lock();
+        let slot = t.files.get_mut(fd).ok_or(VfsError::BadFd)?;
+        slot.take().ok_or(VfsError::BadFd)?
+    };
+    // ソケットは閉じるときにネットワークのロックを取るので、表のロックを手放してから捨てる
+    drop(open);
     Ok(())
 }
 

@@ -10,4 +10,5 @@ vibe-abi = { path = "../../crates/vibe-abi" }
 vibe-alloc = { path = "../../crates/vibe-alloc" }
 vibe-font = { path = "../../crates/vibe-font" }
 vibe-gfx = { path = "../../crates/vibe-gfx" }
+vibe-net = { path = "../../crates/vibe-net" }
 vibe-time = { path = "../../crates/vibe-time" }

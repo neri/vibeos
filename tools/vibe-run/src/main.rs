@@ -6,7 +6,8 @@
 //! シナリオファイルは 1 行 1 コマンド（`#` 以降はコメント）:
 //!   image PATH            起動するイメージ（既定は --img の値）
 //!   writable              イメージの写し（OUT/NAME.img）を書き込み可能で使う（既定は書き込みを捨てる）
-//!   boot-config TEXT      イメージの写しの BOOT.CFG を TEXT（1 行）にしてから起動する（例: video=320x200）
+//!   boot-config TEXT      イメージの写しの BOOT.CFG を TEXT にしてから起動する（例: video=320x200）。
+//!                         何行か書くと、その行を並べたものになる
 //!   key-hold KEY / key-release KEY  キーを押したまま / 離す（起動中に Shift を押しておくなど）
 //!   expect-disk-file PATH TEXT  ディスクのファイル PATH に TEXT が含まれる（mtools で読む。writable のとき）
 //!   expect-disk-clean     ディスクに FAT の不整合が無い（fsck.fat -n。writable のとき）
@@ -32,10 +33,34 @@
 //!                         （isa-debug-exit に v を書くと終了コードは (v << 1) | 1）
 //!
 //!   qemu-only             このシナリオは Bochs では動かさない
+//!   bochs-only            このシナリオは Bochs でだけ動かす
+//!
+//! ネットワーク（net.rs。ゲストは slirp の restrict=on の中なので外には出られない）:
+//!   net-lan [DEVICE]      net と同じだが slirp を restrict=on にしない（ホストの LAN へ出られる。make test-lan 用。
+//!                         WAN へ出ないことはゲストの wan=deny で守り、expect-lan-only で確かめる）
+//!   net [DEVICE]          カードを付けて起動する（既定 ne2k_isa,iobase=0x300,irq=10）。フレームは OUT/NAME.pcap に残す
+//!   serve-dns NAME=ADDR...  偽のホスト 10.0.2.50 が DNS に答える（ほかの名前は NXDOMAIN）
+//!   serve-ntp TIME        偽のホスト 10.0.2.50 が NTP で TIME（UTC, 2026-10-12T01:02:03 か 1970 年からの秒）を返す
+//!   serve-http            ゲストの 10.0.2.100:80 への接続に OUT/NAME-www/ のファイルを返す
+//!   www-file NAME SIZE    OUT/NAME-www/NAME に SIZE バイトの決まった中身を作る
+//!   www-text NAME TEXT    OUT/NAME-www/NAME に TEXT（と改行）を書く
+//!   www-repeat NAME SIZE TEXT  OUT/NAME-www/NAME に TEXT を SIZE バイトになるまで繰り返して書く（期待するファイル用）
+//!   expect-packet KIND SRC DST  記録したフレームに合うものがある（例: arp-reply 10.0.2.2 10.0.2.15）。
+//!                         壊れたフレーム（チェックサムの誤りなど）が 1 つでもあれば失敗。
+//!                         SRC・DST の * はどれでもよい
+//!   expect-lan-only       ゲストが送った IPv4 のパケットの宛先がすべて LAN の中（WAN へ出ようとしていない）
+//!   fake-send arp|ping IP  偽のホストからゲストへ ARP の問い合わせ・ping を送る（返事は expect-packet で見る）
+//!   expect-disk-same PATH WWWNAME  ディスクのファイル PATH が OUT/NAME-www/WWWNAME と同じ（writable のとき）
+//!   host-get PATH DISKFILE  ホストからゲストの httpd（80 番）に GET し、200 で中身がディスクの DISKFILE と同じ
+//!   host-get-status PATH CODE  同じく GET して、ステータスが CODE
+//!   host-get-text PATH TEXT  同じく GET して、200 で中身に TEXT が含まれる
+//!   host-get-concurrent PATH DISKFILE  2 本同時につないで（1 本目を待たせたまま 2 本目で）取得できる
 //!
 //! `--bochs` を付けると QEMU の代わりに Bochs で動かす（tools/bochs/）。Bochs では次のものは
 //! 飛ばす: 画面の取得と比較・マウス・QEMU 用の引数（qemu-arg）があるシナリオ・音・終了コードの値。
 //! 待ち時間の上限は 4 倍にする。
+//!
+//! 引数の中の ${NAME} は環境変数の値に置き換える（無ければエラー）。
 //!
 //! 環境変数: QEMU（既定 qemu-system-i386）, UPDATE_GOLDEN, VIBE_RUN_VERBOSE（シリアルをそのまま表示）
 
@@ -51,6 +76,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 mod bochs;
+mod net;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -61,6 +87,8 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("test") => run_tests(&args[1..]),
+        // serve-http の guestfwd から接続ごとに起動される
+        Some("http-serve") if args.len() == 2 => net::http_serve(Path::new(&args[1])),
         _ => {
             eprintln!("usage: vibe-run test [--bochs] [--img PATH] [--out DIR] SCENARIO...");
             ExitCode::from(2)
@@ -93,10 +121,10 @@ fn run_tests(args: &[String]) -> ExitCode {
         let name = scn.file_stem().unwrap().to_string_lossy().into_owned();
         let started = Instant::now();
         match run_scenario(scn, &name, &img, &out, use_bochs) {
-            Ok(true) => println!("PASS {name} ({:.1}s)", started.elapsed().as_secs_f32()),
-            Ok(false) => {
+            Ok(None) => println!("PASS {name} ({:.1}s)", started.elapsed().as_secs_f32()),
+            Ok(Some(why)) => {
                 skipped += 1;
-                println!("SKIP {name} (not for Bochs)");
+                println!("SKIP {name} ({why})");
             }
             Err(e) => {
                 failed += 1;
@@ -128,9 +156,25 @@ fn parse_scenario(path: &Path) -> Result<Vec<Step>> {
             continue;
         }
         let (cmd, arg) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
-        steps.push(Step { line: i + 1, cmd: cmd.to_string(), arg: arg.trim().to_string() });
+        let arg = expand_env(arg.trim()).map_err(|e| format!("{}:{}: {e}", path.display(), i + 1))?;
+        steps.push(Step { line: i + 1, cmd: cmd.to_string(), arg });
     }
     Ok(steps)
+}
+
+/// ${NAME} を環境変数の値に置き換える
+fn expand_env(s: &str) -> Result<String> {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(p) = rest.find("${") {
+        out.push_str(&rest[..p]);
+        let end = rest[p..].find('}').ok_or("unterminated ${")? + p;
+        let name = &rest[p + 2..end];
+        out.push_str(&std::env::var(name).map_err(|_| format!("environment variable {name} is not set"))?);
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 /// Bochs では動かせないシナリオか（QEMU の引数・マウス・音・QEMU の終了を使うもの）
@@ -138,27 +182,75 @@ fn qemu_only(steps: &[Step]) -> bool {
     steps.iter().any(|s| {
         matches!(
             s.cmd.as_str(),
-            "qemu-only" | "qemu-arg" | "mouse-move" | "mouse-button" | "quit" | "expect-wav-sound" | "key-hold"
+            "qemu-only" | "qemu-arg" | "mouse-move" | "mouse-button" | "quit" | "expect-wav-sound" | "key-hold" | "net-lan"
         )
     })
 }
 
-/// 実行したら Ok(true)、Bochs で飛ばしたら Ok(false)
-fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_bochs: bool) -> Result<bool> {
+/// 実行したら Ok(None)、飛ばしたら Ok(Some(理由))
+fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_bochs: bool) -> Result<Option<&'static str>> {
     let steps = parse_scenario(path)?;
     if use_bochs && qemu_only(&steps) {
-        return Ok(false);
+        return Ok(Some("QEMU only"));
+    }
+    if !use_bochs && steps.iter().any(|s| s.cmd == "bochs-only") {
+        return Ok(Some("Bochs only"));
     }
     let mut img = default_img.to_path_buf();
     let mut extra = Vec::new();
     let mut writable = false;
-    let mut boot_config = None;
+    let mut boot_config: Option<String> = None;
+    let mut netsetup: Option<net::NetSetup> = None;
+    let www = out.join(format!("{name}-www"));
     for s in &steps {
+        let at = |e: String| format!("line {} `{} {}`: {e}", s.line, s.cmd, s.arg);
         match s.cmd.as_str() {
             "image" => img = PathBuf::from(&s.arg),
             "qemu-arg" => extra.push(s.arg.clone()),
             "writable" => writable = true,
-            "boot-config" => boot_config = Some(s.arg.clone()),
+            // 何行でも書ける（1 行ずつ足す）
+            "boot-config" => {
+                let cfg = boot_config.get_or_insert_with(String::new);
+                cfg.push_str(&s.arg);
+                cfg.push('\n');
+            }
+            "net" | "net-lan" => {
+                let n = netsetup.get_or_insert_with(Default::default);
+                n.device = if s.arg.is_empty() { "ne2k_isa,iobase=0x300,irq=10".into() } else { s.arg.clone() };
+                n.lan = s.cmd == "net-lan";
+            }
+            "serve-dns" | "serve-ntp" | "serve-http" | "host-get" | "host-get-status" | "host-get-text"
+            | "host-get-concurrent" => {
+                let n = netsetup.as_mut().ok_or_else(|| at("needs `net` before it".into()))?;
+                match s.cmd.as_str() {
+                    "serve-dns" => {
+                        for pair in s.arg.split_whitespace() {
+                            let (k, v) = pair.split_once('=').ok_or_else(|| at("expected NAME=ADDR".into()))?;
+                            let a: Vec<u8> = v.split('.').map(|x| x.parse().ok()).collect::<Option<_>>().unwrap_or_default();
+                            let a: [u8; 4] = a.try_into().map_err(|_| at(format!("bad address {v}")))?;
+                            n.dns.insert(k.to_ascii_lowercase(), a);
+                        }
+                    }
+                    "serve-ntp" => n.ntp = Some(net::parse_time(&s.arg).ok_or_else(|| at("bad time".into()))?),
+                    "serve-http" => n.www = Some(www.clone()),
+                    _ => n.hostfwd = true,
+                }
+            }
+            "www-file" | "www-text" | "www-repeat" => {
+                fs::create_dir_all(&www).map_err(|e| at(e.to_string()))?;
+                let (file, rest) = s.arg.split_once(' ').ok_or_else(|| at("expected NAME ...".into()))?;
+                let data = if s.cmd == "www-file" {
+                    let len: usize = rest.trim().parse().map_err(|_| at("bad size".into()))?;
+                    net::pattern_file(len, len as u32 ^ 0x5eed)
+                } else if s.cmd == "www-repeat" {
+                    let (len, text) = rest.split_once(' ').ok_or_else(|| at("expected NAME SIZE TEXT".into()))?;
+                    let len: usize = len.parse().map_err(|_| at("bad size".into()))?;
+                    text.bytes().cycle().take(len).collect()
+                } else {
+                    format!("{rest}\n").into_bytes()
+                };
+                fs::write(www.join(file), data).map_err(|e| at(e.to_string()))?;
+            }
             _ => {}
         }
     }
@@ -173,7 +265,7 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
     }
     if let Some(text) = &boot_config {
         let cfg = out.join(format!("{name}.boot.cfg"));
-        fs::write(&cfg, format!("{text}\n")).map_err(|e| e.to_string())?;
+        fs::write(&cfg, text).map_err(|e| e.to_string())?;
         let st = Command::new("mcopy")
             .args(["-o", "-i"])
             .arg(&img)
@@ -186,16 +278,31 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
         }
     }
 
-    let mut vm = if use_bochs { Vm::start_bochs(&img, out, name)? } else { Vm::start(&img, &extra, out, name, !writable)? };
+    let mut fake = None;
+    if let Some(setup) = netsetup.as_ref().filter(|_| !use_bochs) {
+        let (f, args) = net::FakeNet::start(setup, &format!("{}-{name}", std::process::id()))?;
+        extra.extend(args);
+        fake = Some(f);
+    }
+    let mut vm = if use_bochs {
+        Vm::start_bochs(&img, out, name, netsetup.is_some())?
+    } else {
+        Vm::start(&img, &extra, out, name, !writable)?
+    };
     vm.disk = img.clone();
+    vm.net = fake;
+    vm.www = www;
     let result = run_steps(&mut vm, &steps, name, out);
     if result.is_err() && !vm.is_bochs() {
         let _ = vm.screendump(&out.join(format!("{name}-fail.png")));
     }
     vm.shutdown();
+    if let Some(n) = &vm.net {
+        n.finish(&out.join(format!("{name}.pcap")));
+    }
     let serial = vm.serial_text();
     let _ = fs::write(out.join(format!("{name}.serial.log")), &serial);
-    result.map(|_| true).map_err(|e| {
+    result.map(|_| None).map_err(|e| {
         let tail: Vec<&str> = serial.lines().rev().take(15).collect();
         let tail: String = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
         // 改行を出さない画面描画（エディタなど）で長くなりすぎないよう、最後の 2000 文字まで
@@ -216,7 +323,59 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
             continue;
         }
         match s.cmd.as_str() {
-            "image" | "qemu-arg" | "writable" | "qemu-only" | "boot-config" => {}
+            "image" | "qemu-arg" | "writable" | "qemu-only" | "bochs-only" | "boot-config" | "net" | "net-lan" | "serve-dns" | "serve-ntp"
+            | "serve-http" | "www-file" | "www-text" | "www-repeat" => {}
+            "expect-packet" => vm.net.as_ref().ok_or_else(|| at("needs `net`".into()))?.expect_packet(&s.arg).map_err(at)?,
+            "expect-lan-only" => vm.net.as_ref().ok_or_else(|| at("needs `net`".into()))?.expect_lan_only().map_err(at)?,
+            "fake-send" => {
+                vm.net.as_ref().ok_or_else(|| at("needs `net`".into()))?.send(&s.arg).map_err(at)?;
+                thread::sleep(Duration::from_millis(300));
+            }
+            "expect-disk-same" => {
+                let (path, wname) = s.arg.split_once(' ').ok_or_else(|| at("expected PATH WWWNAME".into()))?;
+                let got = read_disk_file(&vm.disk, path, out).map_err(at)?;
+                let want = fs::read(vm.www.join(wname.trim())).map_err(|e| at(e.to_string()))?;
+                if got != want {
+                    return Err(at(format!("{path} differs ({} bytes, want {})", got.len(), want.len())));
+                }
+            }
+            "host-get" | "host-get-status" | "host-get-text" | "host-get-concurrent" => {
+                let port = vm.net.as_ref().and_then(|n| n.http_port).ok_or_else(|| at("needs `net`".into()))?;
+                let (path, want) = s.arg.split_once(' ').ok_or_else(|| at("expected PATH ARG".into()))?;
+                let want = want.trim();
+                match s.cmd.as_str() {
+                    "host-get-status" => {
+                        let (status, _) = net::http_get(port, path, timeout).map_err(at)?;
+                        if status.to_string() != want {
+                            return Err(at(format!("status {status}, want {want}")));
+                        }
+                    }
+                    "host-get-text" => {
+                        let (status, body) = net::http_get(port, path, timeout).map_err(at)?;
+                        let body = String::from_utf8_lossy(&body);
+                        if status != 200 || !body.contains(want) {
+                            return Err(at(format!("status {status}, body does not contain the text:\n{body}")));
+                        }
+                    }
+                    cmd => {
+                        let expected = read_disk_file(&vm.disk, want, out).map_err(at)?;
+                        let results = if cmd == "host-get" {
+                            vec![net::http_get(port, path, timeout).map_err(at)?]
+                        } else {
+                            net::http_get_concurrent(port, path, timeout).map_err(at)?.to_vec()
+                        };
+                        for (status, body) in results {
+                            if status != 200 || body != expected {
+                                return Err(at(format!(
+                                    "status {status}, {} bytes (want 200, {} bytes of {want})",
+                                    body.len(),
+                                    expected.len()
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
             "key-hold" | "key-release" => {
                 let down = s.cmd == "key-hold";
                 vm.send_input(json!([{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": s.arg}}}]))
@@ -374,6 +533,10 @@ struct Vm {
     serial_pos: usize,
     sock: PathBuf,
     exit_code: Option<i32>,
+    /// ネットワークのテスト（net）の偽のホスト
+    net: Option<net::FakeNet>,
+    /// serve-http で返すファイルの置き場所
+    www: PathBuf,
 }
 
 impl Vm {
@@ -416,15 +579,25 @@ impl Vm {
             }
         });
 
-        let mut vm =
-            Vm { child, rfb: None, disk: img.to_path_buf(), qmp: None, serial, serial_pos: 0, sock, exit_code: None };
+        let mut vm = Vm {
+            child,
+            rfb: None,
+            disk: img.to_path_buf(),
+            qmp: None,
+            serial,
+            serial_pos: 0,
+            sock,
+            exit_code: None,
+            net: None,
+            www: PathBuf::new(),
+        };
         vm.qmp = Some(Qmp::connect(&vm.sock, Duration::from_secs(5))?);
         Ok(vm)
     }
 
-    fn start_bochs(img: &Path, out: &Path, name: &str) -> Result<Vm> {
+    fn start_bochs(img: &Path, out: &Path, name: &str, net: bool) -> Result<Vm> {
         let serial = Arc::new(Mutex::new(Vec::new()));
-        let (child, rfb) = bochs::start(img, out, name, serial.clone())?;
+        let (child, rfb) = bochs::start(img, out, name, serial.clone(), net)?;
         Ok(Vm {
             child,
             rfb: Some(rfb),
@@ -434,6 +607,8 @@ impl Vm {
             serial_pos: 0,
             sock: PathBuf::new(),
             exit_code: None,
+            net: None,
+            www: PathBuf::new(),
         })
     }
 
@@ -544,6 +719,25 @@ impl Vm {
         // シリアル読み取りスレッドが残りを読み切るのを少し待つ
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// イメージの中のファイルを読む（mtools）
+fn read_disk_file(img: &Path, path: &str, out: &Path) -> Result<Vec<u8>> {
+    let tmp = out.join("disk-file.tmp");
+    let _ = fs::remove_file(&tmp);
+    let st = Command::new("mcopy")
+        .args(["-n", "-i"])
+        .arg(img)
+        .arg(format!("::{path}"))
+        .arg(&tmp)
+        .output()
+        .map_err(|e| format!("mcopy: {e}"))?;
+    if !st.status.success() {
+        return Err(format!("cannot read {path} from the disk: {}", String::from_utf8_lossy(&st.stderr).trim()));
+    }
+    let data = fs::read(&tmp).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(&tmp);
+    Ok(data)
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {

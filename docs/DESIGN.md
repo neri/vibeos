@@ -1,6 +1,6 @@
 # VibeOS 設計書
 
-最終更新: 2026-10-11
+最終更新: 2026-10-12
 
 この文書は **完成した姿と仕組み** を書く。作る順番と進み具合は [PLAN.md](PLAN.md)、決めた理由は [DECISIONS.md](DECISIONS.md)、作業中に守るルールの要約は [../CLAUDE.md](../CLAUDE.md) を参照。
 
@@ -28,7 +28,7 @@
 | キーボード | US 配列のみ（配列は追加できる構造にする） |
 | 日本語 | 対応しない（ASCII のみ。後から足せる構造にはする） |
 
-**非目標（当面）**: UEFI 起動, 64bit, SMP, ネットワーク, USB ドライバ, HDD, 高解像度モード, 日本語表示
+**非目標（当面）**: UEFI 起動, 64bit, SMP, USB ドライバ, HDD, 高解像度モード, 日本語表示。ネットワークは IPv4 の LAN まで（IPv6・TLS などはやらない。§12）
 
 ---
 
@@ -46,7 +46,8 @@
 │  ・メモリ管理 (物理ページ / ヒープ / ページング)│
 │  ・タスク管理          ・VFS + FAT12           │
 │  ・ドライバ: VGA, キーボード, マウス, シリアル, │
-│    RAM ディスク, (FDC)                         │
+│    RAM ディスク, (FDC), PCI, NE2000, RTL8139   │
+│  ・ネットワーク（net スレッド + vibe-net）       │
 ├──────────────────────────────────────────────┤
 │ 2nd ステージローダ（16bit asm / NASM, BIOS 使用）│
 ├──────────────────────────────────────────────┤
@@ -294,7 +295,9 @@ pub struct BootInfo {
 | COM1 シリアル | 4 | **デバッグログ**（QEMU では `-serial stdio`, 実機ではクロスケーブルで別 PC へ） |
 | FDC | 6 | RAM ディスクの書き戻し（§7.1） |
 | PC スピーカー | — | PIT チャネル 2。鳴らし始めて止める時刻を覚え、タイマ割り込みで止める（待たない） |
-| 時計（CMOS RTC） | — | 起動時に 1 回だけ読み（BCD / 12 時間表示に対応、2 回同じ値になるまで読む）、以降はタイマの刻みを足す。現地時刻として扱う（タイムゾーンなし）。日付の計算は `crates/vibe-time` |
+| 時計（CMOS RTC） | — | 起動時に 1 回だけ読み（BCD / 12 時間表示に対応、2 回同じ値になるまで読む）、以降はタイマの刻みを足す。現地時刻として扱う（タイムゾーンなし）。日付の計算は `crates/vibe-time`。`set_time`（ntp）で合わせると CMOS にも書く |
+| NE2000（ISA） | 10（設定で変更） | I/O 0x300。PIO（リモート DMA）で送受信。§12.2 |
+| NE2000 PCI / RTL8139 | PCI（BIOS が決めた番号） | PCI のバスを列挙して見つける。RTL8139 はバスマスタ DMA。§12.2 |
 
 実機を想定し、次を守る:
 - PS/2 コントローラ（8042）はきちんと初期化する（無効化 → バッファを空にする → 設定 → 自己テスト → 2 ポート目の有無 → 各ポートのテスト → 有効化）。キーボードとマウスの両方を `drivers/ps2.rs` で初期化する。USB キーボードを BIOS が PS/2 として見せている場合もある
@@ -381,6 +384,19 @@ pub struct BootInfo {
 | 27 | `win_blit(win, buf)` | 中身全体を送る |
 | 28 | `win_event(win, &WinEvent, timeout_ms)` | キー・マウス・閉じる要求（0 = 待たない, u32::MAX = いつまでも） |
 | 29 | `win_close(win)` | |
+| 30 | `socket(kind)` | `SOCK_STREAM`（TCP）/ `SOCK_DGRAM`（UDP）/ `SOCK_ICMP`（ping）。ファイルと同じ番号の表に入り、`read` / `write` / `close` が使える |
+| 31 | `bind(fd, port)` | |
+| 32 | `connect(fd, &SockAddr)` | TCP。つながるか失敗するまで待つ |
+| 33 | `listen(fd, backlog)` | |
+| 34 | `accept(fd, &mut SockAddr)` | 新しい fd |
+| 35 | `sendto(fd, buf, len, &SockAddr)` | ICMP は buf がエコー要求の全体（識別子とチェックサムはカーネルが入れる） |
+| 36 | `recvfrom(fd, buf, len, &mut SockAddr, timeout_ms)` | 時間切れは `-ETIMEDOUT` |
+| 37 | `net_info(&mut NetInfo)` | MAC・アドレス・DNS・NTP・時差・送受信の数。カードが無ければ `-ENODEV` |
+| 38 | `poll(&mut [PollFd], n, timeout_ms)` | ソケットの読める・書けるを待つ |
+| 39 | `ctrl_c(op)` | Ctrl+C で止まらず印を付けるだけにする（ping の集計・httpd の停止のため） |
+| 40 | `set_time(secs)` | 時計を合わせる（CMOS にも書く） |
+
+- 待つシステムコール（ネットワーク）は、Ctrl+C などで止めるよう頼まれると `-EINTR` で戻る
 
 ### 6.7 アプリ
 - `apps/` の下に 1 アプリ 1 クレート（`apps/.cargo/config.toml` でカーネルと同じターゲット、`target/apps` に出力）。ランタイム `apps/vibe-rt` が `_start`・システムコール・ヒープ（`vibe-alloc` を `sbrk` の上で使う）・`println!`・panic を提供する
@@ -456,7 +472,7 @@ pub trait BlockDevice {
 - アプリはユーザプロセス（`apps/`）: `view`（画像ビューア）, `paint`（お絵かき）, `mandel`（マンデルブロ集合, 固定小数点）, `snake`（ゲーム）, `more`（テキストを 1 画面ずつ）, `edit`（テキストエディタ）, `hello`, `fault` / `fstest`（テスト用）。全画面のアプリは `vibe_rt::gfx::Screen` で画面を開き、自分の裏バッファを `gfx_blit` で送る
 
 基本形は「全画面アプリの切り替え + 上部 1 行のステータスバー」。ウィンドウシステムはその上の拡張として扱う。
-ステータスバーは専用のスレッドが 1 秒ごとに描き直す（稼働時間・空きメモリ・タスク数）。
+ステータスバーは専用のスレッドが 1 秒ごとに描き直す（日時か稼働時間・空きメモリ・タスク数。ネットワークのアドレスが決まれば "VibeOS" の右に IP アドレス）。
 
 ### 8.5 テキストエディタ（`edit`）
 - 編集の中身（行・カーソル・表示範囲・切り取りと貼り付け・検索）は `crates/vibe-edit`（入出力をしないのでホストでテストできる）。アプリ `apps/edit` はキー入力・描画・読み書きだけを行う
@@ -511,7 +527,8 @@ vibeos/
 │   └── src/
 │       ├── main.rs           # _start, kmain
 │       ├── arch/             # gdt, idt, pic, port I/O, 割り込みスタブ
-│       ├── drivers/          # vga, kbd, mouse, serial, pit, ramdisk
+│       ├── drivers/          # vga, kbd, mouse, serial, pit, ramdisk, fdc, pci, ne2000, rtl8139, nic
+│       ├── net/              # net スレッド・ソケット（vibe-net をカーネルにつなぐ）
 │       ├── mm/               # pmm, heap, paging
 │       ├── fs/               # vfs
 │       ├── task/             # sched, wait（WaitQueue）
@@ -528,6 +545,7 @@ vibeos/
 │   ├── vibe-fat/             # FAT12/16
 │   ├── vibe-gfx/             # 描画アルゴリズム（バッファに対する処理のみ）・標準パレット
 │   ├── vibe-keyboard/        # スキャンコード（セット 1）の解釈とキー配列
+│   ├── vibe-net/             # TCP/IP（Ethernet・ARP・IPv4・ICMP・UDP・TCP・DHCP・DNS・SNTP・HTTP）
 │   ├── vibe-term/            # 制御文字・ANSI エスケープシーケンスの解釈
 │   └── vibe-time/            # 日付と時刻の計算（1970 年からの秒・FAT の形式）
 ├── apps/
@@ -557,12 +575,15 @@ vibeos/
 qemu-system-i386 -m 32M -cpu 486 \
   -drive file=build/vibeos.img,format=raw,if=floppy \
   -boot a -vga std -serial stdio \
+  -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8080-:80 \
+  -device ne2k_isa,netdev=net0,iobase=0x300,irq=10 \
   -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
   -no-reboot -no-shutdown
 ```
 - `-cpu 486`: 最低ラインの CPU で動かし、新しい命令を使ってしまうのを防ぐ
 - `-serial stdio`: カーネルのログがホストの端末に出る
 - `-no-reboot`: トリプルフォルト時に再起動ループせず止まる
+- ネットワーク: slirp（QEMU の NAT）でホストの LAN とインターネットへ出られる（DECISIONS.md D-032）。ゲストの httpd はホストの http://127.0.0.1:8080/ で見える（`make run HTTP_BIND=0.0.0.0` で LAN の他の機械からも）
 - 例外を追うときは `-d int,cpu_reset -D qemu.log` を追加
 
 ### 10.3 自動テスト
@@ -572,6 +593,8 @@ qemu-system-i386 -m 32M -cpu 486 \
 | カーネル内テスト | `qemu-test` 機能を有効にしたカーネルでテスト用イメージ（`build/vibeos-test.img`）を作る → 起動処理の後に `kernel/src/ktest.rs` のテストを順に実行 → 結果をシリアルに出力 → `isa-debug-exit` で QEMU を終了（成功 33 / 失敗 35）。シナリオ `05-ktest` が実行する |
 | 画面の回帰テスト | QEMU モニタの `screendump` で画像を取得し、期待画像と比較 |
 | 起動テスト | 一定時間内にシリアルに `VIBEOS READY` が出るか確認 |
+| ネットワーク | シナリオの `net` で QEMU にカードを付け、テストランナーがフレームを記録・解析し、DNS・NTP・HTTP に答える（§12.6） |
+| TCP/IP の単体テスト | `crates/vibe-net` をホストで。2 つのスタックを直結し、落とす・重ねる・入れ替える回線で通信させる |
 
 `isa-debug-exit` への書き込みはテスト用ビルドのときだけ行う（実機ではそのポートに何があるか分からないため）。
 
@@ -607,6 +630,86 @@ QEMU で日常的にテストしつつ、実機でも動くことを前提に書
 
 ### 11.3 実機寄りの検証
 - QEMU で古い PC に近い構成を試すシナリオ: ISA だけの PC（`-M isapc`）、最低メモリ 8MB、メモリ不足（5MB）、486（すべてのシナリオを -cpu 486 で動かしている）
-- **Bochs**: QEMU より厳密で、実機で起きる問題を見つけやすい。`make test-bochs` で同じシナリオを Bochs（Pentium II 相当・PCI の無い旧来の BIOS）で流す。Bochs は画面を出さずに動かせないので VNC（RFB）サーバとして動かし、テストランナーが最小限の RFB クライアントとしてつないでキー入力を送る。画面の比較・マウス・QEMU 専用の設定・音・終了コードは Bochs では確かめない。`make bochs` で X のウィンドウに出して触れる
+- **Bochs**: QEMU より厳密で、実機で起きる問題を見つけやすい。`make test-bochs` で同じシナリオを Bochs（Pentium II 相当・PCI の無い旧来の BIOS）で流す。Bochs は画面を出さずに動かせないので VNC（RFB）サーバとして動かし、テストランナーが最小限の RFB クライアントとしてつないでキー入力を送る。画面の比較・マウス・QEMU 専用の設定・音・終了コードは Bochs では確かめない。`make bochs` で X のウィンドウに出して触れる。ネットワークは Bochs の中だけの仮想のネットワーク（vnet: DHCP・ARP・ping に答える）で DHCP・ARP・ping を確かめる（Bochs の PCI が IRQ 10・11 を使うので、カードは IRQ 5）
 - **86Box**: 実在の古い PC をそのまま再現するエミュレータ。実機を持っていない場合の最終確認用
 - 実機で試すときは、パニック画面とシリアルログを手がかりにする
+
+---
+
+## 12. ネットワーク
+
+計画書は [plans/network.md](plans/network.md)。IPv4 の LAN を扱い、ドライバと TCP/IP は自作する（§3.4。外部クレートは使わない）。
+**LAN・WAN とも制限なく使える**（DECISIONS.md D-032）。DNS・NTP のサーバの既定値は持たない（DHCP でもらうか BOOT.CFG で決める）。自動テスト（`make test`）は外の状況で揺れないよう slirp を `restrict=on` で動かす（D-025）。WAN のテストで試す宛先はオーナーが許可したものだけ（`make test-wan`）。
+
+### 12.1 層の分け方
+
+```
+アプリ（ping, host, ntp, get, httpd）── vibe-rt::net（ソケットの薄いラッパ・名前解決）
+──────────── システムコール（socket / connect / ... / poll。§6.6）────────────
+kernel/src/net: net スレッド・ソケットの待ち（WaitQueue）・BOOT.CFG の設定
+crates/vibe-net: Ethernet・ARP・IPv4・ICMP・UDP・TCP・DHCP（+ DNS・SNTP・HTTP のメッセージ）
+drivers/nic: カード 1 枚（ne2000.rs: ISA / PCI, rtl8139.rs: PCI。pci.rs でバスを列挙）
+```
+
+- **`crates/vibe-net`**（`no_std` + `alloc`）: ハードウェアと時計を持たない。使う側が「受け取ったフレームを `receive`」「時間の経過を `poll`」「送るフレームを `transmit` で取り出す」を繰り返す。ソケットの操作は待たない（できなければ `WouldBlock`）。ホストの `cargo test` で 2 つのスタックを直結し、落とす・重ねる・入れ替える回線で試す
+- **ドライバ**: 割り込みハンドラは原因（ISR）を消して印を付け、net スレッドを起こすだけ（エッジの ISA でもレベルの PCI でも、原因が無くなるまで消す）。フレームの取り出し・送信は net スレッドが、カードのロック（割り込み禁止）を持って行う。割り込みを取りこぼしても 1 秒ごとに受信のリングを見る
+- **net スレッド**: 受信 → `poll`（再送・ARP・DHCP・自分宛て）→ 送信（前の送信の終わりを待つ。終わらなければカードを初期化し直す）→ ソケットで待つタスクを起こす → 次の割り込み・ソケットの操作・時間切れまで待つ
+- **ソケット**: タスクのファイルの表（`TaskFs`）に入る。最後の参照が無くなると閉じる（プロセスが終わると、スケジューラがタスクを片付けるときに閉じる。片付けは SCHED のロックを手放してから行う）。待つ処理は `SOCK_WAIT`（net スレッドが 1 回りごとに起こす）とタイマの刻みで待ち、時間切れと Ctrl+C（`-EINTR`）で抜ける
+- ロックの順番: STACK → カードのロック。STACK を持ったまま待たない
+
+### 12.2 カード
+
+| カード | 見つけ方 | 送受信 |
+|---|---|---|
+| NE2000（ISA） | `net=ne2000,I/O,IRQ`、または `net=auto` で PCI に無ければ 0x300 / IRQ 10。リセットして ISR.RST を待ち、PROM から MAC を読む | カードの 16KB を送信 6 ページと受信のリング（0x46〜0x7F）に分け、16bit の PIO で読み書き。リングが壊れた・あふれたら初期化し直す |
+| NE2000 PCI（RTL8029） | PCI の 10ec:8029。BAR0 が I/O、割り込みはコンフィグ空間の値 | ISA と同じドライバ |
+| RTL8139 | PCI の 10ec:8139。I/O とバスマスタを有効にする | 受信は 8KB のリング（折り返さずに書く WRAP モード、CAPR は 16 引いた値）、送信は 4 つの口を順に使う。DMA の領域は物理ページをまとめて確保 |
+
+- `pci` コマンドで PCI の機器の一覧。ISA だけの PC では「PCI が無い」と出るだけ
+- TCP で知らせる受信の窓は、カードの受信バッファにあふれずに入る量（1460 × 5 バイト）にする（D-026）
+
+### 12.3 TCP/IP（vibe-net）
+
+- **ARP**: 表（10 分）と、答えを待つ間のパケットの溜め置き（宛先ごとに 16 個）。1 秒ごとに 3 回まで問い合わせて諦める。自分への問い合わせには答え、相手を覚える
+- **IPv4**: オプションなし・DF を立てて送る。フラグメントは受け取らない。宛先が同じネットワークならそのまま、違えばゲートウェイへ。127.x と自分のアドレス宛てはカードに出さず、次の `poll` で受け取る（ループバック）
+- **ICMP**: エコー要求に答える。エコー応答と「届かない」を識別子でソケットに渡す。閉じた UDP のポートへの UDP には「ポートに届かない」を返す
+- **UDP**: ソケットごとに受け取ったものを 32 個まで溜める
+- **TCP**: 状態遷移（RFC 793）、MSS（1460）、再送の時間は往復時間から（RFC 6298, 最短 300ms）、スロースタートと輻輳回避、時間切れ・重複 ACK 3 つで snd_una から送り直す（go-back-N）。受信は順番どおりに来たものだけ受け取る。相手の窓が 0 の間は時々のぞく。TIME_WAIT は 2 秒。送受信のバッファは 16KB ずつ。待ち受けは backlog を超えた SYN を無視する。やらないこと: SACK・ウィンドウスケール・タイムスタンプ・遅延 ACK・Nagle
+- **DHCP**: DISCOVER → OFFER → REQUEST → ACK（1, 2, 4… 16 秒の間隔で送り直す）。リース期間の半分でやり直して延長する。BOOT.CFG の `gw=`・`dns=` は DHCP の値より優先
+- **DNS・SNTP・HTTP**: メッセージの組み立てと解析だけ（使うのはアプリ）。DNS は名前の圧縮を読み、A レコードを集める。HTTP/1.0 で、接続は要求ごとに閉じる
+
+### 12.4 設定（BOOT.CFG）
+
+| 行 | 意味 |
+|---|---|
+| `net=auto` | PCI のカード（RTL8139・NE2000 PCI）→ 無ければ ISA の NE2000（0x300, IRQ 10）。既定 |
+| `net=ne2000,0x300,10` / `net=none` | ISA の NE2000 を決め打ち / 使わない |
+| `ip=dhcp` / `ip=10.0.2.15/24` | DHCP（既定）/ 固定のアドレス |
+| `gw=`・`dns=`・`ntp=` | ゲートウェイ・DNS サーバ・NTP サーバ（既定値は持たない） |
+| `tz=+09:00` | PC の時計の時差（ntp が UTC に足す。D-028） |
+
+読めない行は起動時にシリアルに出して無視する。設定の解析は `vibe_net::config`（ホストでテスト）。
+
+### 12.5 アプリとコマンド
+
+| 名前 | 中身 |
+|---|---|
+| `net`（シェル） | カード・MAC・アドレス・送受信の数・ARP の表・ソケットの一覧 |
+| `arp [IP]`（シェル） | ARP で MAC を引く（3 秒まで） |
+| `pci`（シェル） | PCI の機器の一覧 |
+| `hwclock`（シェル） | CMOS の時計を読み直す |
+| `ping [-c 回数] [-i 間隔] [-s 大きさ] ホスト` | ICMP のエコー。Ctrl+C で止めて集計 |
+| `host 名前 [サーバ]` | DNS で A レコードを引く |
+| `ntp [サーバ]` | SNTP で時刻を合わせ、CMOS にも書く |
+| `get URL [ファイル]` | HTTP/1.0 の GET。進み具合を出し、保存してフロッピーに書き戻す |
+| `httpd [ポート] [ディレクトリ]` | ファイルを HTTP で返す（ディレクトリは一覧の HTML）。poll で 4 本まで同時に受け付ける。Ctrl+C で止まる |
+
+ステータスバーは IP アドレスが決まると "VibeOS" の右に出す（320x200 では日付を省いて時刻だけにする）。
+
+### 12.6 テスト
+
+- QEMU の中にハブを作り、ゲストのカード・slirp（restrict=on）・テストランナーをつなぐ（D-025）。テストランナーはフレームをすべて記録して（OUT/NAME.pcap）自分で解析し（`expect-packet`）、10.0.2.50 の偽のホストとして ARP・ping・DNS・NTP に答える
+- HTTP: ゲスト → ホストは guestfwd（10.0.2.100:80 への接続ごとにテストランナーが `http-serve` で答える）、ホスト → ゲストの httpd は hostfwd
+- シナリオ: `32-net-arp`〜`41-net-rtl8139`（Bochs は `37-net-bochs` で DHCP・ARP・ping）。`expect-lan-only` でゲストがテストの中で LAN の外へ送ろうとしていないことを確かめる
+- `make test-wan`: インターネットの決まった相手（1.1.1.1 への ping・DNS、slirp の DNS の中継、ntp.nict.jp、example.com の HTTP、httpbin.org からの 100KB、www.github.com の CNAME、無い名前、github.com の https への移動）と通信する（`tests/wan/`）。宛先はオーナーが許可したものだけ（D-030, D-031）。slirp がホストで TCP を終端するので、本物の回線の損失は VibeOS の TCP まで届かない（ホストのテストの「落とす回線」で確かめている）。`make test` には含めない
+- `make test-lan`: ホストの LAN の機器（`LAN_HOST`, 既定はデフォルトゲートウェイ）と HTTP で通信する（`tests/lan/`, slirp の restrict=on を外す `net-lan`）。環境によるので `make test` には含めない。LAN の外の宛先は試さない。ping（`02-lan-ping`）は slirp がホストの ping のソケットで中継するので、ホストの `net.ipv4.ping_group_range` が自分のグループを含んでいること（例: `sudo sysctl -w net.ipv4.ping_group_range="$(id -g) $(id -g)"`）

@@ -7,7 +7,8 @@ use crate::arch::trap;
 use crate::task::wait::WaitQueue;
 
 const PIT_INPUT_HZ: u32 = 1_193_182;
-pub const TICK_HZ: u32 = 100;
+/// 1 秒あたりの刻み数（アプリと共有する値）
+pub const TICK_HZ: u32 = vibe_abi::TICK_HZ;
 
 const CHANNEL0: u16 = 0x40;
 const COMMAND: u16 = 0x43;

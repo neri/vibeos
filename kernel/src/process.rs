@@ -174,6 +174,7 @@ pub fn wait(id: TaskId) -> Result<i32, i32> {
 /// 今のプロセスを終える。戻らないので、呼ぶ側はヒープや Arc を持ったまま呼ばないこと
 pub fn exit_current(code: i32) -> ! {
     crate::drivers::speaker::off();
+    let _ = catch_ctrl_c(false);
     if let Some(user) = sched::current_user() {
         close_display(&mut user.lock());
     }
@@ -243,6 +244,12 @@ pub fn set_foreground(id: Option<TaskId>) {
     FOREGROUND.store(id.unwrap_or(NO_PROCESS), Ordering::Relaxed);
 }
 
+/// シェルが終わるのを待っているプロセス
+pub fn foreground() -> Option<TaskId> {
+    let f = FOREGROUND.load(Ordering::Relaxed);
+    (f != NO_PROCESS).then_some(f)
+}
+
 /// プロセスを止めるよう頼む。ユーザモードへ戻る直前に止まる（割り込みの中から呼んでよい）
 pub fn request_kill(id: TaskId) {
     request_kill_with(id, false);
@@ -257,17 +264,74 @@ fn request_kill_with(id: TaskId, ctrl_c: bool) {
             k.len += 1;
         }
     }
-    // キーを待っているなら起こす（戻ってきたところで止める）
+    // キーやネットワークを待っているなら起こす（戻ってきたところで止める）
     gui::wake_readers();
+    crate::net::wake_sockets();
+}
+
+/// 止めるよう頼まれている（待っているシステムコールは -EINTR で戻る）
+pub fn kill_pending(id: TaskId) -> bool {
+    let k = KILL.lock();
+    k.ids[..k.len].iter().any(|e| e.0 == id)
+}
+
+/// Ctrl+C を自分で扱うプロセス（ctrl_c(CATCH)）と、押されたかの印。割り込みの中でも見るので固定長
+struct CatchList {
+    ids: [(TaskId, bool); 16],
+    len: usize,
+}
+
+static CATCH: IrqMutex<CatchList> = IrqMutex::new(CatchList { ids: [(0, false); 16], len: 0 });
+
+/// Ctrl+C で止めず、印を付けるだけにする（false で元に戻す）
+pub fn catch_ctrl_c(on: bool) -> Result<(), i32> {
+    let me = sched::current_id();
+    let mut c = CATCH.lock();
+    let len = c.len;
+    let pos = c.ids[..len].iter().position(|e| e.0 == me);
+    match (on, pos) {
+        (true, None) if len < c.ids.len() => {
+            c.ids[len] = (me, false);
+            c.len += 1;
+        }
+        (true, None) => return Err(err::ENOMEM),
+        (false, Some(p)) => {
+            c.ids[p] = c.ids[len - 1];
+            c.len -= 1;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Ctrl+C が押されたか（印を消す）
+pub fn take_ctrl_c() -> bool {
+    let me = sched::current_id();
+    let mut c = CATCH.lock();
+    let len = c.len;
+    match c.ids[..len].iter_mut().find(|e| e.0 == me) {
+        Some(e) => core::mem::take(&mut e.1),
+        None => false,
+    }
+}
+
+/// Ctrl+C を扱うプロセスなら印を付けて true
+fn mark_ctrl_c(me: TaskId) -> bool {
+    let mut c = CATCH.lock();
+    let len = c.len;
+    match c.ids[..len].iter_mut().find(|e| e.0 == me) {
+        Some(e) => {
+            e.1 = true;
+            true
+        }
+        None => false,
+    }
 }
 
 /// キーボードの割り込みから: Ctrl+C が押された。フォーカスのあるウィンドウがアプリのものなら
 /// その持ち主、端末ならシェルが待っているプロセスを止める
 pub fn request_interrupt() {
-    let target = SCREEN.lock().focused_owner().or_else(|| {
-        let f = FOREGROUND.load(Ordering::Relaxed);
-        (f != NO_PROCESS).then_some(f)
-    });
+    let target = SCREEN.lock().focused_owner().or_else(foreground);
     if let Some(id) = target {
         request_kill_with(id, true);
     }
@@ -292,6 +356,9 @@ pub fn check_interrupt() {
     if let Some(ctrl_c) = hit {
         if ctrl_c {
             kprintln!("^C");
+            if mark_ctrl_c(me) {
+                return;
+            }
         }
         exit_current(EXIT_INTERRUPTED);
     }

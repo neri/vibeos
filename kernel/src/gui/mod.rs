@@ -576,6 +576,11 @@ impl Screen {
             Mode::Fullscreen => self.foreground(),
             Mode::Desktop => self.focused().unwrap_or(CONSOLE),
         };
+        // 端末の Ctrl+C は、シェルが待っている前面のプロセスを止めるのに使った（キーボードの割り込みで）。
+        // 入力としては渡さない（後でシェルが ^C として読んでしまわないように）
+        if target == CONSOLE && ev.ch == Some('\x03') && crate::process::foreground().is_some() {
+            return;
+        }
         if let Some(w) = self.windows.get_mut(&target) {
             if !w.keys.push(ev) {
                 klog!("gui: key queue of window {} is full, key dropped", target);

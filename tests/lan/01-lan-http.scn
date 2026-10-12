@@ -1,0 +1,20 @@
+# ホストの LAN の機器（LAN_HOST）と通信する（make test-lan。環境によるので make test には含めない）。
+# slirp は restrict=on にしない（ホストの LAN へ出られる）。LAN の外の宛先はここでは試さない
+net-lan
+timeout 30
+wait-serial net: address 10.0.2.15/24 gateway 10.0.2.2
+wait-serial (dhcp)
+wait-serial VibeOS shell
+# DHCP で slirp の DNS の中継（10.0.2.3）をもらう（問い合わせはしない）
+type net
+key ret
+wait-serial dns:  10.0.2.3
+# LAN の機器の HTTP
+type get http://${LAN_HOST}/ LAN.HTM
+key ret
+wait-serial saved
+expect-packet tcp-syn 10.0.2.15 ${LAN_HOST}
+expect-packet tcp-synack ${LAN_HOST} 10.0.2.15
+# ゲストが送ったものの宛先がすべて LAN の中であることを見る
+expect-lan-only
+serial-absent PANIC

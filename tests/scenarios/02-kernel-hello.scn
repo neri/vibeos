@@ -4,6 +4,8 @@ boot-config video=320x200
 timeout 15
 wait-serial VibeOS kernel starting
 wait-serial Hello from Rust!
+# ネットワークのカードは付けていない
+wait-serial net: no network card (PCI, or NE2000 at 0x300)
 wait-serial VIBEOS READY
 serial-absent PANIC
 sleep 200

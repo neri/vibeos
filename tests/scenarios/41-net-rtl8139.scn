@@ -1,0 +1,32 @@
+# Phase 21: RTL8139（PCI, バスマスタ DMA）のドライバ。実機で手に入りやすいカード
+net rtl8139
+qemu-only
+writable
+serve-http
+www-file R8139.BIN 102400
+timeout 20
+wait-serial net: RTL8139 at 0x
+wait-serial net: address 10.0.2.15/24
+wait-serial VibeOS shell
+type pci
+key ret
+wait-serial 10ec:8139 Ethernet io 0x
+type ping -c 2 10.0.2.2
+key ret
+wait-serial 2 packets transmitted, 2 received, 0% packet loss
+type ping -c 2 -s 1400 10.0.2.50
+key ret
+wait-serial 1408 bytes from 10.0.2.50: icmp_seq=2
+type get http://10.0.2.100/R8139.BIN
+key ret
+wait-serial saved 102400 bytes to R8139.BIN
+type sync
+key ret
+wait-serial sync: nothing to save
+expect-disk-same R8139.BIN R8139.BIN
+type httpd &
+key ret
+wait-serial httpd: serving
+host-get /BIN/EDIT.ELF BIN/EDIT.ELF
+host-get-concurrent /HELLO.TXT HELLO.TXT
+serial-absent PANIC

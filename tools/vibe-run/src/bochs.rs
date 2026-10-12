@@ -23,12 +23,26 @@ pub struct Rfb {
 }
 
 /// Bochs を起動し、RFB でつなぎ、シリアルのファイルを `serial` に読み込み続けるスレッドを作る
-pub fn start(img: &Path, out: &Path, name: &str, serial: Arc<Mutex<Vec<u8>>>) -> Result<(Child, Rfb)> {
+///
+/// `net` なら NE2000（I/O 0x300, IRQ 5。IRQ 10・11 は Bochs の PCI が使う）を付け、Bochs の中だけで完結する仮想のネットワーク（vnet:
+/// DHCP・ARP・ping に答えるホスト 192.168.10.1）につなぐ。外には出ない
+pub fn start(img: &Path, out: &Path, name: &str, serial: Arc<Mutex<Vec<u8>>>, net: bool) -> Result<(Child, Rfb)> {
     let serial_path = out.join(format!("{name}.bochs-serial.log"));
     let _ = fs::remove_file(&serial_path);
     let console = fs::File::create(out.join(format!("{name}.bochs.out"))).map_err(|e| e.to_string())?;
+    let mut extra = Vec::new();
+    if net {
+        // vnet の ethdev は TFTP の置き場所（使わないので空のディレクトリ）
+        let tftp = out.join(format!("{name}-tftp"));
+        fs::create_dir_all(&tftp).map_err(|e| e.to_string())?;
+        extra.push(format!(
+            "ne2k: ioaddr=0x300, irq=5, mac=52:54:00:12:34:56, ethmod=vnet, ethdev={}",
+            tftp.display()
+        ));
+    }
     let child = Command::new("bochs")
         .args(["-q", "-f", "tools/bochs/bochsrc.txt", "-rc", "tools/bochs/continue.rc"])
+        .args(&extra)
         .env("BOCHS_FLOPPY", img)
         .env("BOCHS_SERIAL", &serial_path)
         .env("BOCHS_LOG", out.join(format!("{name}.bochs.log")))

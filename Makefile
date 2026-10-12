@@ -6,6 +6,9 @@
 #   make test     ホストの単体テスト + QEMU でのシナリオテスト
 #   make bochs    Bochs で起動（画面は X のウィンドウ）
 #   make test-bochs  シナリオテストを Bochs で（画面・マウス・QEMU 専用のものは飛ばす）
+#   make test-wan    インターネットの決まった相手（tests/wan/ に書いたものだけ）と通信する。オーナーが許可した宛先だけ。
+#                    make test には含めない
+#   make test-lan    ホストの LAN の機器（LAN_HOST, 既定はデフォルトゲートウェイ）との通信を試す（make test には含めない）
 #   make clean
 
 BUILD   := build
@@ -19,9 +22,16 @@ CARGO   ?= cargo
 NASM    ?= nasm
 OBJCOPY ?= llvm-objcopy
 
+# ネットワーク: NE2000（I/O 0x300, IRQ 10）を slirp（QEMU の NAT）につなぐ。ゲストからホストの LAN と
+# インターネットへ出られる（ping はホストの net.ipv4.ping_group_range が要る。DECISIONS.md D-032）。
+# ゲストの httpd はホストの http://$(HTTP_BIND):8080/ から見える（LAN の他の機械から見せるなら
+# HTTP_BIND=0.0.0.0）
+HTTP_BIND ?= 127.0.0.1
+QEMU_NET := -netdev user,id=net0,hostfwd=tcp:$(HTTP_BIND):8080-:80 \
+	-device ne2k_isa,netdev=net0,iobase=0x300,irq=10
 QEMU_FLAGS := -m 32M -cpu 486 \
 	-drive file=$(IMG),format=raw,if=floppy \
-	-boot a -vga std -nic none -rtc base=localtime -no-reboot
+	-boot a -vga std $(QEMU_NET) -rtc base=localtime -no-reboot
 
 KERNEL_ELF := target/i486-vibeos/release/kernel
 TEST_KERNEL_ELF := target/test/i486-vibeos/release/kernel
@@ -30,7 +40,7 @@ SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 0x8000 に読み込む。中継バッファ（0x10000）の手前まで
 
-.PHONY: all run debug bochs test test-host test-qemu test-bochs screenshots clean FORCE
+.PHONY: all run debug bochs test test-host test-qemu test-bochs test-lan test-wan screenshots clean FORCE
 
 all: $(IMG)
 
@@ -88,7 +98,7 @@ endef
 # ディスクに入れるファイル（rootfs/ 以下。8.3 形式の大文字の名前にすること）
 ROOTFS := $(shell find rootfs -type f)
 # ユーザアプリ（apps/ の中のバイナリ）。ディスクの /BIN/名前.ELF に入れる
-APPS := hello fault view paint mandel snake more fstest edit clock life
+APPS := hello fault view paint mandel snake more fstest edit clock life ping host ntp get httpd
 APPS_DIR := $(BUILD)/rootfs-apps
 APPS_STAMP := $(APPS_DIR)/.stamp
 
@@ -158,6 +168,22 @@ test-qemu: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(VIBE_RUN)
 
 test-bochs: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --bochs --img $(IMG) --out $(BUILD)/test-out-bochs $(SCENARIOS)
+
+# LAN の機器（既定はデフォルトゲートウェイ = ルータ）に HTTP と ping でつなぐ
+LAN_HOST ?= $(shell ip route 2>/dev/null | awk '/^default/ {print $$3; exit}')
+LAN_SCENARIOS := $(sort $(wildcard tests/lan/*.scn))
+
+test-lan: $(IMG) $(VIBE_RUN)
+	@test -n "$(LAN_HOST)" || { echo "set LAN_HOST=address of a LAN device with an HTTP server"; exit 1; }
+	@g=$$(id -g); set -- $$(cat /proc/sys/net/ipv4/ping_group_range); \
+		if [ $$g -lt $$1 ] || [ $$g -gt $$2 ]; then \
+		echo "note: net.ipv4.ping_group_range ($$1 $$2) does not include your group $$g; 02-lan-ping will fail"; fi
+	LAN_HOST=$(LAN_HOST) $(VIBE_RUN) test --img $(IMG) --out $(BUILD)/test-out-lan $(LAN_SCENARIOS)
+
+# インターネットの相手と通信する（DECISIONS.md D-030。宛先は tests/wan/ のシナリオに書いたものだけ。
+# 宛先を増やすときはオーナーの許可を取る）
+test-wan: $(IMG) $(VIBE_RUN)
+	$(VIBE_RUN) test --img $(IMG) --out $(BUILD)/test-out-wan $(sort $(wildcard tests/wan/*.scn))
 
 # --- スクリーンショット（README 用。docs/images/ に置く）----------------------
 screenshots: $(IMG) $(VIBE_RUN)

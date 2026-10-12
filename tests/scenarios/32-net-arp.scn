@@ -1,0 +1,32 @@
+# Phase 16: NE2000 のドライバ・Ethernet・ARP。DHCP でアドレスをもらう
+# ネットワークは slirp の restrict=on（外へは出られない）とテストランナーの偽のホスト（10.0.2.50）
+net
+qemu-only
+timeout 20
+wait-serial net: NE2000 at 0x300 irq 10, MAC 52:54:00:12:34:56
+wait-serial VIBEOS READY
+wait-serial net: address 10.0.2.15/24
+wait-serial VibeOS shell
+# ゲートウェイ（slirp）の MAC を ARP で引く
+type arp 10.0.2.2
+key ret
+wait-serial 10.0.2.2 is at 52:55:0a:00:02:02
+expect-packet arp-request 10.0.2.15 10.0.2.2
+expect-packet arp-reply 10.0.2.2 10.0.2.15
+# テストランナーの偽のホスト
+type arp 10.0.2.50
+key ret
+wait-serial 10.0.2.50 is at 02:00:0a:00:02:32
+expect-packet arp-reply 10.0.2.50 10.0.2.15
+# 誰もいないアドレスは 3 回問い合わせて諦める
+type arp 10.0.2.99
+key ret
+wait-serial arp: 10.0.2.99: host unreachable
+# 相手からの ARP の問い合わせに答える
+fake-send arp 10.0.2.15
+expect-packet arp-reply 10.0.2.15 10.0.2.50
+type net
+key ret
+wait-serial mac:  52:54:00:12:34:56
+wait-serial ip:   10.0.2.15/24 (dhcp)
+serial-absent PANIC

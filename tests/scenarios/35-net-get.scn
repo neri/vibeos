@@ -1,0 +1,55 @@
+# Phase 19: TCP（クライアント）と get。テストランナーが guestfwd で 10.0.2.100:80 に HTTP のサーバを立てる
+net
+qemu-only
+writable
+serve-http
+www-text NET.TXT Hello from the test runner
+www-file BIG.BIN 102400
+serve-dns www.vibeos.test=10.0.2.100
+boot-config dns=10.0.2.50
+timeout 30
+wait-serial net: address 10.0.2.15
+wait-serial VibeOS shell
+type get http://10.0.2.100/NET.TXT
+key ret
+wait-serial saved 27 bytes to NET.TXT
+type cat NET.TXT
+key ret
+wait-serial Hello from the test runner
+expect-packet tcp-syn 10.0.2.15 10.0.2.100
+expect-packet tcp-synack 10.0.2.100 10.0.2.15
+# 100KB（名前は DNS で引く）。保存した後にフロッピーへ書き戻すので、ホストで中身を比べられる
+type get http://www.vibeos.test/BIG.BIN
+key ret
+wait-serial connecting to www.vibeos.test (10.0.2.100) port 80
+wait-serial saved 102400 bytes to BIG.BIN
+# get が書き戻し済み
+type sync
+key ret
+wait-serial sync: nothing to save
+expect-disk-same BIG.BIN BIG.BIN
+# 名前を変えて保存
+type get http://10.0.2.100/NET.TXT /DOCS/COPY.TXT
+key ret
+wait-serial saved 27 bytes to /DOCS/COPY.TXT
+# エラー: 無いファイル（404）・サーバの無いポート（slirp が RST を返す）
+type get http://10.0.2.100/NOSUCH.TXT
+key ret
+wait-serial get: HTTP 404 Not Found
+type get http://10.0.2.100:8080/
+key ret
+wait-serial get: connect: connection refused
+expect-packet tcp-rst 10.0.2.100 10.0.2.15
+type get ftp://10.0.2.100/
+key ret
+wait-serial get: bad URL
+# 終わったプロセスのソケットは片付く（TCP は TIME_WAIT の 2 秒の後）
+sleep 2500
+type net
+key ret
+wait-serial rx:
+wait-serial sockets: 0
+expect-disk-file /DOCS/COPY.TXT Hello from the test runner
+expect-disk-clean
+serial-absent PANIC
+expect-lan-only

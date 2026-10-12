@@ -18,6 +18,7 @@
 extern crate alloc;
 
 pub mod gfx;
+pub mod net;
 pub mod sys;
 
 use core::fmt::{self, Write};

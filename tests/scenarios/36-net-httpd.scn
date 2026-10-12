@@ -1,0 +1,39 @@
+# Phase 20: TCP（サーバ）と httpd。ホストから slirp の hostfwd でゲストの 80 番につなぐ
+net
+qemu-only
+timeout 20
+wait-serial net: address 10.0.2.15
+wait-serial VibeOS shell
+type httpd
+key ret
+wait-serial httpd: serving / on http://10.0.2.15:80/
+host-get /HELLO.TXT HELLO.TXT
+wait-serial httpd: 10.0.2.2 GET /HELLO.TXT 200
+host-get /DOCS/GUIDE.TXT DOCS/GUIDE.TXT
+host-get /BIN/EDIT.ELF BIN/EDIT.ELF
+host-get-status /NOSUCH.TXT 404
+host-get-status /../KERNEL.SYS 403
+host-get-text / <a href="/DOCS/">DOCS/</a>
+host-get-text /DOCS <a href="/DOCS/GUIDE.TXT">GUIDE.TXT</a>
+# 1 本目がつないだまま要求を送らずにいても、2 本目は返事をもらえる
+host-get-concurrent /DOCS/README.TXT DOCS/README.TXT
+expect-packet tcp-synack 10.0.2.15 10.0.2.2
+key ctrl+c
+wait-serial httpd: stopped
+# 裏で動かし、自分自身から（127.0.0.1）取ってくる
+type httpd 8080 &
+key ret
+wait-serial httpd: serving / on http://10.0.2.15:8080/
+type get http://127.0.0.1:8080/HELLO.TXT /LOOP.TXT
+key ret
+wait-serial httpd: 127.0.0.1 GET /HELLO.TXT 200
+wait-serial saved
+type cat /LOOP.TXT
+key ret
+wait-serial Hello
+# 同じポートでは 2 つ目を開けない
+type httpd 8080
+key ret
+wait-serial httpd: port 8080: address in use
+serial-absent PANIC
+expect-lan-only

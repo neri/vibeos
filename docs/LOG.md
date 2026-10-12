@@ -265,3 +265,50 @@
 - `boot/boot.asm`: ルートディレクトリから `LOADER.SYS` を探し、FAT12 のクラスタをたどって `0x8000` に読む。番号が続くクラスタはまとめて読む。読み込み先が 64KB をまたぐ（FAT が壊れている）ときは IVT を上書きする前に止まる。2nd ステージが CPU を確かめる前なので 386 の命令は使わない。512 バイト中 442 バイト
 - Makefile: `mkfs.fat -R 1`、`LOADER.SYS` をルートの先頭に `mcopy`。boot.asm の BPB が mkfs.fat の BPB と同じかを `cmp` で確かめるようにした（ずれると BPB を上書きしたときに FAT が壊れる）
 - テスト: `31-loader-fragmented`（`LOADER.SYS` を 1 クラスタずつの飛び地 + 連続した塊に置いたイメージ `build/vibeos-frag.img` で起動する）。QEMU 32 本・Bochs 20 本が通る
+
+## 2026-10-12 Phase 16〜21: ネットワーク
+
+オーナーの指示「ネットワークの計画書を実装して。ローカルの機能を優先で実装し、外部へのアクセスは私が確認するまで禁止」で、[計画書](plans/network.md) の N1〜N6 を実装した（PLAN.md の Phase 16〜21、DECISIONS.md D-024〜D-028）。外部クレートは追加していない（TCP/IP・ドライバ・テスト用のサーバはすべて自作）。
+
+### やったこと
+- `crates/vibe-net`: Ethernet・ARP・IPv4・ICMP・UDP・TCP・DHCP と DNS・SNTP・HTTP のメッセージ、BOOT.CFG の解析。ホストのテスト 29 本（2 つのスタックを直結し、決まった間隔・でたらめに落とす、重ねる、入れ替える回線で 100KB を送る、窓 0、接続の拒否・時間切れ、ループバック、DHCP など）
+- カーネル: `drivers/ne2000.rs`（ISA / PCI）、`drivers/rtl8139.rs`、`drivers/pci.rs`、`drivers/nic.rs`（カードの切り替え）、`net/`（net スレッド・ソケットの待ち）。システムコール 30〜40（socket・bind・connect・listen・accept・sendto・recvfrom・net_info・poll・ctrl_c・set_time）。ソケットはファイルと同じ表に入る
+- シェル: `net`・`arp`・`pci`・`hwclock`。アプリ: `ping`・`host`・`ntp`・`get`・`httpd`。ステータスバーに IP アドレス
+- テストランナー: シナリオの `net`（QEMU のハブ + slirp の restrict=on + テストランナー）、`serve-dns`・`serve-ntp`・`serve-http`・`expect-packet`・`fake-send`・`host-get` など（D-025）。記録したフレームを `build/test-out/NAME.pcap` に書く（tcpdump・Wireshark で見られる）
+- シナリオ: `32-net-arp`〜`41-net-rtl8139`（QEMU 9 本 + Bochs 1 本）。`02-kernel-hello` にカードが無いときの表示を足した
+- `make run` にカードを付けた（restrict=on。ゲストの httpd はホストの http://127.0.0.1:8080/）
+- 結果: QEMU 41 本・Bochs 21 本・ホストのテスト（vibe-net 29 本を含む）がすべて通る
+
+### 詰まったこと・分かったこと
+- restrict=on の slirp は DHCP でゲートウェイと DNS を知らせない（外へ出られないので）。UDP も DHCP 以外は外へ通さないので、DNS・NTP はテストランナーが偽のホスト（10.0.2.50）として答えることにした
+- QEMU の guestfwd の `cmd:` は、起動したプログラムの標準エラー出力もゲストへの接続につなぐ。`http-serve` の中で eprintln したログがゲストに届き、HTTP の見出しが壊れた
+- 100KB の取得が 92KB/s しか出なかった。記録を見ると slirp が 16KB の窓いっぱいを一度に送り、NE2000 の受信のリング（1514 バイトのフレーム 9 つ分）があふれて落ちていた。net スレッドは起こされても次の刻みまで動かないことがある。TCP の受信の窓を 7300 バイトにして再送が無くなり、約 5MB/s になった（D-026）
+- 4 つに 1 つより多く落とす回線は時間がかかる（3 つに 1 つを決まった間隔で落とすと、シミュレーションの時間で 36 分）。テストは 4・7・10 に 1 つと、でたらめに 10%・20% にした
+- Ctrl+C で前面のプロセスを止めると、そのキーが端末の入力にも残り、後でシェルが `^C` を表示していた（ping で目立った）。前面のプロセスを止めるのに使った Ctrl+C は入力として渡さないようにした
+- プロセスが終わるときのソケットの片付けで net スレッドを起こすと、スケジューラのロックを持ったまま起こすことになる（二重ロック）。終わったタスクを捨てるのを SCHED のロックを手放した後にした
+- Bochs（Debian の 2.7）は slirp が無く、ne2k は vnet（Bochs の中だけの仮想のネットワーク）で動かした。IRQ 10 は PCI の割り込みと衝突して Bochs が止まるので IRQ 5 にした。Bochs ではシェルの表示とアドレスの決まる順番が QEMU と逆になることがある
+- 見直しで直したこと: 相手の窓が 0 のまま数分たつと、のぞきの 1 バイトの再送が上限に達して接続を切っていた（窓 0 と答えてくる間は数えないようにし、テストは 15 分待つようにした）。カードから来た 127.x 宛てのパケットを受け取っていた（捨てるようにした）。割り込みの番号が決まっていない PCI のカードで IRQ の表の外を触る（飛ばすようにした）
+- 気づいたこと（直していない）: ローダは BOOT.CFG の最初の `video=` をコメントの中でも拾う。ディスクに入っている BOOT.CFG（2 行目のコメントに `video=640x480 or video=320x200`）のまま `video=320x200` に書き換えても 640x480 になる（Phase 14 からの不具合。オーナーに報告）
+
+## 2026-10-12 LAN へのアクセスと WAN のガード
+
+- オーナーの指示「LAN 内のアクセスを許可するので続けて。WAN にアクセスが必要なときは私の許可を得てください」（DECISIONS.md D-029）
+- slirp には宛先の制限が無いので、OS の中に WAN のガードを作った（`wan=deny` が既定。LAN の外への送信を `-EACCES` で断る。DHCP でもらった DNS サーバも使わない）。ping はすぐに諦めるようにした（送れないまま回り続けていた）
+- `make run` の restrict=on を外した（LAN へ出られる）。`make test-lan`（`tests/lan/`）を足した。シナリオの引数で `${環境変数}` を使えるようにし、`net-lan`・`expect-lan-only` を足した
+- 手で試したこと（この PC の LAN 192.168.0.0/24）: ゲストからルータ（192.168.0.1）の Web ページを `get` で取れた。ルータは NTP に答えない。LAN の機器への ping は、ホストが特権の無い ICMP を許していない（`ping_group_range` が `1 0`）ので slirp を通らない。ゲストの httpd をホストの LAN のアドレス（192.168.0.159）で転送し、curl で取れた。記録を見て、ゲストが送った宛先は 192.168.0.1 とブロードキャストだけだった
+- WAN の宛先（8.8.8.8 など）を試すのは restrict=on のテスト（`42-net-wan-guard`）の中だけにした。`make test-lan` に入れると、ガードが壊れたときに本当に WAN へ出てしまうため
+- オーナーがホストの `net.ipv4.ping_group_range` を自分のグループ（1000 1000）にした。slirp 経由で LAN の機器への ping が届くようになり、`tests/lan/02-lan-ping.scn`（ルータへ 3 回、すべて返る）を足した。設定が無い PC では `make test-lan` が注意を出す
+- オーナーの回答: 実機で使うネットワークカードは未定。時差は当面の間 JST で良い（D-028 を確定に、D-027 の未定の項を更新）
+
+## 2026-10-12 WAN のテスト
+
+- オーナーが WAN のブロックの解除と、AI が示した宛先でのテストを許可した（DECISIONS.md D-030）。ディスクの BOOT.CFG を `wan=allow` にし、`make test-lan` のシナリオには `wan=deny` を明示した
+- `make test-wan`（`tests/wan/01-wan.scn`）: 1.1.1.1 へ ping（3/3, 10ms = タイマの刻み 1 つ）、example.com を slirp の DNS の中継（10.0.2.3）と 1.1.1.1 で引く、ntp.nict.jp で時刻を合わせる（ずれ 0 秒）、example.com の HTML（577 バイト）を get。すべて通った
+- 詰まったこと: example.com のアドレスは 2 つ返るので、2 行目が次の `wait-serial` に一致してしまい、次の問い合わせの前に `expect-packet` を見ていた。間に `echo` の印を挟んだ。この調べのためにテストを 2 回余分に流した（どちらも同じ宛先）
+- テストランナー: `expect-packet` の SRC・DST に `*`（どれでもよい）を書けるようにした（NTP のサーバのアドレスは引くまで分からないため）
+- 追加の WAN のテスト（D-031, `tests/wan/02-wan-more.scn`）: httpbin.org から 100KB（181KB/s、送り直し無し、ホストで中身が一致）、www.github.com（返事に CNAME）、nosuchname.invalid（NXDOMAIN）、github.com（301 と移動先を表示）。すべて 1 回目で通った
+- `get` は 200 以外のとき移動先（Location）も表示する。`vibe_net::http::header` と 301〜308 の文言を足した。テストランナーに `www-repeat` を足した
+
+## 2026-10-12 ネットワークの制限を外す
+
+- オーナーの指示「ネットワークを制限するオプションを削除してデフォルトで有効とする」（DECISIONS.md D-032）。WAN のガード・`wan=`・`NET_RESTRICT`・`42-net-wan-guard` を削除した。DHCP でもらった DNS サーバ（slirp では 10.0.2.3）は既定で使う。`net=none` と、`make test` の restrict=on は残した

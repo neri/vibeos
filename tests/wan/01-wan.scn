@@ -1,0 +1,39 @@
+# インターネットの相手と通信する（make test-wan。make test には含めない）。
+# 宛先はオーナーが許可したものだけ（DECISIONS.md D-030）: 1.1.1.1（ping・DNS）, ホストの DNS（slirp の 10.0.2.3 経由）,
+# ntp.nict.jp（NTP）, example.com（HTTP）。名前は 10.0.2.3 で引く
+net-lan
+boot-config tz=+09:00
+timeout 30
+wait-serial net: address 10.0.2.15/24 gateway 10.0.2.2 dns 10.0.2.3 (dhcp)
+wait-serial VibeOS shell
+type ping -c 3 1.1.1.1
+key ret
+wait-serial 3 packets transmitted, 3 received
+expect-packet icmp-echo-reply 1.1.1.1 10.0.2.15
+type host example.com
+key ret
+wait-serial example.com has address
+# アドレスは複数返ることがあるので、区切りを打ってから次へ
+type echo dns-relay-done
+key ret
+wait-serial dns-relay-done
+wait-serial dns-relay-done
+type host example.com 1.1.1.1
+key ret
+wait-serial example.com has address
+expect-packet udp-53 10.0.2.15 1.1.1.1
+type echo dns-direct-done
+key ret
+wait-serial dns-direct-done
+wait-serial dns-direct-done
+type ntp ntp.nict.jp
+key ret
+wait-serial ntp: clock set to
+expect-packet udp-123 10.0.2.15 *
+type get http://example.com/ EXAMPLE.HTM
+key ret
+wait-serial saved
+type cat EXAMPLE.HTM
+key ret
+wait-serial Example Domain
+serial-absent PANIC

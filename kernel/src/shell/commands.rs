@@ -43,10 +43,14 @@ const COMMANDS: &[Command] = &[
     Command { name: "ps", usage: "ps", help: "list tasks", run: ps },
     Command { name: "uptime", usage: "uptime", help: "time since boot", run: uptime },
     Command { name: "date", usage: "date", help: "current date and time", run: date },
+    Command { name: "hwclock", usage: "hwclock", help: "read the CMOS clock", run: hwclock },
     Command { name: "sleep", usage: "sleep [ms]", help: "sleep (default 500ms, checks timing)", run: sleep },
     Command { name: "history", usage: "history", help: "command history", run: history },
     Command { name: "demo", usage: "demo", help: "3 threads draw counters for 5s", run: demo },
     Command { name: "beep", usage: "beep [hz] [ms]", help: "sound the PC speaker", run: beep },
+    Command { name: "net", usage: "net", help: "network card, address, sockets", run: net_cmd },
+    Command { name: "arp", usage: "arp [ip]", help: "find the MAC address of an IP (or list)", run: arp },
+    Command { name: "pci", usage: "pci", help: "list PCI devices", run: pci },
     Command { name: "reboot", usage: "reboot", help: "restart the computer", run: reboot },
     Command { name: "divzero", usage: "divzero", help: "test: divide by zero", run: divzero },
     Command { name: "nullptr", usage: "nullptr", help: "test: read address 0", run: nullptr },
@@ -285,6 +289,13 @@ fn date(_: &mut Shell, _: &[&str]) {
     }
 }
 
+fn hwclock(_: &mut Shell, _: &[&str]) {
+    match crate::drivers::rtc::read_cmos() {
+        Ok(t) => kprintln!("cmos: {t}"),
+        Err(raw) => kprintln!("hwclock: invalid time {raw:02x?}"),
+    }
+}
+
 fn uptime(_: &mut Shell, _: &[&str]) {
     let t = pit::ticks();
     kprintln!("up {}.{:02} s ({} ticks)", t / pit::TICK_HZ, t % pit::TICK_HZ, t);
@@ -399,4 +410,83 @@ fn recurse(depth: u32) -> u32 {
 
 fn panic_cmd(_: &mut Shell, _: &[&str]) {
     panic!("panic requested from the shell");
+}
+
+fn net_cmd(_: &mut Shell, _: &[&str]) {
+    use crate::net::OptIp;
+    let Some(i) = crate::net::info() else {
+        kprintln!("net: no network card");
+        return;
+    };
+    kprintln!("card: {} at {:#x} irq {}", i.card, i.io, i.irq);
+    kprintln!("mac:  {}", i.mac);
+    match i.config {
+        Some(c) => {
+            kprintln!("ip:   {}/{} ({})", c.addr, c.prefix, if i.dhcp { "dhcp" } else { "static" });
+            kprintln!("gw:   {}", OptIp(c.gateway));
+            kprintln!("dns:  {}", OptIp(c.dns));
+        }
+        None => kprintln!("ip:   (waiting for DHCP)"),
+    }
+    if let Some(ntp) = i.settings.ntp {
+        kprintln!("ntp:  {ntp}");
+    }
+    let s = i.stats;
+    kprintln!("rx:   {} packets, {} bytes ({} dropped)", s.rx_frames, s.rx_bytes, s.rx_dropped);
+    kprintln!("tx:   {} packets, {} bytes", s.tx_frames, s.tx_bytes);
+    for (ip, mac) in crate::net::arp_entries() {
+        kprintln!("arp:  {ip} is at {mac}");
+    }
+    let socks = crate::net::socket_list();
+    kprintln!("sockets: {}", socks.len());
+    for so in socks {
+        let remote = so.remote.map(|(ip, p)| format!("{ip}:{p}")).unwrap_or_default();
+        kprintln!("  {} {} {} {} r{} s{}", so.kind, so.local_port, remote, so.state, so.recv_queued, so.send_queued);
+    }
+}
+
+fn arp(_: &mut Shell, args: &[&str]) {
+    let Some(arg) = args.get(1) else {
+        for (ip, mac) in crate::net::arp_entries() {
+            kprintln!("{ip} is at {mac}");
+        }
+        return;
+    };
+    let Some(ip) = vibe_net::Ipv4::parse(arg) else {
+        kprintln!("arp: bad address: {arg}");
+        return;
+    };
+    match crate::net::arp_resolve(ip, 3000) {
+        Ok(mac) => kprintln!("{ip} is at {mac}"),
+        Err(e) => kprintln!("arp: {ip}: {}", vibe_abi::err::name(e)),
+    }
+}
+
+fn pci(_: &mut Shell, _: &[&str]) {
+    use crate::drivers::pci;
+    if !pci::present() {
+        kprintln!("pci: no PCI bus");
+        return;
+    }
+    for d in pci::scan() {
+        let mut res = String::new();
+        if let Some(io) = d.io_base(0) {
+            res = format!(" io {io:#x}");
+        } else if let Some(m) = d.mem_base(0) {
+            res = format!(" mem {m:#x}");
+        }
+        if d.irq != 0 && d.irq != 0xFF {
+            res.push_str(&format!(" irq {}", d.irq));
+        }
+        kprintln!(
+            "{:02x}:{:02x}.{} {:04x}:{:04x} {}{}",
+            d.bus,
+            d.dev,
+            d.func,
+            d.vendor,
+            d.device,
+            d.class_name(),
+            res
+        );
+    }
 }

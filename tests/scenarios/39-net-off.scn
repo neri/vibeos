@@ -1,0 +1,20 @@
+# net=none ならカードがあっても使わない。アプリは「カードが無い」と言って終わる
+net
+qemu-only
+boot-config net=none
+timeout 20
+wait-serial net: disabled (net=none)
+wait-serial VibeOS shell
+type net
+key ret
+wait-serial net: no network card
+type ping -c 1 10.0.2.2
+key ret
+wait-serial ping: no network card
+type httpd
+key ret
+wait-serial httpd: port 80: no network card
+type get http://10.0.2.2/
+key ret
+wait-serial get: connect: no network card
+serial-absent PANIC

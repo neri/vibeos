@@ -1,0 +1,8 @@
+[package]
+name = "vibe-net"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "ハードウェアに依存しない TCP/IP（Ethernet・ARP・IPv4・ICMP・UDP・TCP・DHCP・DNS・SNTP・HTTP の組み立てと解析）"
+
+[dependencies]

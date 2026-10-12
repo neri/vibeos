@@ -1,0 +1,36 @@
+# インターネットの相手との追加のテスト（make test-wan。宛先はオーナーが許可したもの: DECISIONS.md D-031）
+# httpbin.org（100KB の取得）、www.github.com（CNAME の名前を引く）、github.com（http から https への移動）。
+# 名前は slirp の DNS の中継（10.0.2.3）で引く。nosuchname.invalid は無い名前（.invalid は予約されている）
+net-lan
+writable
+boot-config tz=+09:00
+# httpbin の /range/N は a〜z を繰り返したもの
+www-repeat RANGE.BIN 102400 abcdefghijklmnopqrstuvwxyz
+timeout 60
+wait-serial net: address 10.0.2.15/24 gateway 10.0.2.2 dns 10.0.2.3 (dhcp)
+wait-serial VibeOS shell
+# 1. 本物の回線越しに 100KB（多くのセグメント・実際の遅れ）
+type get http://httpbin.org/range/102400 RANGE.BIN
+key ret
+wait-serial saved 102400 bytes to RANGE.BIN
+type sync
+key ret
+wait-serial sync: nothing to save
+expect-disk-same RANGE.BIN RANGE.BIN
+# 2. CNAME を通る名前
+type host www.github.com
+key ret
+wait-serial www.github.com has address
+type echo cname-done
+key ret
+wait-serial cname-done
+wait-serial cname-done
+# 3. 無い名前
+type host nosuchname.invalid
+key ret
+wait-serial host: nosuchname.invalid: name not found
+# 4. https への移動（VibeOS は TLS を扱わないので、移動先を表示して終わる）
+type get http://github.com/
+key ret
+wait-serial get: HTTP 301 Moved Permanently (Location: https://github.com/)
+serial-absent PANIC

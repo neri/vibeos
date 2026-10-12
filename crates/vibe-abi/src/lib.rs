@@ -14,6 +14,9 @@ pub const USER_STACK_SIZE: u32 = 64 * 1024;
 
 pub const SYSCALL_VECTOR: u8 = 0x80;
 
+/// ticks() の 1 秒あたりの刻み数
+pub const TICK_HZ: u32 = 100;
+
 /// open のフラグ
 pub const OPEN_WRITE: u32 = 1;
 /// 無ければ作る
@@ -85,6 +88,32 @@ pub mod nr {
     /// win_close(win) -> 0
     pub const WIN_CLOSE: u32 = 29;
 
+    /// socket(kind) -> fd。kind は SOCK_*。read / write / close はファイルと同じ番号で使える
+    pub const SOCKET: u32 = 30;
+    /// bind(fd, port) -> 0。自分のポートを決める（UDP の受け口・TCP の待ち受けの前）
+    pub const BIND: u32 = 31;
+    /// connect(fd, &SockAddr) -> 0。TCP でつながるまで待つ
+    pub const CONNECT: u32 = 32;
+    /// listen(fd, backlog) -> 0。bind したポートで TCP の接続を待ち受ける
+    pub const LISTEN: u32 = 33;
+    /// accept(fd, &mut SockAddr) -> 新しい fd。つながってくるまで待つ
+    pub const ACCEPT: u32 = 34;
+    /// sendto(fd, buf, len, &SockAddr) -> 送ったバイト数。ICMP では buf はエコー要求のメッセージ全体
+    /// （識別子とチェックサムはカーネルが入れる）。TCP では宛先を見ない
+    pub const SENDTO: u32 = 35;
+    /// recvfrom(fd, buf, len, &mut SockAddr, timeout_ms) -> 受け取ったバイト数（入りきらない分は捨てる）。
+    /// timeout_ms = 0 なら待たない、u32::MAX ならいつまでも。時間切れは -ETIMEDOUT。TCP の 0 は終わり
+    pub const RECVFROM: u32 = 36;
+    /// net_info(&mut NetInfo) -> 0。カードが無ければ -ENODEV
+    pub const NET_INFO: u32 = 37;
+    /// poll(&mut [PollFd], n, timeout_ms) -> 準備のできた数（0 なら時間切れ）
+    pub const POLL: u32 = 38;
+    /// ctrl_c(op) -> 値。op = CTRL_C_CATCH: Ctrl+C でプロセスを止めず印を付ける（待っているシステムコールは
+    /// -EINTR で戻る）。CTRL_C_TAKE: 印があれば 1 を返して消す。CTRL_C_DEFAULT: 止める（既定）に戻す
+    pub const CTRL_C: u32 = 39;
+    /// set_time(secs) -> 0。時計を 1970 年からの秒（現地時刻）に合わせ、CMOS にも書く
+    pub const SET_TIME: u32 = 40;
+
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
     /// gfx_blit(buf: *const [u8; 64000]) -> 0。画面全体を書き換える
@@ -101,6 +130,19 @@ pub mod nr {
 
 pub mod err {
     pub const ENOENT: i32 = 2;
+    pub const EINTR: i32 = 4;
+    pub const EAGAIN: i32 = 11;
+    pub const ENODEV: i32 = 19;
+    pub const ENOTSOCK: i32 = 88;
+    pub const EMSGSIZE: i32 = 90;
+    pub const EADDRINUSE: i32 = 98;
+    pub const ENETDOWN: i32 = 100;
+    pub const ENETUNREACH: i32 = 101;
+    pub const ECONNRESET: i32 = 104;
+    pub const ENOTCONN: i32 = 107;
+    pub const ETIMEDOUT: i32 = 110;
+    pub const ECONNREFUSED: i32 = 111;
+    pub const EHOSTUNREACH: i32 = 113;
     pub const EIO: i32 = 5;
     pub const EBADF: i32 = 9;
     pub const ENOMEM: i32 = 12;
@@ -135,6 +177,19 @@ pub mod err {
             ENOSPC => "no space left",
             EROFS => "read-only",
             ENOTEMPTY => "directory not empty",
+            EINTR => "interrupted",
+            EAGAIN => "try again",
+            ENODEV => "no network card",
+            ENOTSOCK => "not a socket",
+            EMSGSIZE => "message too long",
+            EADDRINUSE => "address in use",
+            ENETDOWN => "network not configured",
+            ENETUNREACH => "no route to host",
+            ECONNRESET => "connection reset",
+            ENOTCONN => "not connected",
+            ETIMEDOUT => "timed out",
+            ECONNREFUSED => "connection refused",
+            EHOSTUNREACH => "host unreachable",
             _ => "error",
         }
     }
@@ -248,3 +303,72 @@ pub mod key {
     pub const LEFT: u8 = 0x80 | 0x4B;
     pub const RIGHT: u8 = 0x80 | 0x4D;
 }
+
+/// socket の種類
+pub const SOCK_STREAM: u32 = 1;
+pub const SOCK_DGRAM: u32 = 2;
+/// ICMP のエコー（ping）
+pub const SOCK_ICMP: u32 = 3;
+
+/// ctrl_c の操作
+pub const CTRL_C_DEFAULT: u32 = 0;
+pub const CTRL_C_CATCH: u32 = 1;
+pub const CTRL_C_TAKE: u32 = 2;
+
+/// ソケットのアドレス（IPv4 とポート）
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SockAddr {
+    /// ネットワークのバイト順（10.0.2.15 なら [10, 0, 2, 15]）
+    pub addr: [u8; 4],
+    pub port: u16,
+    pub _pad: u16,
+}
+
+impl SockAddr {
+    pub fn new(addr: [u8; 4], port: u16) -> SockAddr {
+        SockAddr { addr, port, _pad: 0 }
+    }
+}
+
+/// net_info の結果
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NetInfo {
+    pub mac: [u8; 6],
+    /// NET_CONFIGURED など
+    pub flags: u16,
+    pub addr: [u8; 4],
+    pub netmask: [u8; 4],
+    pub gateway: [u8; 4],
+    pub dns: [u8; 4],
+    /// BOOT.CFG の ntp=（無ければ 0.0.0.0）
+    pub ntp: [u8; 4],
+    /// BOOT.CFG の tz=（UTC との差, 分）
+    pub tz_minutes: i32,
+    pub rx_packets: u32,
+    pub tx_packets: u32,
+    pub rx_bytes: u32,
+    pub tx_bytes: u32,
+}
+
+/// アドレスが決まっている
+pub const NET_CONFIGURED: u16 = 1;
+/// DHCP を使っている
+pub const NET_DHCP: u16 = 2;
+
+/// poll の 1 件
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PollFd {
+    pub fd: i32,
+    /// 待つもの（POLL_IN / POLL_OUT）
+    pub events: u16,
+    /// 準備のできたもの（カーネルが書く）
+    pub revents: u16,
+}
+
+/// 読める（データ・接続の要求・終わり・エラー）
+pub const POLL_IN: u16 = 1;
+/// 書ける
+pub const POLL_OUT: u16 = 4;

@@ -9,12 +9,16 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use vibe_abi::{DirEntry, KeyEvent, MouseState, Stat, WinEvent, err, nr};
+use alloc::sync::Arc;
+
+use vibe_abi::{DirEntry, KeyEvent, MouseState, NetInfo, PollFd, SockAddr, Stat, WinEvent, err, nr};
+use vibe_net::Ipv4;
 
 use crate::arch::trap::TrapFrame;
 use crate::gui::{self, SCREEN};
 use crate::drivers::pit;
 use crate::fs;
+use crate::net;
 use crate::process::{self, UserRef};
 use crate::shell::line::{Input, LineEditor};
 use crate::task::{self, sched};
@@ -29,7 +33,7 @@ const FIRST_FILE_FD: u32 = 3;
 type SysResult = Result<u32, i32>;
 
 pub fn dispatch(f: &mut TrapFrame) {
-    let (n, a, b, c, d) = (f.eax, f.ebx, f.ecx, f.edx, f.esi);
+    let (n, a, b, c, d, e) = (f.eax, f.ebx, f.ecx, f.edx, f.esi, f.edi);
     // exit は戻ってこないので、プロセスへの参照（Arc）を持つ前に処理する。
     // 持ったまま終わると参照が減らず、アドレス空間が解放されない
     if n == nr::EXIT {
@@ -38,7 +42,7 @@ pub fn dispatch(f: &mut TrapFrame) {
     let result = match sched::current_user() {
         // ユーザプロセス以外（カーネルスレッド）からの呼び出しは受け付けない
         None => Err(err::ENOSYS),
-        Some(user) => call(&user, n, a, b, c, d),
+        Some(user) => call(&user, n, a, b, c, d, e),
     };
     f.eax = match result {
         Ok(v) => v,
@@ -46,8 +50,19 @@ pub fn dispatch(f: &mut TrapFrame) {
     };
 }
 
-fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32) -> SysResult {
+fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysResult {
     match n {
+        nr::SOCKET..=nr::POLL => net_call(user, n, a, b, c, d, e),
+        nr::CTRL_C => match a {
+            vibe_abi::CTRL_C_CATCH => process::catch_ctrl_c(true).map(|_| 0),
+            vibe_abi::CTRL_C_DEFAULT => process::catch_ctrl_c(false).map(|_| 0),
+            vibe_abi::CTRL_C_TAKE => Ok(process::take_ctrl_c() as u32),
+            _ => Err(err::EINVAL),
+        },
+        nr::SET_TIME => {
+            crate::drivers::rtc::set_secs(a);
+            Ok(0)
+        }
         nr::WRITE => sys_write(user, a, b, c),
         nr::READ => sys_read(user, a, b, c),
         nr::OPEN => {
@@ -253,6 +268,12 @@ fn sys_write(user: &UserRef, fd: u32, buf: u32, len: u32) -> SysResult {
     // ファイルに書く間に待つことがあるので、いったんカーネルに写す
     // SAFETY: 上で確かめた
     let bytes = unsafe { core::slice::from_raw_parts(buf as *const u8, len as usize) }.to_vec();
+    if let Some(sock) = socket_fd(fd) {
+        if sock.kind() != net::Kind::Stream {
+            return Err(err::ENOTCONN); // UDP・ICMP は sendto で宛先を付ける
+        }
+        return net::send_all(&sock, &bytes).map(|n| n as u32);
+    }
     match fd {
         1 | 2 => {
             kprint!("{}", String::from_utf8_lossy(&bytes));
@@ -284,7 +305,10 @@ fn sys_read(user: &UserRef, fd: u32, buf: u32, len: u32) -> SysResult {
     }
     // ファイルの中身をいったんカーネルのバッファに読んでから写す（読んでいる間に待つことがあるため）
     let mut tmp = alloc::vec![0u8; len.min(64 * 1024) as usize];
-    let n = fs::read((fd - FIRST_FILE_FD) as usize, &mut tmp).map_err(process::errno_of)?;
+    let n = match socket_fd(fd) {
+        Some(sock) => net::recv_from(&sock, &mut tmp, u32::MAX)?.0,
+        None => fs::read((fd - FIRST_FILE_FD) as usize, &mut tmp).map_err(process::errno_of)?,
+    };
     // SAFETY: 上で確かめた
     unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf as *mut u8, n) };
     Ok(n as u32)
@@ -326,4 +350,144 @@ fn user_str(user: &UserRef, addr: u32, len: u32) -> Result<String, i32> {
 fn as_bytes<T: Copy>(v: &T) -> &[u8] {
     // SAFETY: repr(C) の値をバイト列として読むだけ
     unsafe { core::slice::from_raw_parts(v as *const T as *const u8, core::mem::size_of::<T>()) }
+}
+
+// --- ネットワーク -----------------------------------------------------------------
+
+/// その番号がソケットなら返す
+fn socket_fd(fd: u32) -> Option<Arc<net::Socket>> {
+    if fd < FIRST_FILE_FD {
+        return None;
+    }
+    fs::socket((fd - FIRST_FILE_FD) as usize)
+}
+
+fn sock_of(fd: u32) -> Result<Arc<net::Socket>, i32> {
+    socket_fd(fd).ok_or(err::ENOTSOCK)
+}
+
+fn add_socket(sock: Arc<net::Socket>) -> SysResult {
+    fs::add_socket(sock).map(|fd| fd as u32 + FIRST_FILE_FD).map_err(process::errno_of)
+}
+
+fn read_sockaddr(user: &UserRef, addr: u32) -> Result<SockAddr, i32> {
+    check_user(user, addr, core::mem::size_of::<SockAddr>() as u32, false)?;
+    // SAFETY: 上で今のプロセスが読めるページだと確かめた（揃っていない番地でも読めるよう read_unaligned）
+    Ok(unsafe { core::ptr::read_unaligned(addr as *const SockAddr) })
+}
+
+fn write_sockaddr(user: &UserRef, at: u32, ip: Ipv4, port: u16) -> Result<(), i32> {
+    if at == 0 {
+        return Ok(());
+    }
+    copy_to_user(user, at, as_bytes(&SockAddr::new(ip.0, port)))
+}
+
+/// 一度に poll できる数
+const MAX_POLL: u32 = 64;
+
+fn net_call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysResult {
+    match n {
+        nr::SOCKET => add_socket(net::socket(a)?),
+        nr::BIND => net::bind(&*sock_of(a)?, b as u16).map(|_| 0),
+        nr::CONNECT => {
+            let sock = sock_of(a)?;
+            let to = read_sockaddr(user, b)?;
+            net::connect(&sock, Ipv4(to.addr), to.port).map(|_| 0)
+        }
+        nr::LISTEN => net::listen(&*sock_of(a)?, b).map(|_| 0),
+        nr::ACCEPT => {
+            let sock = sock_of(a)?;
+            if b != 0 {
+                check_user(user, b, core::mem::size_of::<SockAddr>() as u32, true)?;
+            }
+            let (child, ip, port) = net::accept(&sock)?;
+            let fd = add_socket(child)?;
+            write_sockaddr(user, b, ip, port)?;
+            Ok(fd)
+        }
+        nr::SENDTO => {
+            let sock = sock_of(a)?;
+            check_user(user, b, c, false)?;
+            // SAFETY: 上で確かめた。送る間に待つことがあるのでカーネルに写す
+            let data = unsafe { core::slice::from_raw_parts(b as *const u8, c as usize) }.to_vec();
+            let (ip, port) = if d != 0 {
+                let to = read_sockaddr(user, d)?;
+                (Ipv4(to.addr), to.port)
+            } else {
+                (Ipv4::UNSPECIFIED, 0)
+            };
+            if sock.kind() != net::Kind::Stream && ip.is_unspecified() {
+                return Err(err::EINVAL);
+            }
+            net::send_to(&sock, &data, ip, port).map(|n| n as u32)
+        }
+        nr::RECVFROM => {
+            let sock = sock_of(a)?;
+            check_user(user, b, c, true)?;
+            if d != 0 {
+                check_user(user, d, core::mem::size_of::<SockAddr>() as u32, true)?;
+            }
+            let mut tmp = alloc::vec![0u8; c.min(64 * 1024) as usize];
+            let (n, ip, port) = net::recv_from(&sock, &mut tmp, e)?;
+            // SAFETY: 上で確かめた
+            unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), b as *mut u8, n) };
+            write_sockaddr(user, d, ip, port)?;
+            Ok(n as u32)
+        }
+        nr::NET_INFO => {
+            let info = net::info().ok_or(err::ENODEV)?;
+            let mut ni = NetInfo { mac: info.mac.0, ..Default::default() };
+            if let Some(c) = info.config {
+                ni.flags |= vibe_abi::NET_CONFIGURED;
+                ni.addr = c.addr.0;
+                ni.netmask = c.netmask().0;
+                ni.gateway = c.gateway.unwrap_or_default().0;
+                ni.dns = c.dns.unwrap_or_default().0;
+            }
+            if info.dhcp {
+                ni.flags |= vibe_abi::NET_DHCP;
+            }
+            ni.ntp = info.settings.ntp.unwrap_or_default().0;
+            ni.tz_minutes = info.settings.tz_minutes;
+            ni.rx_packets = info.stats.rx_frames;
+            ni.tx_packets = info.stats.tx_frames;
+            ni.rx_bytes = info.stats.rx_bytes;
+            ni.tx_bytes = info.stats.tx_bytes;
+            copy_to_user(user, a, as_bytes(&ni))?;
+            Ok(0)
+        }
+        nr::POLL => {
+            if b > MAX_POLL {
+                return Err(err::EINVAL);
+            }
+            let size = b * core::mem::size_of::<PollFd>() as u32;
+            check_user(user, a, size, true)?;
+            // SAFETY: 上で確かめた
+            let mut fds: Vec<PollFd> =
+                (0..b as usize).map(|i| unsafe { core::ptr::read_unaligned((a as *const PollFd).add(i)) }).collect();
+            let socks: Vec<Option<Arc<net::Socket>>> = fds.iter().map(|p| socket_fd(p.fd as u32)).collect();
+            let ready = net::wait_any(c, || {
+                let mut count = 0;
+                for (p, s) in fds.iter_mut().zip(&socks) {
+                    let (r, w) = match s {
+                        Some(sock) => net::readiness(sock),
+                        // ファイルはいつでも読み書きできる。コンソールは書けるだけ
+                        None if p.fd >= FIRST_FILE_FD as i32 => (true, true),
+                        None => (false, p.fd == 1 || p.fd == 2),
+                    };
+                    p.revents = (if r { vibe_abi::POLL_IN } else { 0 } | if w { vibe_abi::POLL_OUT } else { 0 }) & p.events;
+                    if p.revents != 0 {
+                        count += 1;
+                    }
+                }
+                count
+            })?;
+            // SAFETY: 上で確かめた
+            let bytes = unsafe { core::slice::from_raw_parts(fds.as_ptr() as *const u8, size as usize) };
+            copy_to_user(user, a, bytes)?;
+            Ok(ready as u32)
+        }
+        _ => Err(err::ENOSYS),
+    }
 }

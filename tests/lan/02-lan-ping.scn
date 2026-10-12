@@ -1,0 +1,16 @@
+# LAN の機器（LAN_HOST）へ ping する（make test-lan）。slirp がホストの ping のソケットで中継するので、
+# ホストの net.ipv4.ping_group_range が自分のグループを含んでいること（DESIGN.md §12.6）
+net-lan
+timeout 30
+wait-serial net: address 10.0.2.15/24 gateway 10.0.2.2
+wait-serial (dhcp)
+wait-serial VibeOS shell
+type ping -c 3 ${LAN_HOST}
+key ret
+wait-serial PING ${LAN_HOST} (${LAN_HOST}): 32 data bytes
+wait-serial bytes from ${LAN_HOST}: icmp_seq=1
+wait-serial 3 packets transmitted, 3 received, 0% packet loss
+expect-packet icmp-echo-request 10.0.2.15 ${LAN_HOST}
+expect-packet icmp-echo-reply ${LAN_HOST} 10.0.2.15
+expect-lan-only
+serial-absent PANIC

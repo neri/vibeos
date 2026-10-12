@@ -1,0 +1,23 @@
+# BOOT.CFG でカードの I/O ポート・IRQ と固定アドレスを決める。読めない行は表示して無視する
+net ne2k_isa,iobase=0x320,irq=5
+qemu-only
+boot-config net=ne2000,0x320,5
+boot-config ip=10.0.2.30/24
+boot-config dns=not-an-address
+timeout 20
+wait-serial net: cannot read BOOT.CFG line: dns=not-an-address
+wait-serial net: NE2000 at 0x320 irq 5, MAC 52:54:00:12:34:56
+wait-serial net: address 10.0.2.30/24 gateway - dns - (static)
+wait-serial VibeOS shell
+type ping -c 1 10.0.2.2
+key ret
+wait-serial 1 packets transmitted, 1 received, 0% packet loss
+expect-packet icmp-echo-request 10.0.2.30 10.0.2.2
+# DNS サーバが無い
+type host vibeos.test
+key ret
+wait-serial host: no DNS server (set dns= in BOOT.CFG)
+type ntp
+key ret
+wait-serial ntp: no NTP server (give one, or set ntp= in BOOT.CFG)
+serial-absent PANIC

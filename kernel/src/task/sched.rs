@@ -186,8 +186,10 @@ impl Scheduler {
         self.tasks.get_mut(&id).expect("sched: no such task")
     }
 
-    /// 終了したタスクのスタックを解放する（実行中のタスク自身のものは除く）
-    fn reap(&mut self) {
+    /// 終了したタスクを表から外して返す（実行中のタスク自身は除く）。返したものは SCHED を
+    /// 手放してから捨てること（開いていたソケットを閉じるときに他のタスクを起こすため）
+    fn reap(&mut self) -> Vec<Box<Task>> {
+        let mut out = Vec::new();
         let mut i = 0;
         while i < self.dead.len() {
             let id = self.dead[i];
@@ -196,8 +198,11 @@ impl Scheduler {
                 continue;
             }
             self.dead.swap_remove(i);
-            self.tasks.remove(&id);
+            if let Some(t) = self.tasks.remove(&id) {
+                out.push(t);
+            }
         }
+        out
     }
 }
 
@@ -310,9 +315,10 @@ fn idle_loop() {
 fn schedule() {
     let was_enabled = cpu::interrupts_enabled();
     cpu::disable_interrupts();
+    let reaped;
     let switch = {
         let mut s = SCHED.lock();
-        s.reap();
+        reaped = s.reap();
         let cur = s.current;
         let cur_running = s.task(cur).state == State::Running;
         let next = match s.ready.pop_front() {
@@ -348,6 +354,8 @@ fn schedule() {
             Some((old_esp, new_esp))
         }
     };
+    // 終わったタスクのスタック・ファイル（ソケット）などを片付ける（割り込みは禁止のまま）
+    drop(reaped);
     if let Some((old, new)) = switch {
         // SAFETY: ロックは手放し、割り込みは禁止のまま。old は Box に入ったタスクの中なので切り替え中も動かない
         unsafe { switch_context(old, new) };

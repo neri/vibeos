@@ -23,6 +23,7 @@ mod input;
 #[cfg(feature = "qemu-test")]
 mod ktest;
 mod mm;
+mod net;
 mod panic;
 mod process;
 mod shell;
@@ -121,6 +122,8 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     klog!("interrupts enabled");
     // フロッピーの初期化は割り込みを待つので、割り込みを許可してから
     drivers::fdc::init();
+    // ネットワーク（BOOT.CFG を読むのでファイルシステムの後。アドレスは裏で DHCP がもらう）
+    net::init();
 
     klog!("VIBEOS READY");
 

@@ -1,0 +1,65 @@
+# Phase 18: UDP のソケット・DHCP・DNS（host）・SNTP（ntp）
+# DNS と NTP はテストランナーの偽のホスト（10.0.2.50）が答える。時計はわざとずらして起動する
+net
+qemu-only
+serve-dns vibeos.test=10.0.2.50 www.vibeos.test=10.0.2.100
+serve-ntp 2026-10-12T01:02:03
+boot-config dns=10.0.2.50
+boot-config ntp=10.0.2.50
+boot-config tz=+09:00
+qemu-arg -rtc
+qemu-arg base=2020-01-01T12:00:00
+timeout 20
+wait-serial rtc: 2020-01-01 12:00
+# DHCP（slirp の restrict=on はゲートウェイと DNS を知らせないので、DNS は BOOT.CFG の値）
+wait-serial net: address 10.0.2.15/24 gateway - dns 10.0.2.50 (dhcp)
+expect-packet dhcp-request 0.0.0.0 255.255.255.255
+expect-packet dhcp-reply 10.0.2.2 255.255.255.255
+wait-serial VibeOS shell
+# ステータスバーに IP アドレスが出る（1 秒ごとに描き直す）
+sleep 1500
+expect-screen net-statusbar-ip 64 0 80 10
+type net
+key ret
+wait-serial dns:  10.0.2.50
+wait-serial ntp:  10.0.2.50
+# DNS
+type host vibeos.test
+key ret
+wait-serial vibeos.test has address 10.0.2.50
+expect-packet udp-53 10.0.2.15 10.0.2.50
+type host nosuch.test
+key ret
+wait-serial host: nosuch.test: name not found
+# 答えないサーバ（2 秒 × 3 回で諦める）
+type host vibeos.test 10.0.2.99
+key ret
+wait-serial host: vibeos.test: DNS server did not answer
+# 返事を待っている間の Ctrl+C でプロセスが止まる（待ちが -EINTR で終わる）
+type host vibeos.test 10.0.2.99
+key ret
+sleep 500
+key ctrl+c
+wait-serial [host exited with -130]
+# 名前で ping（DNS で引いてから）
+type ping -c 1 www.vibeos.test
+key ret
+wait-serial PING www.vibeos.test (10.0.2.100)
+type ping -c 1 vibeos.test
+key ret
+wait-serial PING vibeos.test (10.0.2.50)
+wait-serial 1 packets transmitted, 1 received, 0% packet loss
+# SNTP で時計を合わせる（UTC + 9 時間）。CMOS の時計にも書かれる
+type ntp
+key ret
+wait-serial ntp: 10.0.2.50 says 2026-10-12 01:02:03 UTC
+wait-serial ntp: clock set to 2026-10-12 10:02:03 (UTC+09:00)
+expect-packet udp-123 10.0.2.15 10.0.2.50
+type date
+key ret
+wait-serial 2026-10-12 10:02
+type hwclock
+key ret
+wait-serial cmos: 2026-10-12 10:02
+serial-absent PANIC
+expect-lan-only

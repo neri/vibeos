@@ -1,0 +1,44 @@
+# Phase 17: IPv4・ICMP・ping・固定アドレス（BOOT.CFG）
+net
+qemu-only
+boot-config ip=10.0.2.15/24
+boot-config gw=10.0.2.2
+timeout 20
+wait-serial net: address 10.0.2.15/24 gateway 10.0.2.2 dns - (static)
+wait-serial VibeOS shell
+type ping -c 3 10.0.2.2
+key ret
+wait-serial PING 10.0.2.2 (10.0.2.2): 32 data bytes
+wait-serial 40 bytes from 10.0.2.2: icmp_seq=1
+wait-serial 40 bytes from 10.0.2.2: icmp_seq=3
+wait-serial 3 packets transmitted, 3 received, 0% packet loss
+wait-serial rtt min/avg/max
+expect-packet icmp-echo-request 10.0.2.15 10.0.2.2
+expect-packet icmp-echo-reply 10.0.2.2 10.0.2.15
+# テストランナーの偽のホストへ（大きめのデータ）
+type ping -c 2 -s 1000 10.0.2.50
+key ret
+wait-serial 1008 bytes from 10.0.2.50: icmp_seq=2
+wait-serial 2 packets transmitted, 2 received, 0% packet loss
+# 誰もいないアドレス: 返事が無い
+type ping -c 2 10.0.2.99
+key ret
+wait-serial Request timeout for icmp_seq 2
+wait-serial 2 packets transmitted, 0 received, 100% packet loss
+wait-serial [ping exited with 1]
+# 回数を決めずに動かし、Ctrl+C で止めて集計する
+type ping 10.0.2.2
+key ret
+wait-serial icmp_seq=2
+key ctrl+c
+wait-serial ^C
+wait-serial --- 10.0.2.2 ping statistics ---
+wait-serial received, 0% packet loss
+# 偽のホストからの ping に答える
+fake-send ping 10.0.2.15
+expect-packet icmp-echo-reply 10.0.2.15 10.0.2.50
+type ping
+key ret
+wait-serial usage: ping
+serial-absent PANIC
+expect-lan-only

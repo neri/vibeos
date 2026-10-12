@@ -26,21 +26,27 @@ fn draw() {
     let secs = pit::ticks() / pit::TICK_HZ;
     let (free_pages, _) = pmm::stats();
     let tasks = sched::tasks().len();
-    // 時計が読めれば日時、読めなければ起動からの時間
+    let ip = crate::net::address();
+    let desktop = SCREEN.lock().mode() == crate::gui::Mode::Desktop;
+    // 時計が読めれば日時、読めなければ起動からの時間。320x200 で IP アドレスを出すときは時刻だけ（40 桁に収める）
     let when = match crate::drivers::rtc::now() {
+        Some(t) if ip.is_some() && !desktop => format!("{:02}:{:02}", t.hour, t.minute),
         Some(t) => format!("{:04}-{:02}-{:02} {:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute),
         None => format!("up {}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60),
     };
     let right = format!("{when}  {}K T{} ", free_pages * 4, tasks);
     let font = &FONT_8X8;
     let mut s = SCREEN.lock();
-    let desktop = s.mode() == crate::gui::Mode::Desktop;
     s.draw_status_bar(|surf| {
         let w = surf.width() as i32;
         // デスクトップのバーは 1 ピクセルずつ上下に余白がある
         let (h, y) = if desktop { (crate::gui::BAR_H as i32, 1) } else { (font.height as i32, 0) };
         surf.fill_rect(0, 0, w, h, BAR_BG);
         surf.draw_text(font, font.width as i32, y, "VibeOS", palette::YELLOW, None);
+        // ネットワークのアドレスは左側（右側は長さが変わるので、位置が動かないように）
+        if let Some(ip) = ip {
+            surf.draw_text(font, 8 * font.width as i32, y, &format!("{ip}"), palette::LIGHT_CYAN, None);
+        }
         let x = w - (right.len() * font.width) as i32;
         surf.draw_text(font, x, y, &right, BAR_FG, None);
     });

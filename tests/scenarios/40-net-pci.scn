@@ -1,0 +1,26 @@
+# Phase 21: PCI のバスの列挙と NE2000 の PCI 版（QEMU の ne2k_pci = RTL8029）。同じドライバで動く
+net ne2k_pci
+qemu-only
+serve-http
+www-file PCI.BIN 65536
+timeout 20
+wait-serial net: NE2000 (PCI) at 0x
+wait-serial net: address 10.0.2.15/24
+wait-serial VibeOS shell
+type pci
+key ret
+wait-serial 10ec:8029 Ethernet io 0x
+type net
+key ret
+wait-serial card: NE2000 (PCI)
+type ping -c 2 10.0.2.2
+key ret
+wait-serial 2 packets transmitted, 2 received, 0% packet loss
+type get http://10.0.2.100/PCI.BIN
+key ret
+wait-serial saved 65536 bytes to PCI.BIN
+type httpd &
+key ret
+wait-serial httpd: serving
+host-get /DOCS/GUIDE.TXT DOCS/GUIDE.TXT
+serial-absent PANIC
