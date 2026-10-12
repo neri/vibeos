@@ -175,13 +175,13 @@ impl Screen {
     }
 
     /// 重ね合わせ: メニューの行を row に重ねる
-    pub(super) fn draw_menu_row(&self, y: usize, row: &mut [u8]) {
+    pub(super) fn draw_menu_row(&self, y: usize, row: &mut [u32]) {
         let Some(m) = &self.menu else { return };
         if y < BAR_H || y >= BAR_H + m.h {
             return;
         }
         let r = y - BAR_H;
         let n = m.w.min(row.len());
-        row[..n].copy_from_slice(&m.buf[r * m.w..r * m.w + n]);
+        super::convert_row(&mut row[..n], &m.buf[r * m.w..r * m.w + n], &self.std_lut);
     }
 }

@@ -33,6 +33,8 @@ pub struct BootInfo {
     pub kernel_size: u32,
     /// 画面 1 行のバイト数
     pub pitch: u32,
+    /// 1 ピクセルのビット数（8 = モード 13h、32 = VESA の直接色）
+    pub bpp: u32,
 }
 
 const _: () = {
@@ -44,7 +46,8 @@ const _: () = {
     assert!(offset_of!(BootInfo, kernel_addr) == 0x31C);
     assert!(offset_of!(BootInfo, kernel_size) == 0x320);
     assert!(offset_of!(BootInfo, pitch) == 0x324);
-    assert!(size_of::<BootInfo>() == 0x328);
+    assert!(offset_of!(BootInfo, bpp) == 0x328);
+    assert!(size_of::<BootInfo>() == 0x32C);
 };
 
 impl BootInfo {
@@ -68,6 +71,7 @@ static BOOT_INFO: crate::sync::BootCell<BootInfo> = crate::sync::BootCell::new(B
     kernel_addr: 0,
     kernel_size: 0,
     pitch: 0,
+    bpp: 0,
 });
 
 /// kmain の最初に 1 回だけ（割り込み禁止・ページング前に）呼ぶ。写しへの参照を返す

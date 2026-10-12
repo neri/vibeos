@@ -1,0 +1,14 @@
+# M1: 画面 1 枚は使用可能なメモリの 1/8 まで。16MB では BOOT.CFG で 1920x1200 を頼んでも 800x600
+qemu-arg -m
+qemu-arg 16M
+boot-config video=1920x1200
+timeout 30
+wait-serial video limit: 1920x1200 (BOOT.CFG)
+wait-serial video: 800x600x32
+wait-serial gui: desktop 800x600
+wait-serial VibeOS shell
+type hello
+key ret
+wait-serial primes below 20000: 2262
+expect-pixel 790 590 0 103 55
+serial-absent PANIC

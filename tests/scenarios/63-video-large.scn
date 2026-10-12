@@ -1,0 +1,17 @@
+# M1: メモリが多ければ大きな画面（128MB・BOOT.CFG で 1920x1200）。アプリのウィンドウも動く
+qemu-arg -m
+qemu-arg 128M
+boot-config video=1920x1200
+timeout 30
+wait-serial video: 1920x1200x32
+wait-serial paging: framebuffer
+wait-serial gui: desktop 1920x1200
+wait-serial VibeOS shell
+type clock &
+key ret
+wait-serial clock: started
+sleep 500
+expect-pixel 1910 1190 0 103 55
+# 時計のウィンドウ（中身の左上 120,47）の中は白い文字盤の地
+expect-pixel 125 52 255 255 255
+serial-absent PANIC

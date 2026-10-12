@@ -13,9 +13,11 @@
 //! 描画は各ウィンドウのバッファに行い、`present` で書き換えた行だけを重ね合わせて VRAM に送る。
 //! マウスカーソルは重ね合わせのときに上に描く。全画面では、前面が端末なら一番上の行にステータスバーを出す。
 //!
-//! パレット: 全画面では前面のウィンドウの独自のパレットを VGA にそのまま設定する。デスクトップでは
-//! 他のウィンドウの色が変わらないよう VGA は標準のパレットのまま、独自のパレットを持つウィンドウの
-//! 中身は重ね合わせるときに標準のパレットの近い色に置き換える。
+//! 色: デスクトップは 32 ビットの画面（VESA の直接色）だけで、重ね合わせも 32 ビット（0x00RRGGBB）で
+//! 行う。ウィンドウ・バー・背景のバッファは 8 ビット（パレットの色番号）で、重ね合わせるときに
+//! 「色番号 → 32 ビットの色」の表で直す（独自のパレットを持つウィンドウはその表で）。
+//! 全画面（320x200・モード 13h）は 8 ビットのまま、前面のウィンドウの独自のパレットを VGA にそのまま
+//! 設定する。
 //!
 //! 入力: キーはフォーカスのあるウィンドウ（全画面では前面）に、マウスはその中の座標にして届ける。
 //! ウィンドウの持ち主はそれぞれのキューから読む（`read_key` / `poll_mouse`）。
@@ -32,7 +34,7 @@ use vibe_font::FONT_8X8;
 use vibe_gfx::{Surface, palette};
 use vibe_keyboard::{KeyCode, KeyEvent, Modifiers};
 
-use crate::drivers::vga::{self, MAX_HEIGHT, MAX_WIDTH};
+use crate::drivers::vga::{self, MAX_WIDTH};
 use crate::sync::{BootCell, IrqMutex};
 use crate::task::sched::TaskId;
 use crate::task::wait::WaitQueue;
@@ -55,6 +57,10 @@ const TITLE_INACTIVE: u8 = palette::DARK_GRAY;
 /// 端末のウィンドウの大きさ（文字数）。左下に置き、上をアプリのウィンドウのために空ける
 const TERMINAL_COLS: usize = 64;
 const TERMINAL_ROWS: usize = 32;
+/// 最初の端末（コンソール）の一番大きな大きさ。バッファは起動直後から使うので静的な領域に置く。
+/// 画面がこれより大きければ、起動直後の全画面のコンソールは左上のこの大きさだけを使う
+const CONSOLE_MAX_W: usize = 640;
+const CONSOLE_MAX_H: usize = 480;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -102,8 +108,8 @@ struct Window {
     titlebar: Vec<u8>,
     /// 独自のパレット（全画面で前に出ている間だけ使う）
     palette: Option<Box<[[u8; 3]; 256]>>,
-    /// 独自のパレットの色 → 標準のパレットの近い色（デスクトップで重ね合わせるときに使う）
-    remap: Option<Box<[u8; 256]>>,
+    /// 独自のパレットの色番号 → 32 ビットの色（デスクトップで重ね合わせるときに使う）
+    lut: Option<Box<[u32; 256]>>,
     /// アプリが忙しい間に打たれたキーも落とさないよう、押す・離すで 128 打鍵分
     keys: Ring<KeyEvent, 256>,
     mouse: Ring<MouseEvent, 64>,
@@ -168,8 +174,12 @@ enum Part {
     Client,
 }
 
-static CONSOLE_BUF: BootCell<[u8; MAX_WIDTH * MAX_HEIGHT]> = BootCell::new([0; MAX_WIDTH * MAX_HEIGHT]);
+static CONSOLE_BUF: BootCell<[u8; CONSOLE_MAX_W * CONSOLE_MAX_H]> =
+    BootCell::new([0; CONSOLE_MAX_W * CONSOLE_MAX_H]);
 static BAR_BUF: BootCell<[u8; MAX_WIDTH * BAR_H]> = BootCell::new([0; MAX_WIDTH * BAR_H]);
+/// 重ね合わせの 1 行（8 ビットと 32 ビット）。画面の幅が大きいとスタックに置けないので静的な領域に
+static ROW8: BootCell<[u8; MAX_WIDTH]> = BootCell::new([0; MAX_WIDTH]);
+static ROW32: BootCell<[u32; MAX_WIDTH]> = BootCell::new([0; MAX_WIDTH]);
 
 pub struct Screen {
     mode: Mode,
@@ -203,6 +213,8 @@ pub struct Screen {
     menu: Option<bar::Menu>,
     /// デスクトップの背景の画像（バーの下の全体、画面の幅 × (高さ − BAR_H)）
     wallpaper: Option<Box<[u8]>>,
+    /// 標準のパレットの色番号 → 32 ビットの色
+    std_lut: [u32; 256],
 }
 
 /// 画面。コンソール（gfx::console の CONSOLE）と両方取るときはコンソールを先に取ること
@@ -229,6 +241,7 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     bar_dirty: false,
     menu: None,
     wallpaper: None,
+    std_lut: [0; 256],
 });
 
 /// キー・マウス・閉じる要求が届いたら起こされる
@@ -239,8 +252,9 @@ pub fn init() {
     let mut s = SCREEN.lock();
     s.width = vga::width();
     s.height = vga::height();
-    s.console_w = s.width;
-    s.console_h = s.height - FS_BAR_H;
+    s.std_lut = palette::lut32(&palette::standard());
+    s.console_w = s.width.min(CONSOLE_MAX_W);
+    s.console_h = (s.height - FS_BAR_H).min(CONSOLE_MAX_H);
     s.console_y = FS_BAR_H;
     s.cursor_x = (s.width / 2) as i32;
     s.cursor_y = (s.height / 2) as i32;
@@ -263,16 +277,16 @@ pub fn init_windows() {
     s.order.push(CONSOLE);
 }
 
-/// 画面が広ければデスクトップにする（スケジューラが動いた後に呼ぶ）。したら true
+/// 32 ビットの画面ならデスクトップにする（スケジューラが動いた後に呼ぶ）。したら true
 pub fn start_desktop() -> bool {
     let mut s = SCREEN.lock();
-    if s.width < 640 || s.height < 400 {
+    if vga::bpp() != 32 || s.width < 640 || s.height < 400 {
         return false;
     }
     s.mode = Mode::Desktop;
     let (cw, ch) = (TERMINAL_COLS * FONT_8X8.width, TERMINAL_ROWS * FONT_8X8.height);
-    s.console_w = cw.min(s.width - 2);
-    s.console_h = ch.min(s.height - BAR_H - TITLE_H - 2);
+    s.console_w = cw.min(s.width - 2).min(CONSOLE_MAX_W);
+    s.console_h = ch.min(s.height - BAR_H - TITLE_H - 2).min(CONSOLE_MAX_H);
     let (cw, ch) = (s.console_w, s.console_h);
     let y = (s.height - ch - 8) as i32;
     s.console_y = y as usize;
@@ -319,7 +333,7 @@ fn new_window(
         closable,
         titlebar: Vec::new(),
         palette: None,
-        remap: None,
+        lut: None,
         keys: Ring::new(NO_KEY),
         mouse: Ring::new(MouseEvent { x: 0, y: 0, buttons: 0 }),
         close_requested: false,
@@ -520,12 +534,7 @@ impl Screen {
                 *slot = [c[0] & 0x3F, c[1] & 0x3F, c[2] & 0x3F];
             }
         }
-        let std = palette::standard();
-        let remap = win.remap.get_or_insert_with(|| Box::new(core::array::from_fn(|i| i as u8)));
-        for i in start..(start + colors.len()).min(256) {
-            let [r, g, b] = pal[i];
-            remap[i] = palette::nearest(&std, r << 2, g << 2, b << 2);
-        }
+        win.lut = Some(Box::new(palette::lut32(pal)));
         let h = self.height;
         self.mark_rows(0, h);
         if self.focused() == Some(id) {
@@ -846,15 +855,16 @@ impl Screen {
     /// パニックのとき: 全画面のコンソールに戻す
     pub fn panic_takeover(&mut self) {
         self.mode = Mode::Fullscreen;
-        self.console_w = self.width;
-        self.console_h = self.height;
+        self.console_w = self.width.min(CONSOLE_MAX_W);
+        self.console_h = self.height.min(CONSOLE_MAX_H);
         self.console_y = 0;
         self.order.retain(|&w| w != CONSOLE);
         self.order.push(CONSOLE);
         self.cursor_visible = false;
+        let (cw, ch) = (self.console_w, self.console_h);
         if let Some(c) = self.windows.get_mut(&CONSOLE) {
-            c.w = self.width;
-            c.h = self.height;
+            c.w = cw;
+            c.h = ch;
             c.x = 0;
             c.y = 0;
         }
@@ -871,14 +881,30 @@ impl Screen {
         if self.dirty_lo >= self.dirty_hi {
             return;
         }
-        let mut row = [0u8; MAX_WIDTH];
+        // SAFETY: ROW8・ROW32 は SCREEN のロックの中（ここ）でだけ触る
+        let row8 = unsafe { &mut (&mut *ROW8.as_ptr())[..self.width] };
+        let row32 = unsafe { &mut (&mut *ROW32.as_ptr())[..self.width] };
         for y in self.dirty_lo..self.dirty_hi {
-            let row = &mut row[..self.width];
-            self.compose_row(y, row);
-            if self.cursor_visible {
-                self.draw_cursor_row(y, row);
+            if self.mode == Mode::Desktop {
+                self.compose_desktop_row(y, row32);
+                if self.cursor_visible {
+                    self.draw_cursor_row32(y, row32);
+                }
+                vga::write_row32(y, row32);
+                continue;
             }
-            vga::write_row(y, row);
+            self.compose_row(y, row8);
+            if self.cursor_visible {
+                self.draw_cursor_row(y, row8);
+            }
+            if vga::bpp() == 32 {
+                // 32 ビットの画面の全画面（パニックのとき）: 前面のウィンドウのパレットで直す
+                let lut = self.windows.get(&self.foreground()).and_then(|w| w.lut.as_deref()).unwrap_or(&self.std_lut);
+                convert_row(row32, row8, lut);
+                vga::write_row32(y, row32);
+            } else {
+                vga::write_row(y, row8);
+            }
         }
         self.dirty_lo = 0;
         self.dirty_hi = 0;
@@ -896,58 +922,58 @@ impl Screen {
         }
     }
 
+    /// 全画面の 1 行（8 ビット）
     fn compose_row(&self, y: usize, row: &mut [u8]) {
-        match self.mode {
-            Mode::Fullscreen => {
-                row.fill(palette::BLACK);
-                let fg = self.foreground();
-                let top = match self.windows.get(&fg) {
-                    Some(win) => win.y.max(0) as usize,
-                    None => self.console_y,
-                };
-                if y < top {
-                    // 端末の上の行はステータスバー
-                    // SAFETY: 同上
-                    let bar = unsafe { &*BAR_BUF.as_ptr() };
-                    if y < FS_BAR_H {
-                        row.copy_from_slice(&bar[y * self.width..(y + 1) * self.width]);
-                    }
-                } else if let Some(win) = self.windows.get(&fg) {
-                    if y - top < win.h {
-                        let n = win.w.min(row.len());
-                        row[..n].copy_from_slice(&self.client_row(fg, y - top)[..n]);
-                    }
-                } else if y - top < self.console_h {
-                    // まだウィンドウを登録していない（起動直後）
-                    // SAFETY: 同上
-                    let buf = unsafe { &*CONSOLE_BUF.as_ptr() };
-                    let (r, w) = (y - top, self.console_w.min(row.len()));
-                    row[..w].copy_from_slice(&buf[r * self.console_w..r * self.console_w + w]);
-                }
+        row.fill(palette::BLACK);
+        let fg = self.foreground();
+        let top = match self.windows.get(&fg) {
+            Some(win) => win.y.max(0) as usize,
+            None => self.console_y,
+        };
+        if y < top {
+            // 端末の上の行はステータスバー
+            // SAFETY: BAR_BUF は SCREEN のロックの中でだけ触る（今ロックを持っている）
+            let bar = unsafe { &*BAR_BUF.as_ptr() };
+            if y < FS_BAR_H {
+                row.copy_from_slice(&bar[y * self.width..(y + 1) * self.width]);
             }
-            Mode::Desktop => {
-                if y < BAR_H {
-                    // SAFETY: 同上
-                    let bar = unsafe { &*BAR_BUF.as_ptr() };
-                    row.copy_from_slice(&bar[y * self.width..(y + 1) * self.width]);
-                    return;
-                }
-                match &self.wallpaper {
-                    Some(wp) => {
-                        let r = y - BAR_H;
-                        row.copy_from_slice(&wp[r * self.width..(r + 1) * self.width]);
-                    }
-                    None => row.fill(DESKTOP_BG),
-                }
-                for &id in &self.order {
-                    self.draw_window_row(id, y as i32, row);
-                }
-                self.draw_menu_row(y, row);
+        } else if let Some(win) = self.windows.get(&fg) {
+            if y - top < win.h {
+                let n = win.w.min(row.len());
+                row[..n].copy_from_slice(&self.client_row(fg, y - top)[..n]);
             }
+        } else if y - top < self.console_h {
+            // まだウィンドウを登録していない（起動直後）
+            // SAFETY: 同上
+            let buf = unsafe { &*CONSOLE_BUF.as_ptr() };
+            let (r, w) = (y - top, self.console_w.min(row.len()));
+            row[..w].copy_from_slice(&buf[r * self.console_w..r * self.console_w + w]);
         }
     }
 
-    fn draw_window_row(&self, id: WinId, y: i32, row: &mut [u8]) {
+    /// デスクトップの 1 行（32 ビット）
+    fn compose_desktop_row(&self, y: usize, row: &mut [u32]) {
+        let lut = &self.std_lut;
+        if y < BAR_H {
+            // SAFETY: BAR_BUF は SCREEN のロックの中でだけ触る（今ロックを持っている）
+            let bar = unsafe { &*BAR_BUF.as_ptr() };
+            convert_row(row, &bar[y * self.width..(y + 1) * self.width], lut);
+            return;
+        }
+        match &self.wallpaper {
+            Some(wp) => {
+                let r = y - BAR_H;
+                convert_row(row, &wp[r * self.width..(r + 1) * self.width], lut);
+            }
+            None => row.fill(lut[DESKTOP_BG as usize]),
+        }
+        for &id in &self.order {
+            self.draw_window_row(id, y as i32, row);
+        }
+        self.draw_menu_row(y, row);
+    }
+
+    fn draw_window_row(&self, id: WinId, y: i32, row: &mut [u32]) {
         let w = &self.windows[&id];
         if w.minimized {
             return;
@@ -959,36 +985,49 @@ impl Screen {
         }
         let (left, right) = (w.x - 1, w.x + w.w as i32);
         let width = row.len() as i32;
-        let mut put = |x: i32, c: u8| {
+        let border = self.std_lut[BORDER as usize];
+        let mut put = |x: i32, c: u32| {
             if (0..width).contains(&x) {
                 row[x as usize] = c;
             }
         };
         if y == top || y == bottom {
             for x in left..=right {
-                put(x, BORDER);
+                put(x, border);
             }
             return;
         }
-        put(left, BORDER);
-        put(right, BORDER);
-        let src: &[u8] = if y < w.y {
+        put(left, border);
+        put(right, border);
+        let (src, lut): (&[u8], &[u32; 256]) = if y < w.y {
             let r = (y - top - 1) as usize;
-            &w.titlebar[r * w.w..(r + 1) * w.w]
+            (&w.titlebar[r * w.w..(r + 1) * w.w], &self.std_lut)
         } else {
-            self.client_row(id, (y - w.y) as usize)
+            (self.client_row(id, (y - w.y) as usize), w.lut.as_deref().unwrap_or(&self.std_lut))
         };
         // 画面からはみ出す部分を切る
         let x0 = w.x.max(0);
         let x1 = (w.x + w.w as i32).min(width);
         if x0 < x1 {
             let s0 = (x0 - w.x) as usize;
-            let src = &src[s0..s0 + (x1 - x0) as usize];
-            let dst = &mut row[x0 as usize..x1 as usize];
-            match (&w.remap, y >= w.y) {
-                // 独自のパレットの中身は標準のパレットの近い色に置き換える
-                (Some(map), true) => dst.iter_mut().zip(src).for_each(|(d, &s)| *d = map[s as usize]),
-                _ => dst.copy_from_slice(src),
+            convert_row(&mut row[x0 as usize..x1 as usize], &src[s0..s0 + (x1 - x0) as usize], lut);
+        }
+    }
+
+    fn draw_cursor_row32(&self, y: usize, row: &mut [u32]) {
+        let dy = y as i32 - self.cursor_y;
+        if dy < 0 || dy >= CURSOR_SHAPE.len() as i32 {
+            return;
+        }
+        for (dx, c) in CURSOR_SHAPE[dy as usize].bytes().enumerate() {
+            let x = self.cursor_x + dx as i32;
+            let color = match c {
+                b'#' => palette::CURSOR_BLACK,
+                b'o' => palette::CURSOR_WHITE,
+                _ => continue,
+            };
+            if (0..row.len() as i32).contains(&x) {
+                row[x as usize] = self.std_lut[color as usize];
             }
         }
     }
@@ -1009,6 +1048,13 @@ impl Screen {
                 row[x as usize] = color;
             }
         }
+    }
+}
+
+/// 8 ビットの色番号の並びを表 `lut` で 32 ビットの色に直す
+fn convert_row(dst: &mut [u32], src: &[u8], lut: &[u32; 256]) {
+    for (d, &c) in dst.iter_mut().zip(src) {
+        *d = lut[c as usize];
     }
 }
 

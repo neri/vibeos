@@ -6,7 +6,8 @@ cpu: model=p2_klamath, ips=50000000
 # BIOS-bochs-latest は（Debian の 2.7 では）BIOS の初期化中に三重フォルトするので、PCI の無い旧来の BIOS を使う
 romimage: file=/usr/share/bochs/BIOS-bochs-legacy
 vgaromimage: file=/usr/share/bochs/VGABIOS-lgpl-latest
-# VESA（VBE）の 640x480 を使えるようにする
+# VESA（VBE）を使えるようにする（ただしこの VGA BIOS のモード一覧は 640x480 までの 8 ビットだけなので、
+# 32 ビットのモードが無く 320x200 のレトロで動く。DECISIONS.md D-048）
 vga: extension=vbe
 floppya: 1_44=$BOCHS_FLOPPY, status=inserted
 boot: floppy

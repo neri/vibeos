@@ -7,7 +7,9 @@
 //!   image PATH            起動するイメージ（既定は --img の値）
 //!   writable              イメージの写し（OUT/NAME.img）を書き込み可能で使う（既定は書き込みを捨てる）
 //!   boot-config TEXT      イメージの写しの BOOT.CFG を TEXT にしてから起動する（例: video=320x200）。
-//!                         何行か書くと、その行を並べたものになる
+//!                         何行か書くと、その行を並べたものになる。
+//!                         画面の大きさをそろえるため、BOOT.CFG に video= を書かないシナリオは
+//!                         video=640x480 で起動する（DEFAULT_VIDEO。イメージの BOOT.CFG の video= も置き換える）
 //!   disk-delete PATH      イメージの写しからファイル PATH を消してから起動する（例: /BIN/SH.ELF）
 //!   disk-put FILE PATH    ホストのファイル FILE をイメージの写しの PATH に入れてから起動する（テスト用のスクリプトなど）
 //!   key-hold KEY / key-release KEY  キーを押したまま / 離す（起動中に Shift を押しておくなど）
@@ -266,6 +268,15 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
     }
     if !img.exists() {
         return Err(format!("image not found: {}", img.display()));
+    }
+    // 画面の大きさをそろえる: video= の無いシナリオは DEFAULT_VIDEO で起動する
+    if !boot_config.as_ref().is_some_and(|c| c.lines().any(|l| l.trim_start().starts_with("video="))) {
+        let base = match boot_config.take() {
+            Some(c) => c,
+            None => read_boot_config(&img)?,
+        };
+        let rest: String = base.lines().filter(|l| !l.trim_start().starts_with("video=")).map(|l| format!("{l}\n")).collect();
+        boot_config = Some(format!("video={DEFAULT_VIDEO}\n{rest}"));
     }
     // Bochs はイメージに直接書くので、いつも写しを使う
     if writable || use_bochs || boot_config.is_some() || !deletes.is_empty() || !puts.is_empty() {
@@ -888,6 +899,15 @@ impl Image {
         let i = ((y * self.width + x) * 3) as usize;
         Some([self.rgb[i], self.rgb[i + 1], self.rgb[i + 2]])
     }
+}
+
+/// BOOT.CFG に video= を書かないシナリオの画面の大きさ
+const DEFAULT_VIDEO: &str = "640x480";
+
+/// イメージの BOOT.CFG を読む（無ければ空）
+fn read_boot_config(img: &Path) -> Result<String> {
+    let out = Command::new("mtype").arg("-i").arg(img).arg("::BOOT.CFG").output().map_err(|e| format!("mtype: {e}"))?;
+    Ok(if out.status.success() { String::from_utf8_lossy(&out.stdout).replace('\r', "") } else { String::new() })
 }
 
 fn compare_golden(shot: &Path, golden: &Path) -> Result<()> {

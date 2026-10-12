@@ -109,6 +109,24 @@ pub fn nearest(pal: &[[u8; 3]; 256], r: u8, g: u8, b: u8) -> u8 {
     best.1
 }
 
+/// 6bit の値を 8bit に広げる（QEMU が VGA の DAC の色を画面に出すときと同じ式。32 ビットの画面で
+/// パレットの画像を出したときに、8 ビットの画面と同じ色になるように）
+pub fn expand6(v: u8) -> u8 {
+    let v = v & 0x3F;
+    let b = v & 1;
+    (v << 2) | (b << 1) | b
+}
+
+/// パレットの色（各 6bit）を 32 ビットの色（0x00RRGGBB）に
+pub fn rgb32(c: [u8; 3]) -> u32 {
+    (expand6(c[0]) as u32) << 16 | (expand6(c[1]) as u32) << 8 | expand6(c[2]) as u32
+}
+
+/// パレット全体を「色番号 → 32 ビットの色」の表に
+pub fn lut32(pal: &[[u8; 3]; 256]) -> [u32; 256] {
+    core::array::from_fn(|i| rgb32(pal[i]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,6 +151,17 @@ mod tests {
         let gray = nearest(&p, 128, 128, 128);
         let c = p[gray as usize];
         assert!(c[0] == c[1] && c[1] == c[2] && (28..=36).contains(&c[0]), "{c:?}");
+    }
+
+    #[test]
+    fn expand6_matches_qemu() {
+        assert_eq!(expand6(0), 0);
+        assert_eq!(expand6(63), 255);
+        assert_eq!(expand6(42), 168);
+        assert_eq!(expand6(25), 103);
+        assert_eq!(expand6(13), 55);
+        assert_eq!(rgb32([63, 63, 21]), 0x00FF_FF57);
+        assert_eq!(lut32(&standard())[BLUE as usize], 0x0000_00A8);
     }
 
     #[test]
