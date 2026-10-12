@@ -71,7 +71,37 @@ pub struct Shell {
     editor: LineEditor,
 }
 
-/// シェルを動かす。端末が閉じられたら戻る。`command` があれば、それだけを実行して戻る
+/// 端末のシェル（ユーザ空間の sh）
+const SH_PATH: &str = "/BIN/SH.ELF";
+
+/// 端末のシェルを動かす（端末のスレッドから呼ぶ）: /BIN/SH.ELF を起動して終わるのを待つ。
+/// `command` があれば `sh -c command`。起動できなければ、このカーネルの中のシェル（予備）を動かす。
+/// 最初の端末は閉じないので、sh が終わったら起動し直す
+pub fn run_terminal(command: Option<String>) {
+    let tty = sched::current_tty();
+    loop {
+        let mut argv = alloc::vec!["sh"];
+        if let Some(c) = &command {
+            argv.extend(["-c", c.as_str()]);
+        }
+        let id = match crate::process::spawn_ex(SH_PATH, &argv, &[], None) {
+            Ok(id) => id,
+            Err(e) => {
+                kprintln!("cannot start {SH_PATH} ({}), using the built-in shell", vibe_abi::err::name(e));
+                run(command);
+                return;
+            }
+        };
+        let _ = crate::process::wait(id);
+        if command.is_some() || tty != crate::gui::CONSOLE || crate::gui::is_closing(tty) {
+            return;
+        }
+        klog!("term: shell exited, starting it again");
+        crate::drivers::pit::sleep_ms(500);
+    }
+}
+
+/// 予備のシェルを動かす。端末が閉じられたら戻る。`command` があれば、それだけを実行して戻る
 pub fn run(command: Option<String>) {
     let mut shell = Shell { editor: LineEditor::new() };
     if let Some(line) = command {
@@ -88,6 +118,15 @@ pub fn run(command: Option<String>) {
         };
         execute(&mut shell, &line);
     }
+}
+
+/// システムコール kcmd: カーネルの内蔵コマンドを今のタスク（ユーザプロセス）の中で動かす。
+/// 入出力はそのプロセスの fd 0〜2。無ければ ENOENT
+pub fn run_kernel_command(argv: &[&str]) -> Result<(), i32> {
+    let cmd = commands::find(argv[0]).ok_or(vibe_abi::err::ENOENT)?;
+    let mut shell = Shell { editor: LineEditor::new() };
+    let _ = (cmd.run)(&mut shell, argv);
+    Ok(())
 }
 
 /// 1 行のコマンドを実行する

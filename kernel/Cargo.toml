@@ -22,6 +22,7 @@ vibe-font = { path = "../crates/vibe-font" }
 vibe-gfx = { path = "../crates/vibe-gfx" }
 vibe-keyboard = { path = "../crates/vibe-keyboard" }
 vibe-term = { path = "../crates/vibe-term" }
+vibe-line = { path = "../crates/vibe-line" }
 vibe-net = { path = "../crates/vibe-net" }
 vibe-shell = { path = "../crates/vibe-shell" }
 vibe-time = { path = "../crates/vibe-time" }

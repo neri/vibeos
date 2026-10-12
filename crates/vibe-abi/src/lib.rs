@@ -154,6 +154,18 @@ pub mod nr {
     pub const ARP_RESOLVE: u32 = 58;
     /// sock_list(&mut [SockInfo], n) -> 書いた数。ソケットの一覧（全プロセスの分）
     pub const SOCK_LIST: u32 = 59;
+    /// chdir(path, path_len) -> 0。今のプロセスのカレントディレクトリを変える（子は起動したときのものを受け継ぐ）
+    pub const CHDIR: u32 = 60;
+    /// getcwd(buf, len) -> カレントディレクトリの長さ（buf には入るだけ写す）
+    pub const GETCWD: u32 = 61;
+    /// wait_opt(pid, flags, &mut code) -> 終わったタスクの ID（WAIT_NOHANG で、まだ終わっていなければ 0）。
+    /// pid = -1 なら自分が起動したどれか 1 つ。待つものが無ければ -ECHILD
+    pub const WAIT_OPT: u32 = 62;
+    /// set_foreground(&[pid], n) -> 0。今の端末の前面のプロセスの集まり（Ctrl+C で止める相手。n = 0 で無し）
+    pub const SET_FOREGROUND: u32 = 63;
+    /// kcmd(argv, argv_len) -> 0。カーネルの内蔵コマンドを今のプロセスの中で動かす（argv は 0 区切り）。
+    /// カーネルの中でしかできないコマンドをアプリにするまでの、つなぎ（docs/plans/user-shell.md S3 で消す）
+    pub const KCMD: u32 = 64;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -244,6 +256,9 @@ pub mod err {
     }
 }
 
+/// wait_opt のフラグ: 終わっていなければ待たずに 0 を返す
+pub const WAIT_NOHANG: u32 = 1;
+
 /// 例外で強制終了したときの終了コード
 pub const EXIT_KILLED: i32 = -128;
 /// Ctrl+C で止めたときの終了コード
@@ -292,10 +307,13 @@ pub struct DirEntry {
     pub name: [u8; 16],
     pub size: u32,
     pub is_dir: u32,
+    /// 書き換えた日付と時刻（FAT の形。`vibe_time::DateTime::from_fat`）
+    pub date: u16,
+    pub time: u16,
 }
 
 impl DirEntry {
-    pub const EMPTY: DirEntry = DirEntry { name: [0; 16], size: 0, is_dir: 0 };
+    pub const EMPTY: DirEntry = DirEntry { name: [0; 16], size: 0, is_dir: 0, date: 0, time: 0 };
 
     pub fn name(&self) -> &str {
         let len = self.name.iter().position(|&b| b == 0).unwrap_or(16);

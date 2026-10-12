@@ -142,7 +142,7 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
             gfx::wallpaper::load_from_config();
         }
         gfx::statusbar::start();
-        task::spawn("shell", || shell::run(None));
+        task::spawn("shell", || shell::run_terminal(None));
     }
     task::exit()
 }

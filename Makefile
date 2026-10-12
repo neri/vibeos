@@ -132,7 +132,7 @@ endef
 ROOTFS := $(shell find rootfs -type f)
 # ユーザアプリ（apps/ の中のバイナリ）。ディスクの /BIN/名前.ELF に入れる
 APPS := hello fault view paint mandel snake more fstest edit clock life ping host ntp get httpd calc files tasks mines blocks \
-	hexdump ps mem df date uptime pci net arp grep wc head tail sort tee
+	hexdump ps mem df date uptime pci net arp grep wc head tail sort tee sh
 APPS_DIR := $(BUILD)/rootfs-apps
 APPS_STAMP := $(APPS_DIR)/.stamp
 

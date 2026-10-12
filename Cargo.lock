@@ -198,6 +198,7 @@ dependencies = [
  "vibe-font",
  "vibe-gfx",
  "vibe-keyboard",
+ "vibe-line",
  "vibe-lzsa",
  "vibe-net",
  "vibe-pack",
@@ -389,6 +390,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sh"
+version = "0.1.0"
+dependencies = [
+ "vibe-line",
+ "vibe-rt",
+ "vibe-shell",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -500,6 +510,10 @@ dependencies = [
 
 [[package]]
 name = "vibe-keyboard"
+version = "0.1.0"
+
+[[package]]
+name = "vibe-line"
 version = "0.1.0"
 
 [[package]]

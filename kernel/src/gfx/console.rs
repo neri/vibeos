@@ -222,7 +222,7 @@ pub fn open_terminal(number: Option<usize>, command: Option<alloc::string::Strin
     klog!("term: opened terminal {n} (window {win})");
     sched::spawn(&format!("shell{n}"), move || {
         sched::set_current_tty(win);
-        crate::shell::run(command);
+        crate::shell::run_terminal(command);
         close_terminal(win);
     });
     Some(win)

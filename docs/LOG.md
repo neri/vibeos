@@ -462,3 +462,15 @@
 - 詰まったこと 2: ktest の「途中で切った gzip は ENOEXEC」が ENOMEM になった。切ったところのデータを末尾の大きさ（ISIZE）と読み、たまたま取りに行ける大きさに見えたため。`gunzip` で、deflate の部分の 1032 倍（deflate で出せる最大）より大きい ISIZE はメモリを取りに行かずに `TooLarge` にした（ホストのテストを足した）。「出力先を取れない」の ktest は、FILES.ELF の ISIZE を 36MB（出せる大きさで、メモリ 32MB より大きい）にして確かめるようにした
 - メニューに /BIN のアプリが増え、clock が 5 つ目になったので `46-desktop-bar` のマウスの位置と `bar-menu` の期待画像を直した
 - シナリオ `55-pipe-builtins`（`ls /BIN | grep ELF | wc -l` が 36、`ls > A.TXT`、`echo pipedword | cat | cat`、`cat F.TXT | sort | head -3`、`<` から読む `cat`、`grep -iv`、`tee`、内蔵コマンドの `2>`、アプリにした `uptime`・`ps` をパイプへ、`ls /BIN | sort | more` の 1 画面目を画面で比べてスペースで進む）。/BIN の並びはイメージを作るホストのディレクトリの順で変わるので、画面を比べるところは `sort` を挟んだ。比べるのは名前の列だけ（大きさと日時はビルドごとに変わる）
+
+## 2026-10-12 ユーザ空間のシェル S1（Phase 41）
+
+- `apps/sh`: 端末のシェルをユーザ空間のアプリにした。プロンプト・行の編集・履歴・メッセージは前のカーネルのシェルと同じ。`sh -c 行` も。内蔵コマンドは `sh` の中で動き、リダイレクトは `dup2` で fd 0〜2 を控えてつなぎ替える。パイプの中・`&` の内蔵コマンドは子の `sh -c '…'`。プログラムは `vibe_rt::process::Command` で fd 0〜2 を渡して起動する
+- カーネルの中でしかできないコマンド（`hwclock`・`wallpaper`・`demo`・`beep`・`reboot`・`divzero`・`nullptr`・`overflow`・`panic`）は、S3 でアプリとシステムコールにするまで、つなぎのシステムコール `kcmd`（64）でカーネルの内蔵コマンドをそのプロセスの中で動かす（出力はそのプロセスの fd。`divzero` などはシステムコールの中のカーネルの例外なので、前と同じくパニック画面になる）
+- `crates/vibe-line`: 行の編集を `kernel/src/shell/line.rs` から移した。キーと出力とクリップボードは `Term` の trait。ホストのテスト 8 本（挿入・削除・履歴・上限・取り消し・貼り付け・描き直し）。カーネルの `line.rs` は `Term` をつなぐだけになった
+- システムコール `chdir`（60）・`getcwd`（61）・`wait_opt`（62）・`set_foreground`（63）。`wait_opt` のために、タスクに「作ったタスク」（`parent`）を持たせ、終了コードの表に入れるようにした。`readdir` の `DirEntry` に書き換えた日時（FAT の形）を足した（`sh` の `ls` で出す）
+- 端末のスレッドは `/BIN/SH.ELF` を起動して待つ（`shell::run_terminal`）。起動できなければ予備のシェル（今はまだカーネルの中のシェル全部。S3 で小さくする）。最初の端末では `sh` が終わったら 0.5 秒後に起動し直す。スレッドの名前は今までどおり `shell`（`ps` を見るシナリオのため）
+- 裏で動かしたコマンドが終わったことは、前と同じく出さない（プロンプトの前に出すと、画面を比べるシナリオが変わるため）。`wait_opt` は今は ktest だけで使う
+- テストランナーに `disk-delete PATH`（イメージの写しからファイルを消して起動する）を足した
+- ktest 2 本（`process_wait_opt`・`shell_kill_closes_only_its_terminal`: 新しい端末の sh を kill すると、その端末が閉じ、カーネルは動き続ける）。シナリオ `56-user-shell`（ps に SH.ELF、`sh -c` のパイプ、`exit` で最初の端末の sh が起動し直す）、`57-shell-fallback`（SH.ELF を消したイメージで予備のシェル）
+- 今までのシナリオは変えずに通った。ただし /BIN のアプリが 37 本になったので、`55-pipe-builtins` の数と `more-ls` の期待画像（63% → 62%）は直した

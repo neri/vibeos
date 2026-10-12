@@ -1,0 +1,13 @@
+# /BIN/SH.ELF が無いイメージでは、カーネルの中の予備のシェルが動き、プログラムを起動できる
+disk-delete /BIN/SH.ELF
+timeout 20
+wait-serial VIBEOS READY
+wait-serial cannot start /BIN/SH.ELF (not found), using the built-in shell
+wait-serial VibeOS shell
+type hello fallback
+key ret
+wait-serial argv[1] = fallback
+type ls /BIN | grep -c ELF
+key ret
+wait-serial 36
+serial-absent PANIC

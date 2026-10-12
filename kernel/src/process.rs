@@ -32,8 +32,8 @@ pub struct UserProc {
 
 pub type UserRef = Arc<Mutex<UserProc>>;
 
-/// 終わったプロセスの終了コード（wait で取り出す）
-static EXIT_CODES: IrqMutex<BTreeMap<TaskId, i32>> = IrqMutex::new(BTreeMap::new());
+/// 終わったプロセスの (作ったタスク, 終了コード)（wait で取り出す）
+static EXIT_CODES: IrqMutex<BTreeMap<TaskId, (TaskId, i32)>> = IrqMutex::new(BTreeMap::new());
 
 fn fs_errno(e: fs::VfsError) -> i32 {
     use vibe_fat::FsError;
@@ -197,7 +197,45 @@ pub fn wait(id: TaskId) -> Result<i32, i32> {
         return Err(err::ECHILD);
     }
     sched::join(id);
-    Ok(EXIT_CODES.lock().remove(&id).unwrap_or(EXIT_KILLED))
+    Ok(EXIT_CODES.lock().remove(&id).map_or(EXIT_KILLED, |e| e.1))
+}
+
+/// wait_opt: `pid`（-1 なら今のタスクが起動したどれか）が終わっていれば (ID, 終了コード)。
+/// `nohang` なら終わっていなくても待たずに None。待つものが無ければ ECHILD。止めるよう頼まれたら EINTR
+pub fn wait_opt(pid: i32, nohang: bool) -> Result<Option<(TaskId, i32)>, i32> {
+    let me = sched::current_id();
+    let take = || {
+        let mut codes = EXIT_CODES.lock();
+        let id = match pid {
+            -1 => codes.iter().find(|(_, e)| e.0 == me).map(|(&id, _)| id),
+            p => codes.contains_key(&(p as TaskId)).then_some(p as TaskId),
+        }?;
+        codes.remove(&id).map(|e| (id, e.1))
+    };
+    let alive = || if pid == -1 { sched::has_live_child(me) } else { sched::exists(pid as TaskId) };
+    loop {
+        if let Some(found) = take() {
+            return Ok(Some(found));
+        }
+        if !alive() {
+            return Err(err::ECHILD);
+        }
+        if nohang {
+            return Ok(None);
+        }
+        if kill_pending(me) {
+            return Err(err::EINTR);
+        }
+        sched::wait_exit_until(|| {
+            let codes = EXIT_CODES.lock();
+            let done = match pid {
+                -1 => codes.values().any(|e| e.0 == me),
+                p => codes.contains_key(&(p as TaskId)),
+            };
+            drop(codes);
+            done || !alive() || kill_pending(me)
+        });
+    }
 }
 
 /// 今のプロセスを終える。戻らないので、呼ぶ側はヒープや Arc を持ったまま呼ばないこと
@@ -210,8 +248,9 @@ pub fn exit_current(code: i32) -> ! {
     // パイプの片側などを閉じる（終了コードを待っている親より先に、読む側に終わりが届くように）
     fs::close_all();
     let me = sched::current_id();
+    let parent = sched::current_parent();
     if DETACHED.lock().remove(&me).is_none() {
-        EXIT_CODES.lock().insert(me, code);
+        EXIT_CODES.lock().insert(me, (parent, code));
     }
     sched::exit()
 }

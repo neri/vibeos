@@ -1,0 +1,28 @@
+# ユーザ空間のシェル S1: 端末のシェルは /BIN/SH.ELF（ユーザプロセス）。sh -c で 1 行を実行する。
+# 最初の端末で sh が終わると起動し直す
+timeout 30
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type ps | grep SH.ELF
+key ret
+wait-serial SH.ELF
+type sh -c "echo inner | fault upper"
+key ret
+wait-serial INNER
+type cd docs
+key ret
+type pwd
+key ret
+wait-serial /DOCS
+type exit
+key ret
+wait-serial term: shell exited, starting it again
+wait-serial VibeOS shell
+# 起動し直した sh は、端末のスレッドのカレントディレクトリ（/）から
+type ls
+key ret
+wait-serial KERNEL.SYS
+type echo again
+key ret
+wait-serial again
+serial-absent PANIC

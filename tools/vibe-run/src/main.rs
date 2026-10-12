@@ -8,6 +8,7 @@
 //!   writable              イメージの写し（OUT/NAME.img）を書き込み可能で使う（既定は書き込みを捨てる）
 //!   boot-config TEXT      イメージの写しの BOOT.CFG を TEXT にしてから起動する（例: video=320x200）。
 //!                         何行か書くと、その行を並べたものになる
+//!   disk-delete PATH      イメージの写しからファイル PATH を消してから起動する（例: /BIN/SH.ELF）
 //!   key-hold KEY / key-release KEY  キーを押したまま / 離す（起動中に Shift を押しておくなど）
 //!   expect-disk-file PATH TEXT  ディスクのファイル PATH に TEXT が含まれる（mtools で読む。writable のとき）
 //!   expect-disk-clean     ディスクに FAT の不整合が無い（fsck.fat -n。writable のとき）
@@ -201,6 +202,7 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
     let mut extra = Vec::new();
     let mut writable = false;
     let mut boot_config: Option<String> = None;
+    let mut deletes: Vec<String> = Vec::new();
     let mut netsetup: Option<net::NetSetup> = None;
     let www = out.join(format!("{name}-www"));
     for s in &steps {
@@ -209,6 +211,7 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
             "image" => img = PathBuf::from(&s.arg),
             "qemu-arg" => extra.push(s.arg.clone()),
             "writable" => writable = true,
+            "disk-delete" => deletes.push(s.arg.clone()),
             // 何行でも書ける（1 行ずつ足す）
             "boot-config" => {
                 let cfg = boot_config.get_or_insert_with(String::new);
@@ -259,7 +262,7 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
         return Err(format!("image not found: {}", img.display()));
     }
     // Bochs はイメージに直接書くので、いつも写しを使う
-    if writable || use_bochs || boot_config.is_some() {
+    if writable || use_bochs || boot_config.is_some() || !deletes.is_empty() {
         let copy = out.join(format!("{name}.img"));
         fs::copy(&img, &copy).map_err(|e| format!("copy image: {e}"))?;
         img = copy;
@@ -276,6 +279,18 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
             .map_err(|e| format!("mcopy: {e}"))?;
         if !st.success() {
             return Err("cannot write BOOT.CFG".into());
+        }
+    }
+
+    for path in &deletes {
+        let st = Command::new("mdel")
+            .arg("-i")
+            .arg(&img)
+            .arg(format!("::{}", path.trim_start_matches('/')))
+            .status()
+            .map_err(|e| format!("mdel: {e}"))?;
+        if !st.success() {
+            return Err(format!("cannot delete {path} from the image"));
         }
     }
 
@@ -324,7 +339,7 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
             continue;
         }
         match s.cmd.as_str() {
-            "image" | "qemu-arg" | "writable" | "qemu-only" | "bochs-only" | "boot-config" | "net" | "net-lan" | "serve-dns" | "serve-ntp"
+            "image" | "qemu-arg" | "writable" | "disk-delete" | "qemu-only" | "bochs-only" | "boot-config" | "net" | "net-lan" | "serve-dns" | "serve-ntp"
             | "serve-http" | "www-file" | "www-text" | "www-repeat" => {}
             "expect-packet" => vm.net.as_ref().ok_or_else(|| at("needs `net`".into()))?.expect_packet(&s.arg).map_err(at)?,
             "expect-lan-only" => vm.net.as_ref().ok_or_else(|| at("needs `net`".into()))?.expect_lan_only().map_err(at)?,

@@ -282,3 +282,51 @@ pub fn pci_list() -> Result<alloc::vec::Vec<PciInfo>, i32> {
         e => Err(-e),
     }
 }
+
+/// 今のプロセスのカレントディレクトリを変える
+pub fn chdir(path: &str) -> i32 {
+    syscall(nr::CHDIR, path.as_ptr() as u32, path.len() as u32, 0, 0, 0)
+}
+
+/// カレントディレクトリ（"/" 始まり）
+pub fn getcwd() -> Result<alloc::string::String, i32> {
+    let mut buf = alloc::vec![0u8; 256];
+    loop {
+        let n = syscall(nr::GETCWD, buf.as_mut_ptr() as u32, buf.len() as u32, 0, 0, 0);
+        if n < 0 {
+            return Err(-n);
+        }
+        if n as usize <= buf.len() {
+            buf.truncate(n as usize);
+            return alloc::string::String::from_utf8(buf).map_err(|_| vibe_abi::err::EINVAL);
+        }
+        buf.resize(n as usize, 0);
+    }
+}
+
+/// pid（-1 なら自分が起動したどれか）が終わるのを待つ。`nohang` なら待たない。
+/// Ok(Some((pid, 終了コード)))、まだなら Ok(None)、待つものが無ければ Err(ECHILD)
+pub fn wait_opt(pid: i32, nohang: bool) -> Result<Option<(i32, i32)>, i32> {
+    let mut code = 0i32;
+    let flags = if nohang { vibe_abi::WAIT_NOHANG } else { 0 };
+    match syscall(nr::WAIT_OPT, pid as u32, flags, &mut code as *mut i32 as u32, 0, 0) {
+        0 => Ok(None),
+        id if id > 0 => Ok(Some((id, code))),
+        e => Err(-e),
+    }
+}
+
+/// 今の端末の前面のプロセスの集まり（空なら無し）
+pub fn set_foreground(pids: &[i32]) -> i32 {
+    syscall(nr::SET_FOREGROUND, pids.as_ptr() as u32, pids.len() as u32, 0, 0, 0)
+}
+
+/// カーネルの内蔵コマンドを動かす（docs/plans/user-shell.md S3 までのつなぎ）
+pub fn kcmd(argv: &[&str]) -> i32 {
+    let mut block = alloc::vec::Vec::new();
+    for a in argv {
+        block.extend_from_slice(a.as_bytes());
+        block.push(0);
+    }
+    syscall(nr::KCMD, block.as_ptr() as u32, block.len() as u32, 0, 0, 0)
+}

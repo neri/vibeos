@@ -50,6 +50,8 @@ const TESTS: &[(&str, fn())] = &[
     ("process_inherits_only_stdio", process_inherits_only_stdio),
     ("process_stdout_to_pipe", process_stdout_to_pipe),
     ("process_args_and_env", process_args_and_env),
+    ("process_wait_opt", process_wait_opt),
+    ("shell_kill_closes_only_its_terminal", shell_kill_closes_only_its_terminal),
     ("fdc_read_matches_ramdisk", fdc_read_matches_ramdisk),
     ("fs_write_and_sync", fs_write_and_sync),
 ];
@@ -623,6 +625,56 @@ fn process_args_and_env() {
     assert_eq!(run("/BIN/FAULT.ELF", &["fault", "checkenv"]), 1, "env must be empty with spawn");
     let huge = alloc::string::String::from_utf8(vec![b'x'; vibe_abi::MAX_ARG_BYTES]).unwrap();
     assert_eq!(crate::process::spawn("/BIN/HELLO.ELF", &["hello", &huge]).err(), Some(vibe_abi::err::E2BIG));
+}
+
+/// wait_opt: 自分が起動したどれか（-1）を終わった順に受け取る。待たないなら None。無ければ ECHILD
+fn process_wait_opt() {
+    use crate::process::{self, wait_opt};
+    use vibe_abi::err;
+    let spawn = |args: &[&str]| process::spawn("/BIN/FAULT.ELF", args).unwrap();
+    let a = spawn(&["fault", "exit", "3"]);
+    let b = spawn(&["fault", "exit", "4"]);
+    let mut got = vec![wait_opt(-1, false).unwrap().unwrap(), wait_opt(-1, false).unwrap().unwrap()];
+    got.sort();
+    assert_eq!(got, [(a, 3), (b, 4)]);
+    assert_eq!(wait_opt(-1, false), Err(err::ECHILD));
+    assert_eq!(wait_opt(-1, true), Err(err::ECHILD));
+    let c = spawn(&["fault", "spin"]);
+    assert_eq!(wait_opt(c as i32, true), Ok(None));
+    assert_eq!(wait_opt(-1, true), Ok(None));
+    process::kill(c).unwrap();
+    assert_eq!(wait_opt(-1, false), Ok(Some((c, vibe_abi::EXIT_INTERRUPTED))));
+}
+
+/// 端末の sh を止めても、その端末が閉じるだけでカーネルは動き続ける
+fn shell_kill_closes_only_its_terminal() {
+    let win = crate::gfx::console::open_terminal(None, None).expect("open a terminal");
+    let find_sh = || {
+        sched::tasks()
+            .into_iter()
+            .find(|t| t.tty == win && t.user.is_some() && t.state != sched::State::Dead && t.name == "SH.ELF")
+            .map(|t| t.id)
+    };
+    let mut sh = None;
+    for _ in 0..300 {
+        sh = find_sh();
+        if sh.is_some() {
+            break;
+        }
+        pit::sleep_ms(10);
+    }
+    let sh = sh.expect("sh did not start in the new terminal");
+    crate::process::kill(sh).unwrap();
+    let mut closed = false;
+    for _ in 0..300 {
+        if crate::gui::SCREEN.lock().window_size(win).is_none() {
+            closed = true;
+            break;
+        }
+        pit::sleep_ms(10);
+    }
+    assert!(closed, "the terminal was not closed");
+    assert!(!sched::exists(sh) || !sched::tasks().iter().any(|t| t.id == sh && t.state != sched::State::Dead));
 }
 
 /// フロッピーから直接読んだ中身が、起動時に RAM ディスクへ読み込まれた中身と同じ

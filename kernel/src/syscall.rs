@@ -184,6 +184,50 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
         nr::DUP2 => fs::dup2(a as usize, b as usize).map(|fd| fd as u32).map_err(process::errno_of),
         nr::FD_KIND => fs::get(a as usize).map(|d| d.kind()).map_err(process::errno_of),
         nr::SPAWN_EX => sys_spawn_ex(user, a),
+        nr::CHDIR => fs::chdir(&user_str(user, a, b)?).map(|_| 0).map_err(process::errno_of),
+        nr::GETCWD => {
+            let cwd = fs::cwd();
+            let n = cwd.len().min(b as usize);
+            if n > 0 {
+                copy_to_user(user, a, &cwd.as_bytes()[..n])?;
+            }
+            Ok(cwd.len() as u32)
+        }
+        nr::WAIT_OPT => {
+            if c != 0 {
+                check_user(user, c, 4, true)?;
+            }
+            match process::wait_opt(a as i32, b & vibe_abi::WAIT_NOHANG != 0)? {
+                None => Ok(0),
+                Some((id, code)) => {
+                    if c != 0 {
+                        copy_to_user(user, c, &code.to_le_bytes())?;
+                    }
+                    Ok(id)
+                }
+            }
+        }
+        nr::SET_FOREGROUND => {
+            if b as usize > crate::gui::MAX_FOREGROUND {
+                return Err(err::EINVAL);
+            }
+            check_user(user, a, b * 4, false)?;
+            // SAFETY: 上で今のプロセスが読めるページだと確かめた（揃っていない番地でも読めるよう read_unaligned）
+            let ids: Vec<u32> = (0..b as usize).map(|i| unsafe { core::ptr::read_unaligned((a as *const u32).add(i)) }).collect();
+            process::set_foreground(&ids);
+            Ok(0)
+        }
+        nr::KCMD => {
+            if b as usize > 4096 {
+                return Err(err::EINVAL);
+            }
+            let text = user_bytes_str(user, a, b)?;
+            let argv = split_nul(&text);
+            if argv.is_empty() {
+                return Err(err::EINVAL);
+            }
+            crate::shell::run_kernel_command(&argv).map(|_| 0)
+        }
         nr::FS_INFO => {
             let (free, total) = fs::space().map_err(process::errno_of)?;
             let info = FsInfo { free_bytes: free as u32, total_bytes: total as u32, dirty_sectors: fs::dirty_sectors() };
@@ -252,6 +296,7 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
                 de.name[..name.len().min(15)].copy_from_slice(&name[..name.len().min(15)]);
                 de.size = e.size;
                 de.is_dir = e.is_dir() as u32;
+                (de.date, de.time) = e.modified;
                 out.push(de);
             }
             // SAFETY: DirEntry は repr(C) で、詰め物の無い u8 と u32 だけでできている

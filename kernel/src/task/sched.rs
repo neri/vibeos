@@ -84,6 +84,8 @@ pub struct Task {
     user: Option<UserRef>,
     /// つながっている端末（端末のウィンドウの番号）。標準入出力とキーはここへ
     tty: u32,
+    /// 作ったタスク（wait_opt の「自分の子」）
+    parent: TaskId,
 }
 
 pub struct TaskInfo {
@@ -165,6 +167,7 @@ pub fn init() {
                 cr3: paging::kernel_page_directory(),
                 user: None,
                 tty: 0,
+                parent: id,
             }),
         );
         s.current = id;
@@ -278,9 +281,11 @@ fn create(name: &str, start: Start, make_ready: bool, user: Option<UserRef>, std
     };
     let mut s = SCHED.lock();
     let id = s.alloc_id();
+    let parent = s.current;
     s.tasks.insert(
         id,
         Box::new(Task {
+            parent,
             id,
             name: String::from(name),
             state: if make_ready { State::Ready } else { State::Blocked },
@@ -482,6 +487,23 @@ fn is_alive(id: TaskId) -> bool {
 /// タスクが終わるまで待つ
 pub fn join(id: TaskId) {
     EXIT_WAIT.wait_until(|| !is_alive(id));
+}
+
+/// どれかのタスクが終わるたびに `cond` を見直し、true になるまで待つ
+pub fn wait_exit_until(cond: impl FnMut() -> bool) {
+    EXIT_WAIT.wait_until(cond);
+}
+
+/// 今のタスクを作ったタスク
+pub fn current_parent() -> TaskId {
+    let mut s = SCHED.lock();
+    let cur = s.current;
+    s.task(cur).parent
+}
+
+/// `parent` が作った、まだ動いているユーザプロセスがあるか
+pub fn has_live_child(parent: TaskId) -> bool {
+    SCHED.lock().tasks.values().any(|t| t.parent == parent && t.user.is_some() && t.state != State::Dead)
 }
 
 /// タイマ割り込みから呼ばれる。持ち時間を使い切ったら切り替える
