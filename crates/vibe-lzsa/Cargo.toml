@@ -1,0 +1,13 @@
+[package]
+name = "vibe-lzsa"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "LZSA1/LZSA2 の展開器（no_std・ヒープ不要）と圧縮器（alloc）"
+
+[features]
+default = ["alloc"]
+# 圧縮器と Vec を返す展開。カーネルなどで展開だけ使うときは default-features = false
+alloc = []
+
+[dependencies]

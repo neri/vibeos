@@ -545,6 +545,7 @@ vibeos/
 │   ├── vibe-fat/             # FAT12/16
 │   ├── vibe-gfx/             # 描画アルゴリズム（バッファに対する処理のみ）・標準パレット
 │   ├── vibe-keyboard/        # スキャンコード（セット 1）の解釈とキー配列
+│   ├── vibe-lzsa/            # LZSA1/LZSA2 の展開（ヒープ不要）と圧縮（本家の lzsa と互換）
 │   ├── vibe-net/             # TCP/IP（Ethernet・ARP・IPv4・ICMP・UDP・TCP・DHCP・DNS・SNTP・HTTP）
 │   ├── vibe-term/            # 制御文字・ANSI エスケープシーケンスの解釈
 │   └── vibe-time/            # 日付と時刻の計算（1970 年からの秒・FAT の形式）
@@ -595,6 +596,7 @@ qemu-system-i386 -m 32M -cpu 486 \
 | 起動テスト | 一定時間内にシリアルに `VIBEOS READY` が出るか確認 |
 | ネットワーク | シナリオの `net` で QEMU にカードを付け、テストランナーがフレームを記録・解析し、DNS・NTP・HTTP に答える（§12.6） |
 | TCP/IP の単体テスト | `crates/vibe-net` をホストで。2 つのスタックを直結し、落とす・重ねる・入れ替える回線で通信させる |
+| 圧縮（LZSA） | `crates/vibe-lzsa` の `cargo test` と `make test-lzsa`（カーネル・アプリ・境目のデータを自作で圧縮 → 展開して比べる）。本家の `lzsa` との突き合わせ（`make test-lzsa-ref`）と率の表（`make lzsa-bench`）は `make test` に含めない（DECISIONS.md D-033） |
 
 `isa-debug-exit` への書き込みはテスト用ビルドのときだけ行う（実機ではそのポートに何があるか分からないため）。
 

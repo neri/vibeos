@@ -26,10 +26,12 @@ members = [
     "crates/vibe-font",
     "crates/vibe-gfx",
     "crates/vibe-keyboard",
+    "crates/vibe-lzsa",
     "crates/vibe-net",
     "crates/vibe-term",
     "crates/vibe-time",
     "tools/mkassets",
+    "tools/vibe-lzsa",
     "tools/vibe-run",
 ]
 # ルートで cargo build / cargo test したときはホスト向けのものだけを対象にする。
@@ -42,10 +44,12 @@ default-members = [
     "crates/vibe-font",
     "crates/vibe-gfx",
     "crates/vibe-keyboard",
+    "crates/vibe-lzsa",
     "crates/vibe-net",
     "crates/vibe-term",
     "crates/vibe-time",
     "tools/mkassets",
+    "tools/vibe-lzsa",
     "tools/vibe-run",
 ]
 
@@ -55,3 +59,7 @@ license = "MIT"
 
 [profile.release]
 debug = true
+
+# 圧縮器のテストは大きなデータを最適パースするので、テスト（dev）でも最適化する
+[profile.dev.package.vibe-lzsa]
+opt-level = 3

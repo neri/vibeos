@@ -344,6 +344,17 @@ name = "vibe-keyboard"
 version = "0.1.0"
 
 [[package]]
+name = "vibe-lzsa"
+version = "0.1.0"
+
+[[package]]
+name = "vibe-lzsa-tool"
+version = "0.1.0"
+dependencies = [
+ "vibe-lzsa",
+]
+
+[[package]]
 name = "vibe-net"
 version = "0.1.0"
 

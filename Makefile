@@ -9,6 +9,10 @@
 #   make test-wan    インターネットの決まった相手（tests/wan/ に書いたものだけ）と通信する。オーナーが許可した宛先だけ。
 #                    make test には含めない
 #   make test-lan    ホストの LAN の機器（LAN_HOST, 既定はデフォルトゲートウェイ）との通信を試す（make test には含めない）
+#   make test-lzsa   自作の LZSA で、カーネル・アプリとテスト用のデータを圧縮 → 展開して元と比べる（make test に含む）
+#   make test-lzsa-ref  自作の LZSA を本家の lzsa と突き合わせる（本家で展開・本家の出力を展開。make test には含めない）
+#   make lzsa-bench  自作の LZSA と本家の圧縮後の大きさの表
+#   make lzsa-ref    本家の lzsa を GitHub から取ってきてビルドする（build/ext/lzsa。DECISIONS.md D-033）
 #   make clean
 
 BUILD   := build
@@ -40,7 +44,7 @@ SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 0x8000 に読み込む。中継バッファ（0x10000）の手前まで
 
-.PHONY: all run debug bochs test test-host test-qemu test-bochs test-lan test-wan screenshots clean FORCE
+.PHONY: all run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref lzsa-bench lzsa-ref screenshots clean FORCE
 
 all: $(IMG)
 
@@ -155,7 +159,7 @@ bochs: $(IMG)
 		BOCHS_DISPLAY=x BOCHS_DISPLAY_OPTIONS= bochs -q -f tools/bochs/bochsrc.txt -rc tools/bochs/continue.rc
 
 # --- テスト -----------------------------------------------------------------
-test: test-host test-qemu
+test: test-host test-qemu test-lzsa
 
 test-host:
 	$(CARGO) test --workspace --exclude kernel --exclude vibe-rt $(addprefix --exclude ,$(APPS))
@@ -184,6 +188,36 @@ test-lan: $(IMG) $(VIBE_RUN)
 # 宛先を増やすときはオーナーの許可を取る）
 test-wan: $(IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --img $(IMG) --out $(BUILD)/test-out-wan $(sort $(wildcard tests/wan/*.scn))
+
+# --- LZSA（docs/plans/lzsa.md）--------------------------------------------------
+# 本家の lzsa（v1.4.1）。自作の圧縮器の出力を本家で展開できるか・率がどれだけ違うかを確かめるのに使う。
+# make test は本家に頼らない（自作の圧縮 → 自作の展開だけ。DECISIONS.md D-033）
+LZSA_REF_COMMIT := 15ee2dfe118eeb8f7683ca44f64821c3a61ca1e5
+LZSA_REF := $(BUILD)/ext/lzsa/lzsa
+VIBE_LZSA := target/release/vibe-lzsa
+# 圧縮して比べる実物: カーネルとアプリ（make のたびに中身が変わる）
+LZSA_FILES = $(BUILD)/kernel.sys $(sort $(wildcard $(BUILD)/rootfs-apps/BIN/*.ELF))
+
+$(LZSA_REF):
+	rm -rf $(BUILD)/ext/lzsa
+	git clone --quiet https://github.com/emmanuel-marty/lzsa.git $(BUILD)/ext/lzsa
+	git -C $(BUILD)/ext/lzsa checkout --quiet $(LZSA_REF_COMMIT)
+	$(MAKE) -C $(BUILD)/ext/lzsa
+
+lzsa-ref: $(LZSA_REF)
+
+$(VIBE_LZSA): FORCE
+	$(CARGO) build --release -p vibe-lzsa-tool
+
+test-lzsa: $(IMG) $(VIBE_LZSA)
+	$(VIBE_LZSA) roundtrip $(LZSA_FILES)
+
+
+test-lzsa-ref: $(IMG) $(LZSA_REF) $(VIBE_LZSA)
+	$(VIBE_LZSA) compat --ref $(LZSA_REF) --work $(BUILD)/lzsa-work $(LZSA_FILES)
+
+lzsa-bench: $(IMG) $(LZSA_REF) $(VIBE_LZSA)
+	$(VIBE_LZSA) bench --ref $(LZSA_REF) --work $(BUILD)/lzsa-work $(LZSA_FILES)
 
 # --- スクリーンショット（README 用。docs/images/ に置く）----------------------
 screenshots: $(IMG) $(VIBE_RUN)
