@@ -1,75 +1,168 @@
-# README 用のスクリーンショット: 640x480 のデスクトップ（端末・マンデルブロ・時計・ライフゲーム）
+# README 用のスクリーンショット: 640x480 のデスクトップ（端末・ファイルマネージャ・電卓・時計・マインスイーパ・落ち物パズル）
 # マウスは相対移動なので、各行の末尾にカーソルの絶対位置を書いておく（初めは真ん中 320,240）
+# 新しいウィンドウは中身 (120 + 24n, 47 + 20n) に出る（n は起動してから開いた順）。タイトルバーをつかんで動かす
 # 時計が見栄えのよい 10 時 10 分を指すように、QEMU の時計を決めておく
 qemu-arg -rtc
 qemu-arg base=2026-10-12T10:09:50
-timeout 30
+timeout 40
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
-type ls /bin
+type ls
 key ret
-type date
+# ファイルマネージャ（中身 120,47 に 320x224）を左上（中身 5,26）へ
+type files &
 key ret
-wait-serial Mon
-# マンデルブロ（中身 120,47 に 320x200）を左上（中身 12,26）へ
-type mandel &
-key ret
-wait-serial mandel: rendered
+wait-serial files: started
 sleep 500
-mouse-move -180 -199
-# → 140,41（タイトルバー）
+mouse-move -160 -199
+# → 160,41（タイトルバー）
 mouse-button left down
 sleep 100
-mouse-move -54 -10
-mouse-move -54 -11
-# → 32,20
+mouse-move -58 -10
+mouse-move -57 -11
+# → 45,20
 mouse-button left up
 sleep 300
 # 端末の見えているところをクリック
-mouse-move 388 380
-# → 420,400
+mouse-move 55 380
+# → 100,400
 mouse-button left down
 mouse-button left up
 sleep 300
-# 時計（中身 144,67 に 136x156）を右上（中身 496,26）へ
+# 電卓（中身 144,67 に 156x172）で 12.5*8= を計算してから、上の真ん中（中身 334,26）へ
+type calc &
+key ret
+wait-serial calc: started
+sleep 500
+type 12.5*8=
+wait-serial calc: = 100
+mouse-move 84 -339
+# → 184,61（タイトルバー）
+mouse-button left down
+sleep 100
+mouse-move 95 -20
+mouse-move 95 -21
+# → 374,20
+mouse-button left up
+sleep 300
+mouse-move -274 380
+# → 100,400（端末）
+mouse-button left down
+mouse-button left up
+sleep 300
+# 時計（中身 168,87 に 136x156）を右上（中身 499,26）へ
 type clock &
 key ret
 wait-serial clock: started
 sleep 500
-mouse-move -220 -340
-# → 200,60（タイトルバー）
+mouse-move 108 -319
+# → 208,81（タイトルバー）
 mouse-button left down
 sleep 100
-mouse-move 176 -20
-mouse-move 176 -21
-# → 552,19
+mouse-move 165 -30
+mouse-move 166 -31
+# → 539,20
 mouse-button left up
 sleep 300
-mouse-move -132 381
-# → 420,400（端末）
+mouse-move -439 380
+# → 100,400（端末）
 mouse-button left down
 mouse-button left up
 sleep 300
-# ライフゲーム（中身 168,87 に 192x144）を時計の下（中身 440,202）へ
-type life &
+# マインスイーパ（中身 192,107 に 156x186）。種 5 で真ん中のマス (4,4) を開き、地雷 (6,1) に旗を立ててから、
+# 電卓の下（中身 328,222）へ
+type mines 5 &
 key ret
-wait-serial life: started
+wait-serial mines: started
 sleep 500
-mouse-move -200 -320
-# → 220,80（タイトルバー）
+mouse-move 170 -185
+# → 270,215（マス 4,4）
+mouse-button left down
+mouse-button left up
+sleep 200
+mouse-move 32 -48
+# → 302,167（マス 6,1）
+mouse-button right down
+mouse-button right up
+sleep 200
+mouse-move -70 -66
+# → 232,101（タイトルバー）
 mouse-button left down
 sleep 100
-mouse-move 136 57
-mouse-move 136 58
-# → 492,195
+mouse-move 68 57
+mouse-move 68 58
+# → 368,216
 mouse-button left up
 sleep 300
-type r
-key spc
-wait-serial life: running
-sleep 1500
-# カーソルは背景へ
-mouse-move 98 245
-# → 590,440
+mouse-move -268 184
+# → 100,400（端末）
+mouse-button left down
+mouse-button left up
 sleep 300
+# 落ち物パズル（中身 216,127 に 152x176）。種 3 でいくつか落としてから、右下（中身 487,206）へ
+type blocks 3 &
+key ret
+wait-serial blocks: started
+sleep 300
+key left
+key left
+key left
+key spc
+key right
+key right
+key right
+key spc
+key up
+key spc
+key left
+key spc
+key right
+key right
+key right
+key right
+key spc
+key up
+key left
+key left
+key spc
+mouse-move 156 -279
+# → 256,121（タイトルバー）
+mouse-button left down
+sleep 100
+mouse-move 135 40
+mouse-move 136 39
+# → 527,200
+mouse-button left up
+sleep 300
+# 端末に戻って、タスクの一覧を出す
+mouse-move -427 200
+# → 100,400（端末）
+mouse-button left down
+mouse-button left up
+sleep 300
+type ps
+key ret
+sleep 300
+# 端末に重なったウィンドウを前に出す。マインスイーパは端末の下に隠れているのでバーのボタン
+# （ボタンは x=60 から 56 ピクセルずつ。Mines は 5 つ目の 284〜337）、落ち物パズルはタイトルバー、
+# ファイルマネージャは一覧の DOCS を押す
+mouse-move 210 -395
+# → 310,5（バーの Mines）
+mouse-button left down
+mouse-button left up
+sleep 200
+mouse-move 230 194
+# → 540,199（落ち物パズルのタイトルバー）
+mouse-button left down
+mouse-button left up
+sleep 200
+mouse-move -440 -137
+# → 100,62（ファイルマネージャの一覧の 2 行目 = DOCS）
+mouse-button left down
+mouse-button left up
+sleep 300
+# カーソルは背景へ
+mouse-move 500 378
+# → 600,440
+sleep 500
 screendump desktop

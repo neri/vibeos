@@ -317,7 +317,7 @@ lzsa-bench: $(IMG) $(LZSA_REF) $(VIBE_LZSA)
 screenshots: $(IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --img $(IMG) --out $(BUILD)/screenshots tools/screenshots/*.scn
 	mkdir -p docs/images
-	cp $(BUILD)/screenshots/desktop.png $(BUILD)/screenshots/shell-320.png $(BUILD)/screenshots/editor-320.png docs/images/
+	cp $(BUILD)/screenshots/desktop.png docs/images/
 
 clean:
 	rm -rf $(BUILD)
