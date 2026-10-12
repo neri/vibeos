@@ -15,6 +15,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
+name = "calc"
+version = "0.1.0"
+dependencies = [
+ "vibe-calc",
+ "vibe-rt",
+ "vibe-ui",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -320,6 +329,10 @@ name = "vibe-alloc"
 version = "0.1.0"
 
 [[package]]
+name = "vibe-calc"
+version = "0.1.0"
+
+[[package]]
 name = "vibe-edit"
 version = "0.1.0"
 
@@ -396,6 +409,15 @@ version = "0.1.0"
 [[package]]
 name = "vibe-time"
 version = "0.1.0"
+
+[[package]]
+name = "vibe-ui"
+version = "0.1.0"
+dependencies = [
+ "vibe-abi",
+ "vibe-font",
+ "vibe-gfx",
+]
 
 [[package]]
 name = "view"

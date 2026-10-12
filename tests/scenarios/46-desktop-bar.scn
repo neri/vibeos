@@ -1,6 +1,6 @@
 # Phase 33（デスクトップ D2）: 上端のバーのメニューからアプリを起動し、最小化してバーのボタンから戻す（マウスだけで）。
 # Alt+Tab でウィンドウを切り替える
-# メニューの項目は 1 つ 10 ピクセル（Terminal が y=12〜21、clock が 22〜31）。clock のウィンドウは中身 120,47 に
+# メニューの項目は 1 つ 10 ピクセル（Terminal が y=12〜21、続けて /BIN のアプリの名前の順。clock は 3 つ目で 32〜41）。clock のウィンドウは中身 120,47 に
 # 136x156（[_] は 234〜242, 36〜44）。バーのウィンドウのボタンは x=60 から 96 ピクセルずつ（作った順）
 timeout 30
 wait-serial gui: desktop 640x480
@@ -13,8 +13,8 @@ mouse-button left up
 sleep 300
 # 時計の写る右側は除く
 expect-screen bar-menu 0 0 240 200
-# clock を押す（→ 30,27）
-mouse-move 10 22
+# clock を押す（→ 30,37）
+mouse-move 10 32
 mouse-button left down
 mouse-button left up
 wait-serial menu: started clock
@@ -24,7 +24,7 @@ sleep 300
 expect-pixel 125 60 255 255 255
 expect-pixel 200 40 0 0 168
 # [_] で最小化する（→ 238,40）。ウィンドウは消えてバーのボタンだけになる
-mouse-move 208 13
+mouse-move 208 3
 mouse-button left down
 mouse-button left up
 sleep 300
