@@ -247,7 +247,19 @@ static KILL: IrqMutex<KillList> = IrqMutex::new(KillList { ids: [(0, false); 16]
 static DETACHED: IrqMutex<BTreeMap<TaskId, ()>> = IrqMutex::new(BTreeMap::new());
 
 pub fn detach(id: TaskId) {
-    DETACHED.lock().insert(id, ());
+    // もう終わっていれば、残った終了コードを捨てる
+    if EXIT_CODES.lock().remove(&id).is_none() && sched::exists(id) {
+        DETACHED.lock().insert(id, ());
+    }
+}
+
+/// システムコールの detach: 今のプロセスが作ったプロセスかどうかは見ない（終了コードを残さないだけ）
+pub fn detach_child(id: TaskId) -> Result<(), i32> {
+    if !sched::exists(id) && !EXIT_CODES.lock().contains_key(&id) {
+        return Err(err::ECHILD);
+    }
+    detach(id);
+    Ok(())
 }
 
 /// 今の端末でシェルが終わるのを待っている（端末のキーボードを使っている）プロセスを設定する

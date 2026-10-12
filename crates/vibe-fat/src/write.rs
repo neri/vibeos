@@ -249,6 +249,63 @@ impl<D: BlockDevice> FatFs<D> {
         self.write_entry(loc, &raw)
     }
 
+    /// 名前を変える・別のディレクトリ `to_dir` へ移す。ディレクトリを移すときは中の ".." も直す。
+    /// ディレクトリを自分の中（子孫）へは移せない（`InvalidName`）。新しいエントリを返す。
+    /// 開いているファイルの表のエントリは直さないので、開いたまま移したファイルに書かないこと
+    pub fn rename(&mut self, entry: &DirEntry, to_dir: Dir, new_name: &str) -> Result<DirEntry> {
+        let loc = entry.loc.ok_or(FsError::InvalidName)?; // ルートは動かせない
+        let raw_name = name_to_raw(new_name)?;
+        let display = format_name(&raw_name);
+        let slots = self.dir_slots(to_dir)?;
+        let same_dir = slots.iter().any(|(_, l)| *l == loc);
+        if let Some(e) = self.read_dir(to_dir)?.iter().find(|e| e.name == display) {
+            if e.loc == Some(loc) {
+                return Ok(entry.clone()); // 同じ名前
+            }
+            return Err(FsError::AlreadyExists);
+        }
+        if entry.is_dir() && !same_dir {
+            // 移す先から ".." をたどってルートまでに自分があれば、自分の中へ移そうとしている
+            let mut d = to_dir;
+            while let Dir::Cluster(c) = d {
+                if c == entry.first_cluster {
+                    return Err(FsError::InvalidName);
+                }
+                d = self.parent_of(c)?;
+            }
+        }
+        let mut raw = self.read_entry(loc)?;
+        raw[0..11].copy_from_slice(&raw_name);
+        if same_dir {
+            self.write_entry(loc, &raw)?;
+            return Ok(DirEntry { name: display, ..entry.clone() });
+        }
+        // 先に新しい場所へ書いてから元を消す（途中で失敗しても消えない）
+        let new_loc = self.free_slot(to_dir)?;
+        self.write_entry(new_loc, &raw)?;
+        let mut old = self.read_entry(loc)?;
+        old[0] = 0xE5;
+        self.write_entry(loc, &old)?;
+        if entry.is_dir() {
+            let parent = match to_dir {
+                Dir::Root => 0,
+                Dir::Cluster(p) => p,
+            };
+            let dotdot = EntryLoc { lba: self.cluster_lba(entry.first_cluster), offset: DIR_ENTRY_SIZE as u16 };
+            let mut dd = self.read_entry(dotdot)?;
+            dd[26..28].copy_from_slice(&(parent as u16).to_le_bytes());
+            self.write_entry(dotdot, &dd)?;
+        }
+        Ok(DirEntry { name: display, loc: Some(new_loc), ..entry.clone() })
+    }
+
+    /// サブディレクトリ（先頭クラスタ `c`）の親（".." の先）
+    fn parent_of(&self, c: u32) -> Result<Dir> {
+        let dd = self.read_entry(EntryLoc { lba: self.cluster_lba(c), offset: DIR_ENTRY_SIZE as u16 })?;
+        let p = u16::from_le_bytes([dd[26], dd[27]]) as u32;
+        Ok(if p == 0 { Dir::Root } else { Dir::Cluster(p) })
+    }
+
     /// 空いている容量（バイト）
     pub fn free_bytes(&self) -> u64 {
         self.free_clusters() as u64 * self.cluster_bytes() as u64

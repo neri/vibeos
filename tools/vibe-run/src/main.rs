@@ -11,6 +11,7 @@
 //!   key-hold KEY / key-release KEY  キーを押したまま / 離す（起動中に Shift を押しておくなど）
 //!   expect-disk-file PATH TEXT  ディスクのファイル PATH に TEXT が含まれる（mtools で読む。writable のとき）
 //!   expect-disk-clean     ディスクに FAT の不整合が無い（fsck.fat -n。writable のとき）
+//!   expect-disk-missing PATH  ディスクにファイル PATH が無い（mtools で見る。writable のとき）
 //!   quit                  QEMU を終了させる（WAV など終了時に書かれるものを確かめる前に）
 //!   expect-wav-sound PATH  WAV ファイルに無音でない部分がある
 //!   qemu-arg ARG          QEMU に渡す追加引数（起動前に集められる）
@@ -396,6 +397,13 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
                         content.trim_end(),
                         String::from_utf8_lossy(&out.stderr).trim_end()
                     )));
+                }
+            }
+            "expect-disk-missing" => {
+                let path = s.arg.trim();
+                let out = Command::new("mdir").arg("-b").arg("-i").arg(&vm.disk).arg(format!("::{path}")).output().map_err(|e| at(e.to_string()))?;
+                if out.status.success() {
+                    return Err(at(format!("disk file {path} exists ({})", String::from_utf8_lossy(&out.stdout).trim_end())));
                 }
             }
             "quit" => {

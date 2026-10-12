@@ -1,0 +1,8 @@
+[package]
+name = "vibe-files"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "ファイルマネージャの中身（パスの組み立て・一覧の並べ方・拡張子とアプリの対応）"
+
+[dependencies]

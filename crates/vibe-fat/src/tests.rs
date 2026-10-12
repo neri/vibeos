@@ -301,3 +301,52 @@ fn timestamps_come_from_the_clock() {
     assert!(listing.contains("2026-10-11") && listing.contains("21:15"), "{listing}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn rename_in_place_and_move_between_directories() {
+    let mut fs = floppy(&[("A.TXT", b"apple".to_vec()), ("B.TXT", b"banana".to_vec())]);
+    let docs = fs.mkdir(Dir::Root, "DOCS").unwrap();
+    let sub = fs.mkdir(docs.as_dir().unwrap(), "SUB").unwrap();
+    // 同じディレクトリの中で名前を変える
+    let a = fs.lookup(["A.TXT"]).unwrap();
+    let renamed = fs.rename(&a, Dir::Root, "apricot.txt").unwrap();
+    assert_eq!(renamed.name, "APRICOT.TXT");
+    assert_eq!(renamed.loc, a.loc, "same slot");
+    assert_eq!(fs.lookup(["A.TXT"]), Err(FsError::NotFound));
+    // 別のディレクトリへ移す
+    let b = fs.lookup(["B.TXT"]).unwrap();
+    fs.rename(&b, sub.as_dir().unwrap(), "B.TXT").unwrap();
+    assert_eq!(fs.lookup(["B.TXT"]), Err(FsError::NotFound));
+    assert_eq!(fs.read_to_vec(&fs.lookup(["DOCS", "SUB", "B.TXT"]).unwrap()).unwrap(), b"banana");
+    // 同じ名前があれば失敗し、何も変わらない
+    let ap = fs.lookup(["APRICOT.TXT"]).unwrap();
+    let mut f = fs.create(docs.as_dir().unwrap(), "APRICOT.TXT").unwrap();
+    fs.write(&mut f, 0, b"x").unwrap();
+    assert_eq!(fs.rename(&ap, docs.as_dir().unwrap(), "APRICOT.TXT").err(), Some(FsError::AlreadyExists));
+    assert_eq!(fs.rename(&ap, Dir::Root, "bad name").err(), Some(FsError::InvalidName));
+    // 同じ名前への変更は何もしない
+    assert!(fs.rename(&ap, Dir::Root, "apricot.TXT").is_ok());
+    host_check(&fs, &[("APRICOT.TXT", b"apple"), ("DOCS/SUB/B.TXT", b"banana"), ("DOCS/APRICOT.TXT", b"x")]);
+}
+
+#[test]
+fn moving_a_directory_fixes_dotdot_and_refuses_cycles() {
+    let mut fs = floppy(&[]);
+    let a = fs.mkdir(Dir::Root, "A").unwrap();
+    let b = fs.mkdir(a.as_dir().unwrap(), "B").unwrap();
+    let mut f = fs.create(b.as_dir().unwrap(), "F.TXT").unwrap();
+    fs.write(&mut f, 0, b"in b").unwrap();
+    // 自分の中・子孫の中へは移せない
+    assert_eq!(fs.rename(&a, b.as_dir().unwrap(), "A").err(), Some(FsError::InvalidName));
+    assert_eq!(fs.rename(&a, a.as_dir().unwrap(), "A2").err(), Some(FsError::InvalidName));
+    // B をルートへ移すと、B の ".." はルート（0）を指す（fsck.fat が確かめる）
+    let b = fs.lookup(["A", "B"]).unwrap();
+    fs.rename(&b, Dir::Root, "B").unwrap();
+    assert_eq!(fs.read_to_vec(&fs.lookup(["B", "F.TXT"]).unwrap()).unwrap(), b"in b");
+    assert!(fs.read_dir(a.as_dir().unwrap()).unwrap().is_empty());
+    host_check(&fs, &[("B/F.TXT", b"in b")]);
+    // ルートからサブディレクトリへ戻す
+    let b = fs.lookup(["B"]).unwrap();
+    fs.rename(&b, a.as_dir().unwrap(), "C").unwrap();
+    host_check(&fs, &[("A/C/F.TXT", b"in b")]);
+}

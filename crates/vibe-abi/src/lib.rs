@@ -115,6 +115,13 @@ pub mod nr {
     pub const SET_TIME: u32 = 40;
     /// term_size() -> (桁 << 16) | 行。プロセスがつながっている端末の大きさ。端末が無ければ -ENOTTY
     pub const TERM_SIZE: u32 = 41;
+    /// rename(from, from_len, to, to_len) -> 0。名前を変える・移す（to が既にあるディレクトリならその中へ）
+    pub const RENAME: u32 = 42;
+    /// detach(pid) -> 0。子の終わるのを待たない（終了コードを残さない）
+    pub const DETACH: u32 = 43;
+    /// term_open(cmd, cmd_len) -> 端末の番号。新しい端末を開く。cmd が空でなければ、そのコマンドを
+    /// 実行して終わったら端末を閉じる（空なら対話のシェル）
+    pub const TERM_OPEN: u32 = 44;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;

@@ -1,7 +1,7 @@
-//! ダイアログ（文と、並んだボタン）
+//! ダイアログ（文と、並んだボタン。`prompt` なら 1 行のテキスト欄も）
 //!
 //! アプリは小さなウィンドウを開き、`Dialog` に入力を渡して、押されたボタンの番号を受け取る。
-//! Enter は最初のボタン（既定）、Esc は最後のボタン（取り消し）。
+//! Enter は最初のボタン（既定）、Esc は最後のボタン（取り消し）。テキスト欄の中身は `input` で取る。
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -10,15 +10,17 @@ use vibe_abi::key;
 use vibe_gfx::Surface;
 
 use crate::draw::{CHAR_W, FACE, LINE_H};
-use crate::{Action, Align, Button, Id, Input, Label, Rect, Ui};
+use crate::{Action, Align, Button, Id, Input, Label, Rect, TextField, Ui};
 
 const MARGIN: i32 = 8;
 const BUTTON_H: i32 = 16;
 const BUTTON_MIN_W: i32 = 56;
+const FIELD_H: i32 = 14;
 
 pub struct Dialog {
     pub ui: Ui,
     buttons: Vec<Id>,
+    field: Option<Id>,
     w: usize,
     h: usize,
 }
@@ -54,13 +56,31 @@ pub fn wrap(text: &str, cols: usize) -> Vec<String> {
 impl Dialog {
     /// 幅 `w` のダイアログ。高さは文の行数で決まる（`size` で取れる）
     pub fn new(w: usize, text: &str, buttons: &[&str]) -> Dialog {
+        Self::build(w, text, None, buttons)
+    }
+
+    /// 文と 1 行のテキスト欄（中身は `initial`。選んだ状態で始まる）とボタン。テキスト欄の Enter は最初のボタン
+    pub fn prompt(w: usize, text: &str, initial: &str, buttons: &[&str]) -> Dialog {
+        Self::build(w, text, Some(initial), buttons)
+    }
+
+    fn build(w: usize, text: &str, field: Option<&str>, buttons: &[&str]) -> Dialog {
         let wi = w as i32;
         let lines = wrap(text, ((wi - 2 * MARGIN) / CHAR_W) as usize);
         let text_h = lines.len() as i32 * LINE_H;
-        let h = MARGIN + text_h + MARGIN + BUTTON_H + MARGIN;
+        let field_h = if field.is_some() { FIELD_H + MARGIN } else { 0 };
+        let h = MARGIN + text_h + MARGIN + field_h + BUTTON_H + MARGIN;
         let mut ui = Ui::new();
-        let label = Label::new(&lines.join("\n")).align(Align::Center);
+        let align = if field.is_some() { Align::Left } else { Align::Center };
+        let label = Label::new(&lines.join("\n")).align(align);
         ui.add(Rect::new(MARGIN, MARGIN, wi - 2 * MARGIN, text_h), label);
+        let field = field.map(|initial| {
+            let r = Rect::new(MARGIN, MARGIN + text_h + MARGIN, wi - 2 * MARGIN, FIELD_H);
+            // 最初の中身は選んだ状態にする（打てば置き換わる）
+            let mut t = TextField::new(initial);
+            t.select_all();
+            ui.add(r, t)
+        });
         let n = buttons.len().max(1) as i32;
         let bw = ((wi - 2 * MARGIN - (n - 1) * MARGIN) / n).min(BUTTON_MIN_W.max(
             buttons.iter().map(|b| b.len() as i32 * CHAR_W + 16).max().unwrap_or(0),
@@ -73,7 +93,15 @@ impl Dialog {
             ids.push(ui.add(Rect::new(x, y, bw, BUTTON_H), Button::new(b)));
             x += bw + MARGIN;
         }
-        Dialog { ui, buttons: ids, w, h: h as usize }
+        if let Some(f) = field {
+            ui.set_focus(f);
+        }
+        Dialog { ui, buttons: ids, field, w, h: h as usize }
+    }
+
+    /// テキスト欄の中身（`prompt` でなければ空）
+    pub fn input(&self) -> &str {
+        self.field.map_or("", |f| self.ui.text(f))
     }
 
     /// はい・いいえ
@@ -89,6 +117,7 @@ impl Dialog {
     pub fn handle(&mut self, input: Input, now: u32) -> Option<usize> {
         match self.ui.handle(input, now)? {
             Action::Clicked(id) => self.buttons.iter().position(|&b| b == id),
+            Action::Submitted(_) => Some(0),
             Action::Key(k) if k.pressed() && k.key() == key::ENTER => Some(0),
             Action::Key(k) if k.pressed() && k.key() == key::ESCAPE => Some(self.buttons.len().saturating_sub(1)),
             _ => None,

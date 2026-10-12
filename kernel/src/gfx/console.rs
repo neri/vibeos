@@ -159,8 +159,9 @@ fn find_number(n: usize) -> Option<WinId> {
 }
 
 /// 新しい端末を開いてシェルを動かす。`number` を指定しなければ空いている一番小さい番号。
+/// `command` があれば、シェルはそれを実行して終わり、端末を閉じる（タイトルはコマンド）。
 /// 開いた端末のウィンドウを返す
-pub fn open_terminal(number: Option<usize>) -> Option<WinId> {
+pub fn open_terminal(number: Option<usize>, command: Option<alloc::string::String>) -> Option<WinId> {
     let used = numbers_in_use();
     let n = match number {
         Some(n) if n < used.len() && !used[n] => n,
@@ -171,7 +172,11 @@ pub fn open_terminal(number: Option<usize>) -> Option<WinId> {
     let win = {
         let mut terms = TERMINALS.lock();
         let mut s = SCREEN.lock();
-        let win = s.create_terminal(&format!("Terminal {n}"));
+        let title = match &command {
+            Some(c) => c.clone(),
+            None => format!("Terminal {n}"),
+        };
+        let win = s.create_terminal(&title);
         term.win = win;
         term.fit(&s);
         s.present();
@@ -181,7 +186,7 @@ pub fn open_terminal(number: Option<usize>) -> Option<WinId> {
     klog!("term: opened terminal {n} (window {win})");
     sched::spawn(&format!("shell{n}"), move || {
         sched::set_current_tty(win);
-        crate::shell::run();
+        crate::shell::run(command);
         close_terminal(win);
     });
     Some(win)
@@ -210,7 +215,7 @@ pub fn switch_to(n: usize) {
             s.present();
         }
         None => {
-            open_terminal(Some(n));
+            open_terminal(Some(n), None);
         }
     }
 }

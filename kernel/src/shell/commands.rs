@@ -34,6 +34,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "append", usage: "append file text...", help: "add a line of text to a file", run: append },
     Command { name: "cp", usage: "cp from to", help: "copy a file", run: cp },
     Command { name: "rm", usage: "rm path", help: "remove a file or an empty directory", run: rm },
+    Command { name: "mv", usage: "mv from to", help: "rename or move a file or directory", run: mv },
     Command { name: "mkdir", usage: "mkdir dir", help: "make a directory", run: mkdir },
     Command { name: "df", usage: "df", help: "disk space and unsaved changes", run: df },
     Command { name: "sync", usage: "sync", help: "save changes to the floppy disk", run: sync },
@@ -219,6 +220,16 @@ fn cp(_: &mut Shell, args: &[&str]) {
     }
 }
 
+fn mv(_: &mut Shell, args: &[&str]) {
+    let [_, from, to] = args else {
+        kprintln!("usage: mv from to");
+        return;
+    };
+    if let Err(e) = fs::rename(from, to) {
+        kprintln!("mv: {from}: {e}");
+    }
+}
+
 fn rm(_: &mut Shell, args: &[&str]) {
     let Some(path) = args.get(1) else {
         kprintln!("usage: rm path");
@@ -321,7 +332,7 @@ fn sleep(_: &mut Shell, args: &[&str]) {
 }
 
 fn term(_: &mut Shell, _: &[&str]) {
-    match crate::gfx::console::open_terminal(None) {
+    match crate::gfx::console::open_terminal(None, None) {
         Some(_) => {}
         None => kprintln!("term: too many terminals"),
     }

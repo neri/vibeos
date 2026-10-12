@@ -59,6 +59,16 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             vibe_abi::CTRL_C_TAKE => Ok(process::take_ctrl_c() as u32),
             _ => Err(err::EINVAL),
         },
+        nr::RENAME => {
+            let (from, to) = (user_str(user, a, b)?, user_str(user, c, d)?);
+            fs::rename(&from, &to).map(|_| 0).map_err(process::errno_of)
+        }
+        nr::DETACH => process::detach_child(a).map(|_| 0),
+        nr::TERM_OPEN => {
+            let cmd = user_str(user, a, b)?;
+            let cmd = (!cmd.trim().is_empty()).then_some(cmd);
+            crate::gfx::console::open_terminal(None, cmd).ok_or(err::ENOMEM)
+        }
         nr::TERM_SIZE => {
             let (cols, rows) = crate::gfx::console::size().ok_or(err::ENOTTY)?;
             Ok((cols as u32) << 16 | rows as u32)

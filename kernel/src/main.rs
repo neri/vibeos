@@ -138,7 +138,7 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
             klog!("gui: desktop {}x{}", drivers::vga::width(), drivers::vga::height());
         }
         gfx::statusbar::start();
-        task::spawn("shell", || shell::run());
+        task::spawn("shell", || shell::run(None));
     }
     task::exit()
 }

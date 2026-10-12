@@ -70,6 +70,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "files"
+version = "0.1.0"
+dependencies = [
+ "vibe-files",
+ "vibe-rt",
+ "vibe-ui",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -338,6 +347,10 @@ version = "0.1.0"
 
 [[package]]
 name = "vibe-fat"
+version = "0.1.0"
+
+[[package]]
+name = "vibe-files"
 version = "0.1.0"
 
 [[package]]

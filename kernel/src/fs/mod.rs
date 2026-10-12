@@ -279,6 +279,24 @@ pub fn remove(path: &str) -> Result<()> {
     with_root(|fs| Ok(fs.remove(&entry)?))
 }
 
+/// 名前を変える・移す。`to` が既にあるディレクトリなら、その中へ同じ名前で移す
+pub fn rename(from: &str, to: &str) -> Result<()> {
+    let entry = lookup(from)?;
+    let cwd = current().lock().cwd.clone();
+    let to_parts = resolve(&cwd, to);
+    with_root(|fs| {
+        let (dir, name) = match fs.lookup(to_parts.iter().map(String::as_str)) {
+            Ok(e) if e.is_dir() && e.loc != entry.loc => (e.as_dir()?, entry.name.clone()),
+            _ => {
+                let (name, parent) = to_parts.split_last().ok_or(VfsError::Fs(FsError::InvalidName))?;
+                (fs.lookup(parent.iter().map(String::as_str))?.as_dir()?, name.clone())
+            }
+        };
+        fs.rename(&entry, dir, &name)?;
+        Ok(())
+    })
+}
+
 /// RAM ディスクの変更をフロッピーに書き戻す。書いたセクタ数を返す
 pub fn sync() -> Result<u32> {
     with_root(|fs| {

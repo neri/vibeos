@@ -79,11 +79,13 @@ pub struct TextField {
     /// 左端に見えている文字の位置
     scroll: usize,
     pub max_len: usize,
+    /// 全体を選んでいる（次に打った文字で置き換える。BackSpace・Delete で全部消す）
+    all_selected: bool,
 }
 
 impl TextField {
     pub fn new(text: &str) -> TextField {
-        let mut t = TextField { text: String::new(), cursor: 0, scroll: 0, max_len: 255 };
+        let mut t = TextField { text: String::new(), cursor: 0, scroll: 0, max_len: 255, all_selected: false };
         t.set_text(text);
         t
     }
@@ -101,6 +103,16 @@ impl TextField {
         self.text = text.chars().filter(|c| c.is_ascii() && !c.is_ascii_control()).take(self.max_len).collect();
         self.cursor = self.text.len();
         self.scroll = 0;
+        self.all_selected = false;
+    }
+
+    /// 全体を選ぶ（次に打った文字で置き換わる）
+    pub fn select_all(&mut self) {
+        self.all_selected = !self.text.is_empty();
+    }
+
+    pub fn all_selected(&self) -> bool {
+        self.all_selected
     }
 
     /// 幅 `w` の欄で、カーソルが見えるように左端を動かす
@@ -114,6 +126,7 @@ impl TextField {
     }
 
     pub(crate) fn click(&mut self, rect: Rect, x: i32) {
+        self.all_selected = false;
         let col = ((x - rect.x - PAD + CHAR_W / 2) / CHAR_W).max(0) as usize;
         self.cursor = (self.scroll + col).min(self.text.len());
     }
@@ -121,6 +134,17 @@ impl TextField {
     fn key(&mut self, id: Id, k: KeyEvent) -> KeyResult {
         if !k.pressed() {
             return KeyResult::Ignored;
+        }
+        if self.all_selected {
+            match (k.key(), k.ch()) {
+                (key::BACKSPACE | key::DELETE, _) => {
+                    self.set_text("");
+                    return KeyResult::Used(Some(Action::Changed(id)));
+                }
+                (key::ENTER, _) => {}
+                (_, Some(c)) if c.is_ascii() && !c.is_ascii_control() && !k.ctrl() && !k.alt() => self.set_text(""),
+                _ => self.all_selected = false,
+            }
         }
         let changed = match (k.key(), k.ch()) {
             (key::ENTER, _) => return KeyResult::Used(Some(Action::Submitted(id))),
@@ -414,13 +438,19 @@ impl Widget {
             Widget::TextField(t) => {
                 s.fill_rect(r.x, r.y, r.w, r.h, FIELD);
                 draw::bevel(s, r, false);
-                let mut t2 = TextField { text: String::new(), cursor: t.cursor, scroll: t.scroll, max_len: t.max_len };
+                let mut t2 =
+                    TextField { text: String::new(), cursor: t.cursor, scroll: t.scroll, max_len: t.max_len, all_selected: false };
                 t2.fit_scroll(r.w);
                 let visible = visible_chars(r.w);
                 let shown: String = t.text.chars().skip(t2.scroll).take(visible).collect();
                 let y = r.y + (r.h - draw::CHAR_H) / 2;
-                draw::text(s, r.x + PAD, y, &shown, TEXT);
-                if focused {
+                if t.all_selected && focused {
+                    s.fill_rect(r.x + PAD - 1, y - 1, shown.len() as i32 * CHAR_W + 2, draw::CHAR_H + 2, SELECT);
+                    draw::text(s, r.x + PAD, y, &shown, SELECT_TEXT);
+                } else {
+                    draw::text(s, r.x + PAD, y, &shown, TEXT);
+                }
+                if focused && !t.all_selected {
                     let cx = r.x + PAD + (t.cursor - t2.scroll) as i32 * CHAR_W;
                     s.vline(cx.min(r.x + r.w - 2), y - 1, draw::CHAR_H + 2, TEXT);
                 }

@@ -19,26 +19,35 @@ pub struct Shell {
     editor: LineEditor,
 }
 
-/// シェルを動かす。端末が閉じられたら戻る
-pub fn run() {
+/// シェルを動かす。端末が閉じられたら戻る。`command` があれば、それだけを実行して戻る
+pub fn run(command: Option<String>) {
+    let mut shell = Shell { editor: LineEditor::new() };
+    if let Some(line) = command {
+        execute(&mut shell, &line);
+        return;
+    }
     kprintln!("\x1b[93mVibeOS shell\x1b[0m - type 'help' for commands");
     let tty = crate::task::sched::current_tty();
-    let mut shell = Shell { editor: LineEditor::new() };
     while !crate::gui::is_closing(tty) {
         let prompt = alloc::format!("\x1b[92m{}\x1b[0m> ", fs::cwd());
         let line = match shell.editor.read_line(&prompt) {
             Input::Line(l) => l,
             Input::Cancelled => continue,
         };
-        let args = split_args(&line);
-        if args.is_empty() {
-            continue;
-        }
-        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-        match commands::find(argv[0]) {
-            Some(cmd) => (cmd.run)(&mut shell, &argv),
-            None => run_program(&argv),
-        }
+        execute(&mut shell, &line);
+    }
+}
+
+/// 1 行のコマンドを実行する
+fn execute(shell: &mut Shell, line: &str) {
+    let args = split_args(line);
+    if args.is_empty() {
+        return;
+    }
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    match commands::find(argv[0]) {
+        Some(cmd) => (cmd.run)(shell, &argv),
+        None => run_program(&argv),
     }
 }
 

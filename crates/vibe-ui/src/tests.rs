@@ -280,6 +280,51 @@ fn dialog_buttons_and_keys() {
 }
 
 #[test]
+fn prompt_dialog_edits_text() {
+    let mut d = Dialog::prompt(200, "Copy to:", "A.TXT", &["OK", "Cancel"]);
+    // 文 1 行 + テキスト欄 + ボタン
+    assert_eq!(d.size().1, 8 + 10 + 8 + 14 + 8 + 16 + 8);
+    assert_eq!(d.input(), "A.TXT");
+    // テキスト欄にフォーカスがあり、最初の中身は選んだ状態。← で選択をやめて末尾を直す
+    d.handle(press(None, LEFT), 0);
+    d.handle(press(None, END), 0);
+    d.handle(press(Some('\x08'), BACKSPACE), 0);
+    d.handle(press(Some('\x08'), BACKSPACE), 0);
+    d.handle(press(Some('\x08'), BACKSPACE), 0);
+    for c in "BAK".chars() {
+        assert_eq!(d.handle(typed(c), 0), None);
+    }
+    assert_eq!(d.input(), "A.BAK");
+    // テキスト欄の Enter は最初のボタン
+    assert_eq!(d.handle(press(Some('\n'), ENTER), 0), Some(0));
+    assert_eq!(d.handle(press(None, ESCAPE), 0), Some(1));
+}
+
+#[test]
+fn selected_text_is_replaced_by_typing() {
+    let mut ui = Ui::new();
+    let t = ui.add(Rect::new(0, 0, 80, 14), TextField::new("OLD.TXT"));
+    if let Widget::TextField(f) = ui.widget_mut(t) {
+        f.select_all();
+    }
+    ui.handle(typed('N'), 0);
+    assert_eq!(ui.text(t), "N");
+    // 選んだ状態で BackSpace なら全部消える
+    if let Widget::TextField(f) = ui.widget_mut(t) {
+        f.set_text("ABC");
+        f.select_all();
+        assert!(f.all_selected());
+    }
+    assert_eq!(ui.handle(press(Some('\x08'), BACKSPACE), 0), Some(Action::Changed(t)));
+    assert_eq!(ui.text(t), "");
+    // 空なら選べない
+    if let Widget::TextField(f) = ui.widget_mut(t) {
+        f.select_all();
+        assert!(!f.all_selected());
+    }
+}
+
+#[test]
 fn wrap_text() {
     assert_eq!(wrap("one two three", 7), ["one two", "three"]);
     assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);

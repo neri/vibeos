@@ -1038,7 +1038,7 @@ const MENU_TERMINAL: &str = "Terminal";
 /// メニューから起動する。アプリは最初の端末につながる（出力はそこに出る）。終わるのは誰も待たない
 fn launch(name: &str) {
     if name == MENU_TERMINAL {
-        crate::gfx::console::open_terminal(None);
+        crate::gfx::console::open_terminal(None, None);
         return;
     }
     let path = crate::process::resolve_program(name);

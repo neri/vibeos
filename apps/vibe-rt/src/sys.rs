@@ -173,3 +173,18 @@ pub fn term_size() -> Option<(usize, usize)> {
     let v = syscall(nr::TERM_SIZE, 0, 0, 0, 0, 0);
     (v > 0).then(|| ((v as u32 >> 16) as usize, (v as u32 & 0xFFFF) as usize))
 }
+
+/// 名前を変える・移す（to が既にあるディレクトリならその中へ）
+pub fn rename(from: &str, to: &str) -> i32 {
+    syscall(nr::RENAME, from.as_ptr() as u32, from.len() as u32, to.as_ptr() as u32, to.len() as u32, 0)
+}
+
+/// 子の終わるのを待たない（終了コードを残さない）
+pub fn detach(pid: i32) -> i32 {
+    syscall(nr::DETACH, pid as u32, 0, 0, 0, 0)
+}
+
+/// 新しい端末を開く。`cmd` が空でなければそれを実行し、終わったら端末を閉じる。端末の番号
+pub fn term_open(cmd: &str) -> i32 {
+    syscall(nr::TERM_OPEN, cmd.as_ptr() as u32, cmd.len() as u32, 0, 0, 0)
+}

@@ -131,7 +131,7 @@ endef
 # ディスクに入れるファイル（rootfs/ 以下。8.3 形式の大文字の名前にすること）
 ROOTFS := $(shell find rootfs -type f)
 # ユーザアプリ（apps/ の中のバイナリ）。ディスクの /BIN/名前.ELF に入れる
-APPS := hello fault view paint mandel snake more fstest edit clock life ping host ntp get httpd calc
+APPS := hello fault view paint mandel snake more fstest edit clock life ping host ntp get httpd calc files
 APPS_DIR := $(BUILD)/rootfs-apps
 APPS_STAMP := $(APPS_DIR)/.stamp
 
@@ -280,17 +280,25 @@ test-lzsa-ref: $(IMG) $(LZSA_REF) $(VIBE_LZSA)
 	$(VIBE_LZSA) compat --ref $(LZSA_REF) --work $(BUILD)/lzsa-work $(LZSA_FILES)
 
 # イメージの /BIN/*.ELF がすべて gzip で、展開すると元の ELF と一致する（ホストの gzip との互換）。
-# 合計が元の 45% 以下（docs/plans/app-compress.md A1）。COMPRESS=0 のときは何もしない
+# Phase 30 のときのアプリ（APPS_A1）の合計が元の 45% 以下（docs/plans/app-compress.md A1）、
+# 全部のアプリの合計が 50% 以下（コードの多いアプリは縮みにくい。DECISIONS.md D-037）。COMPRESS=0 のときは何もしない
+APPS_A1 := hello fault view paint mandel snake more fstest edit clock life ping host ntp get httpd
+
 test-apps-gz: $(IMG)
 ifeq ($(COMPRESS),1)
-	@orig=0; packed=0; for f in $(APPS_DIR)/BIN/*.ELF; do \
+	@orig=0; packed=0; orig_a1=0; packed_a1=0; for f in $(APPS_DIR)/BIN/*.ELF; do \
 		n=$$(basename $$f); \
 		mcopy -n -i $(IMG) ::BIN/$$n $(BUILD)/app.gz.tmp || exit 1; \
 		zcat $(BUILD)/app.gz.tmp | cmp - $$f || { echo "BIN/$$n: zcat differs"; exit 1; }; \
-		orig=$$((orig + $$(stat -c %s $$f))); packed=$$((packed + $$(stat -c %s $(BUILD)/app.gz.tmp))); \
+		o=$$(stat -c %s $$f); p=$$(stat -c %s $(BUILD)/app.gz.tmp); \
+		orig=$$((orig + o)); packed=$$((packed + p)); \
+		for a in $(APPS_A1); do if [ "$$n" = "$$(echo $$a | tr a-z A-Z).ELF" ]; then \
+			orig_a1=$$((orig_a1 + o)); packed_a1=$$((packed_a1 + p)); fi; done; \
 	done; rm -f $(BUILD)/app.gz.tmp; \
-	echo "apps: $$orig -> $$packed bytes"; \
-	if [ $$((packed * 100)) -gt $$((orig * 45)) ]; then echo "apps are not under 45%"; exit 1; fi
+	echo "apps (Phase 30): $$orig_a1 -> $$packed_a1 bytes"; \
+	echo "apps (all): $$orig -> $$packed bytes"; \
+	if [ $$((packed_a1 * 100)) -gt $$((orig_a1 * 45)) ]; then echo "Phase 30 apps are not under 45%"; exit 1; fi; \
+	if [ $$((packed * 100)) -gt $$((orig * 50)) ]; then echo "apps are not under 50%"; exit 1; fi
 endif
 
 size-report: $(IMG) $(BUILD)/kernel.vpk $(APPS_GZ_STAMP)
