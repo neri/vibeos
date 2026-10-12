@@ -10,7 +10,9 @@
 //!
 //! - フォーカス: Tab / Shift+Tab で順に移る。マウスで押した部品にも移る
 //! - ボタン: マウスで押して中で離すか、フォーカスがあるときの Space / Enter で `Clicked`
-//! - テキスト欄: 文字の入力・BackSpace・Delete・←→・Home・End（`Changed`）、Enter で `Submitted`
+//! - テキスト欄: 文字の入力・BackSpace・Delete・←→・Home・End（`Changed`）、Enter で `Submitted`。
+//!   クリップボード（`Ui::set_clipboard`）があれば、Ctrl+Insert で写す、Ctrl+X か Shift+Delete で切り取る、
+//!   Ctrl+V か Shift+Insert で貼り付ける（Ctrl+C はカーネルがプログラムを止めるのに使うので使わない）
 //! - 一覧: クリック・↑↓・PageUp/Down・Home/End で `Selected`、ダブルクリックか Enter で `Activated`。
 //!   入りきらなければ右にスクロールバー（溝を押すと 1 画面ずつ、つまみはドラッグ）
 //! - チェックボックス: クリックか Space で `Toggled`
@@ -27,6 +29,7 @@ mod widget;
 #[cfg(test)]
 mod tests;
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -125,6 +128,12 @@ pub enum Action {
     Key(KeyEvent),
 }
 
+/// クリップボード（アプリがシステムのものをつなぐ。テストでは偽物）
+pub trait Clipboard {
+    fn get(&mut self) -> String;
+    fn set(&mut self, text: &str);
+}
+
 /// ダブルクリックとみなす間隔（タイマの刻み。100 で 1 秒）
 pub const DOUBLE_CLICK_TICKS: u32 = 50;
 
@@ -146,6 +155,7 @@ pub struct Ui {
     mouse: (i32, i32),
     /// 最後のクリック: (部品, 項目, 時刻)（ダブルクリックの判定）
     last_click: Option<(Id, usize, u32)>,
+    clipboard: Option<Box<dyn Clipboard>>,
 }
 
 impl Default for Ui {
@@ -156,7 +166,21 @@ impl Default for Ui {
 
 impl Ui {
     pub const fn new() -> Ui {
-        Ui { items: Vec::new(), focus: None, pressed: None, thumb_drag: None, buttons: 0, mouse: (-1, -1), last_click: None }
+        Ui {
+            items: Vec::new(),
+            focus: None,
+            pressed: None,
+            thumb_drag: None,
+            buttons: 0,
+            mouse: (-1, -1),
+            last_click: None,
+            clipboard: None,
+        }
+    }
+
+    /// テキスト欄の写す・切り取る・貼り付けるに使うクリップボード
+    pub fn set_clipboard(&mut self, clipboard: Box<dyn Clipboard>) {
+        self.clipboard = Some(clipboard);
     }
 
     /// 部品を足す。フォーカスを持てる部品で、まだどれもフォーカスを持っていなければフォーカスを持つ
@@ -290,11 +314,44 @@ impl Ui {
             return None;
         }
         if let Some(id) = self.focus {
+            if let Some(result) = self.clipboard_key(id, k) {
+                return result;
+            }
             if let widget::KeyResult::Used(action) = self.items[id].widget.key(id, k) {
                 return action;
             }
         }
         Some(Action::Key(k))
+    }
+
+    /// テキスト欄のクリップボードのキー。使ったら Some（中は知らせること）
+    fn clipboard_key(&mut self, id: Id, k: KeyEvent) -> Option<Option<Action>> {
+        const X: u8 = 0x2D;
+        const V: u8 = 0x2F;
+        let Widget::TextField(t) = &mut self.items[id].widget else { return None };
+        let clip = self.clipboard.as_mut()?;
+        let (code, ctrl, shift) = (k.key(), k.ctrl(), k.shift());
+        let copy = ctrl && code == key::INSERT;
+        let cut = (ctrl && code == X) || (shift && code == key::DELETE);
+        let paste = (ctrl && code == V) || (shift && code == key::INSERT);
+        if !(copy || cut || paste) {
+            return None;
+        }
+        if !k.pressed() {
+            return Some(None);
+        }
+        if copy || cut {
+            clip.set(t.text());
+        }
+        if cut {
+            t.set_text("");
+            return Some(Some(Action::Changed(id)));
+        }
+        if paste {
+            let text = clip.get();
+            return Some(t.insert_text(&text).then_some(Action::Changed(id)));
+        }
+        Some(None)
     }
 
     fn handle_mouse(&mut self, x: i32, y: i32, buttons: u32, now: u32) -> Option<Action> {

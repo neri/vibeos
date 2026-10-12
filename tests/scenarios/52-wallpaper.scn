@@ -1,0 +1,35 @@
+# Phase 37（デスクトップ D6）: デスクトップの背景の画像（BOOT.CFG の wallpaper= と、シェルの wallpaper）
+boot-config video=640x480
+boot-config wallpaper=/IMAGES/PLASMA.BMP tile
+timeout 30
+wait-serial gui: desktop 640x480
+wait-serial gui: wallpaper /IMAGES/PLASMA.BMP
+wait-serial VibeOS shell
+sleep 300
+# 端末の右側の空いている所（敷き詰めた plasma）
+expect-screen wallpaper-tile 530 20 110 180
+# 真ん中に 1 枚（160x100 の gradient を 240,195 に）。周りは単色の背景
+type wallpaper /images/gradient.bmp center
+key ret
+sleep 500
+# 端末が重なるので [_]（509〜517, 205〜213）で最小化して見る（カーソル 320,240 → 513,209）
+mouse-move 193 -31
+mouse-button left down
+mouse-button left up
+sleep 300
+expect-screen wallpaper-center 236 191 168 108
+expect-pixel 600 30 0 103 55
+# バーの Terminal 1 のボタン（→ 100,5）で戻す
+mouse-move -413 -204
+mouse-button left down
+mouse-button left up
+sleep 300
+# 単色に戻す
+type wallpaper none
+key ret
+sleep 300
+expect-pixel 300 200 0 103 55
+type wallpaper /hello.txt
+key ret
+wait-serial wallpaper: /hello.txt: not a BMP file
+serial-absent PANIC

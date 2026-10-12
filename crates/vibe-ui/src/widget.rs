@@ -106,6 +106,23 @@ impl TextField {
         self.all_selected = false;
     }
 
+    /// カーソルの位置に文字を入れる（全体を選んでいれば置き換える。表示できない文字は除き、
+    /// 改行より後ろは捨てる）。何か変わったら true
+    pub fn insert_text(&mut self, text: &str) -> bool {
+        if self.all_selected {
+            self.set_text("");
+        }
+        let mut changed = false;
+        for c in text.chars().take_while(|&c| c != '\n') {
+            if c.is_ascii() && !c.is_ascii_control() && self.text.len() < self.max_len {
+                self.text.insert(self.cursor, c);
+                self.cursor += 1;
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// 全体を選ぶ（次に打った文字で置き換わる）
     pub fn select_all(&mut self) {
         self.all_selected = !self.text.is_empty();

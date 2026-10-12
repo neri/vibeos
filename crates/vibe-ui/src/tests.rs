@@ -324,6 +324,51 @@ fn selected_text_is_replaced_by_typing() {
     }
 }
 
+struct FakeClip(std::rc::Rc<std::cell::RefCell<String>>);
+
+impl Clipboard for FakeClip {
+    fn get(&mut self) -> String {
+        self.0.borrow().clone()
+    }
+    fn set(&mut self, text: &str) {
+        *self.0.borrow_mut() = String::from(text);
+    }
+}
+
+fn key_with(code: u16, ctrl: bool, shift: bool) -> Input {
+    Input::Key(KeyEvent(KeyEvent::encode(None, code, true, shift, ctrl, false)))
+}
+
+#[test]
+fn text_field_clipboard() {
+    const INSERT: u16 = 0xE052;
+    const X: u16 = 0x2D;
+    const V: u16 = 0x2F;
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+    let mut ui = Ui::new();
+    let a = ui.add(Rect::new(0, 0, 80, 14), TextField::new("hello"));
+    let b = ui.add(Rect::new(0, 20, 80, 14), TextField::new("x"));
+    // クリップボードが無ければ何もしない（アプリにそのまま返す）
+    assert!(matches!(ui.handle(key_with(INSERT, true, false), 0), Some(Action::Key(_))));
+    ui.set_clipboard(alloc::boxed::Box::new(FakeClip(shared.clone())));
+    // Ctrl+Insert で写す
+    assert_eq!(ui.handle(key_with(INSERT, true, false), 0), None);
+    assert_eq!(*shared.borrow(), "hello");
+    // 別の欄で Ctrl+V（カーソルの位置に入る）
+    ui.set_focus(b);
+    assert_eq!(ui.handle(key_with(V, true, false), 0), Some(Action::Changed(b)));
+    assert_eq!(ui.text(b), "xhello");
+    // Shift+Insert も貼り付け。改行より後ろは入らない
+    *shared.borrow_mut() = String::from("12\n34");
+    ui.handle(key_with(INSERT, false, true), 0);
+    assert_eq!(ui.text(b), "xhello12");
+    // Ctrl+X で切り取る
+    ui.set_focus(a);
+    assert_eq!(ui.handle(key_with(X, true, false), 0), Some(Action::Changed(a)));
+    assert_eq!(ui.text(a), "");
+    assert_eq!(*shared.borrow(), "hello");
+}
+
 #[test]
 fn wrap_text() {
     assert_eq!(wrap("one two three", 7), ["one two", "three"]);

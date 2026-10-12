@@ -298,8 +298,21 @@ impl App {
     }
 }
 
+/// システムのクリップボード（ダイアログのテキスト欄で使う）
+struct SysClipboard;
+
+impl vibe_ui::Clipboard for SysClipboard {
+    fn get(&mut self) -> String {
+        sys::clip_get()
+    }
+    fn set(&mut self, text: &str) {
+        sys::clip_set(text);
+    }
+}
+
 /// ダイアログを別のウィンドウで出し、ボタンが押されるまで待つ
 fn run_dialog(d: &mut Dialog) -> Option<usize> {
+    d.ui.set_clipboard(alloc::boxed::Box::new(SysClipboard));
     let (w, h) = d.size();
     let mut win = Window::open(w, h, "Files")?;
     loop {

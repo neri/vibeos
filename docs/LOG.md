@@ -411,3 +411,14 @@
 - `view`・`paint`: デスクトップではウィンドウで動く（`vibe_rt::gfx::is_desktop`）。`Window::set_palette` を足した。paint は全画面とウィンドウで同じ描き方の部分を `Paint` にまとめた
 - シナリオ `49-tasks`（life を tasks から止める）、`50-games`（種 5 の盤面で開く・旗・地雷で負け・顔で新しいゲーム。blocks は落としたブロックと一時停止）、`51-paint-view`。mines の時間・blocks の落ちているブロックの高さ・点数は時間で変わるので比べない
 - メニューに blocks が増えて clock が 4 つ目になったので `46-desktop-bar` を直した
+
+## 2026-10-12 デスクトップ D6: 背景の画像とクリップボード（Phase 37）
+
+- 背景の画像: `vibe_gfx::wallpaper`（`wallpaper=` の読み方・真ん中か敷き詰めの並べ方。テスト 3 本）と `kernel/src/gfx/wallpaper.rs`（BMP を標準のパレットに直して gui に渡す）。BOOT.CFG の `wallpaper=PATH [tile|center]`（rootfs の BOOT.CFG に書き方の例をコメントで足した）とシェルの `wallpaper`
+- クリップボード: `kernel/src/clipboard.rs` とシステムコール `clip_set`（49）・`clip_get`（50）
+  - 端末: 描いた文字を格子にも覚えるようにし、マウスでなぞった範囲を反転して見せ、離したらクリップボードへ（gui は端末のウィンドウのマウスをキューに入れず、ロックの外で `console::mouse` に渡す）。シェルの行の編集に Ctrl+V
+  - edit: Ctrl+K で切り取った行をシステムのクリップボードへ、Ctrl+U はシステムのクリップボードから貼り付ける（`Editor::clipboard_text`・`set_clipboard_text` を足した。テスト 1 本）
+  - vibe-ui: `Clipboard` の trait と `Ui::set_clipboard`。テキスト欄の Ctrl+Insert（写す）・Ctrl+X / Shift+Delete（切り取る）・Ctrl+V / Shift+Insert（貼り付ける）。files のダイアログでつないだ。テスト 1 本（偽物のクリップボード）
+- ウィンドウの大きさの変更は作らなかった（DECISIONS.md D-038）
+- シナリオ `52-wallpaper`（BOOT.CFG で敷き詰め・シェルで真ん中・端末を最小化して見る・単色に戻す）、`53-clipboard`（端末でなぞる → シェルと edit に貼り付け → edit で切り取った行をシェルに貼り付け）
+- `make test`（QEMU 53 本・ホスト・LZSA の往復・アプリの gzip）が通った。`make size-report`: KERNEL.SYS 388,984 → 173,058（44.4%）、アプリ 23 本 627,464 → 286,242（45.6%）、フロッピーの空き 865,792 バイト

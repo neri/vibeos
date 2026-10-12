@@ -8,10 +8,17 @@
 //!
 //! カーソルの左右移動（`\x08`, `ESC [ n D` / `C`）は行をまたいで前後の行へ回り込む。
 //! 行をまたいだ入力行の編集（シェル）を相対移動だけで書けるようにするため。
+//!
+//! 端末は描いた文字を格子（`grid`）にも覚えておき、マウスでなぞった範囲を色を反転して見せ、
+//! 離したときにその文字をクリップボードに入れる（`mouse`。デスクトップで gui から呼ばれる）。
+//! 格子はヒープを使うので、スケジューラが動いてから（起動の途中の文字は覚えない）。
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::fmt::{self, Write};
 
 use vibe_font::{FONT_8X8, Font};
@@ -47,6 +54,19 @@ pub struct Terminal {
     bold: bool,
     parser: Parser,
     cursor_drawn: bool,
+    /// 描いた文字（cols × rows）。まだ作っていなければ空
+    grid: Vec<Cell>,
+    /// マウスで選んでいる範囲（格子の番号。始まりと今の端）
+    sel: Option<(usize, usize)>,
+    /// ボタンを押したまま選んでいる途中
+    selecting: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Cell {
+    ch: char,
+    fg: u8,
+    bg: u8,
 }
 
 impl Terminal {
@@ -64,6 +84,9 @@ impl Terminal {
             bold: false,
             parser: Parser::new(),
             cursor_drawn: false,
+            grid: Vec::new(),
+            sel: None,
+            selecting: false,
         }
     }
 
@@ -75,12 +98,25 @@ impl Terminal {
         self.col = 0;
         self.row = 0;
         self.cursor_drawn = false;
+        self.grid.clear();
+        self.sel = None;
+        self.selecting = false;
+    }
+
+    /// 格子が無ければ作る（ヒープが使えるようになってから）
+    fn ensure_grid(&mut self) {
+        if self.grid.len() != self.cols * self.rows && sched::is_started() {
+            self.grid = vec![Cell { ch: ' ', fg: DEFAULT_FG, bg: DEFAULT_BG }; self.cols * self.rows];
+        }
     }
 
     fn write(&mut self, screen: &mut Screen, args: fmt::Arguments) {
         if self.cols == 0 || self.rows == 0 {
             return; // まだ初期化されていない
         }
+        self.ensure_grid();
+        // 文字が流れると選んだ位置がずれるので、選択は消す
+        self.clear_selection(screen);
         self.hide_cursor(screen);
         let _ = Writer { console: self, screen }.write_fmt(args);
         self.show_cursor(screen);
@@ -201,6 +237,21 @@ fn close_terminal(win: WinId) {
     let mut s = SCREEN.lock();
     s.destroy_window(win);
     s.present();
+}
+
+/// gui から: 端末のウィンドウ `tty` の中身でのマウス（選んでクリップボードへ）
+pub fn mouse(tty: WinId, x: i32, y: i32, buttons: u8) {
+    if tty == gui::CONSOLE {
+        let mut c = CONSOLE.lock();
+        let mut s = SCREEN.lock();
+        c.mouse(&mut s, x, y, buttons);
+    } else {
+        let mut terms = TERMINALS.lock();
+        if let Some(t) = terms.get_mut(&tty) {
+            let mut s = SCREEN.lock();
+            t.mouse(&mut s, x, y, buttons);
+        }
+    }
 }
 
 /// Alt+F1〜F4: 番号 `n` の端末（とそれに属するウィンドウ）を前に出す。無ければ開く
@@ -357,6 +408,9 @@ impl Terminal {
     }
 
     fn draw(&mut self, screen: &mut Screen, col: usize, row: usize, ch: char) {
+        if let Some(c) = self.grid.get_mut(row * self.cols + col) {
+            *c = Cell { ch, fg: self.fg, bg: self.bg };
+        }
         let (x, y) = (col * self.font.width, self.cell_y(row));
         if let Some(mut surf) = screen.window_surface(self.win) {
             surf.draw_char(self.font, x as i32, y as i32, ch, self.fg, Some(self.bg));
@@ -370,6 +424,7 @@ impl Terminal {
         }
         let (w, h) = (self.font.width, self.font.height);
         let y = self.cell_y(row);
+        self.blank_grid(row * self.cols + from, row * self.cols + to);
         if let Some(mut surf) = screen.window_surface(self.win) {
             surf.fill_rect((from * w) as i32, y as i32, ((to - from) * w) as i32, h as i32, self.bg);
         }
@@ -381,6 +436,7 @@ impl Terminal {
             return;
         }
         let (y0, y1) = (self.cell_y(from), self.cell_y(to));
+        self.blank_grid(from * self.cols, to * self.cols);
         if let Some(mut surf) = screen.window_surface(self.win) {
             surf.fill_rect(0, y0 as i32, (self.cols * self.font.width) as i32, (y1 - y0) as i32, self.bg);
         }
@@ -393,6 +449,11 @@ impl Terminal {
             return;
         }
         let h = self.font.height as i32;
+        if !self.grid.is_empty() {
+            self.grid.copy_within(self.cols.., 0);
+            let n = self.grid.len();
+            self.blank_grid(n - self.cols, n);
+        }
         let (y0, y1) = (self.cell_y(0), self.cell_y(self.rows));
         if let Some(mut surf) = screen.window_surface(self.win) {
             surf.scroll_up(0, y0 as i32, (self.cols * self.font.width) as i32, (y1 - y0) as i32, h, self.bg);
@@ -427,5 +488,107 @@ impl Terminal {
         }
         screen.mark_window_dirty(self.win, y as usize, y as usize + 1);
         self.cursor_drawn = false;
+    }
+
+    /// 格子の [from, to) を今の背景色の空白にする
+    fn blank_grid(&mut self, from: usize, to: usize) {
+        let bg = self.bg;
+        let to = to.min(self.grid.len());
+        if from < to {
+            self.grid[from..to].fill(Cell { ch: ' ', fg: DEFAULT_FG, bg });
+        }
+    }
+
+    /// 格子の `i` 番目を描き直す（`inverted` なら文字色と背景色を入れ替える）
+    fn repaint_cell(&self, screen: &mut Screen, i: usize, inverted: bool) {
+        let Some(c) = self.grid.get(i) else { return };
+        let (fg, bg) = if inverted { (c.bg, c.fg) } else { (c.fg, c.bg) };
+        let (x, y) = ((i % self.cols) * self.font.width, self.cell_y(i / self.cols));
+        if let Some(mut surf) = screen.window_surface(self.win) {
+            surf.draw_char(self.font, x as i32, y as i32, c.ch, fg, Some(bg));
+        }
+        screen.mark_window_dirty(self.win, y, y + self.font.height);
+    }
+
+    fn paint_selection(&self, screen: &mut Screen, inverted: bool) {
+        if let Some((a, b)) = self.sel {
+            for i in a.min(b)..=a.max(b) {
+                self.repaint_cell(screen, i, inverted);
+            }
+        }
+    }
+
+    fn clear_selection(&mut self, screen: &mut Screen) {
+        if self.sel.is_some() {
+            self.paint_selection(screen, false);
+            self.sel = None;
+            // カーソルの線も消えたかもしれないので描き直す
+            if self.cursor_drawn {
+                self.show_cursor(screen);
+            }
+        }
+        self.selecting = false;
+    }
+
+    /// 選んだ範囲の文字（行ごとに末尾の空白を除き、改行でつなぐ）
+    fn selected_text(&self) -> String {
+        let Some((a, b)) = self.sel else { return String::new() };
+        let (lo, hi) = (a.min(b), a.max(b));
+        let mut out = String::new();
+        let mut row = lo / self.cols;
+        let mut line = String::new();
+        for i in lo..=hi {
+            if i / self.cols != row {
+                out.push_str(line.trim_end());
+                out.push('\n');
+                line.clear();
+                row = i / self.cols;
+            }
+            line.push(self.grid[i].ch);
+        }
+        out.push_str(line.trim_end());
+        out
+    }
+
+    /// マウス（中身の座標）。押してなぞると選び、離すとクリップボードに入れる
+    fn mouse(&mut self, screen: &mut Screen, x: i32, y: i32, buttons: u8) {
+        if self.grid.is_empty() {
+            return;
+        }
+        let col = (x.max(0) as usize / self.font.width).min(self.cols - 1);
+        let row = (y.max(0) as usize / self.font.height).min(self.rows - 1);
+        let cell = row * self.cols + col;
+        let left = buttons & 1 != 0;
+        match (left, self.selecting) {
+            (true, false) => {
+                self.clear_selection(screen);
+                self.sel = Some((cell, cell));
+                self.selecting = true;
+                self.paint_selection(screen, true);
+            }
+            (true, true) => {
+                if let Some((start, end)) = self.sel {
+                    if end != cell {
+                        self.paint_selection(screen, false);
+                        self.sel = Some((start, cell));
+                        self.paint_selection(screen, true);
+                    }
+                }
+            }
+            (false, true) => {
+                self.selecting = false;
+                match self.sel {
+                    // 動かさずに離したら選ばない
+                    Some((a, b)) if a == b => self.clear_selection(screen),
+                    _ => {
+                        let text = self.selected_text();
+                        klog!("term: copied {} bytes", text.len());
+                        crate::clipboard::set(&text);
+                    }
+                }
+            }
+            (false, false) => {}
+        }
+        screen.present();
     }
 }

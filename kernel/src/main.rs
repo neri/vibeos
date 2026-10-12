@@ -15,6 +15,7 @@ mod print;
 
 mod arch;
 mod bootinfo;
+mod clipboard;
 mod drivers;
 mod fs;
 mod gfx;
@@ -136,6 +137,7 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
         if gui::start_desktop() {
             gfx::console::init();
             klog!("gui: desktop {}x{}", drivers::vga::width(), drivers::vga::height());
+            gfx::wallpaper::load_from_config();
         }
         gfx::statusbar::start();
         task::spawn("shell", || shell::run(None));

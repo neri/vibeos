@@ -210,3 +210,16 @@ pub fn sys_info() -> SysInfo {
 pub fn win_palette(win: i32, start: u8, rgb: &[[u8; 3]]) -> i32 {
     syscall(nr::WIN_PALETTE, win as u32, start as u32, rgb.len() as u32, rgb.as_ptr() as u32, 0)
 }
+
+/// クリップボードに文字を入れる
+pub fn clip_set(text: &str) -> i32 {
+    syscall(nr::CLIP_SET, text.as_ptr() as u32, text.len() as u32, 0, 0, 0)
+}
+
+/// クリップボードの文字
+pub fn clip_get() -> alloc::string::String {
+    let mut buf = alloc::vec![0u8; 4096];
+    let n = syscall(nr::CLIP_GET, buf.as_mut_ptr() as u32, buf.len() as u32, 0, 0, 0).max(0) as usize;
+    buf.truncate(n.min(4096));
+    alloc::string::String::from_utf8(buf).unwrap_or_default()
+}

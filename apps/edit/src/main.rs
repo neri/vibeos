@@ -2,7 +2,8 @@
 //!
 //! 1 行目: ファイル名など、2 行目〜最後の 1 つ前の行: 本文、最後の行: キーの説明・メッセージ。
 //! Ctrl+S 保存（フロッピーへの書き戻しもする）, Ctrl+Q 終わる, Ctrl+F 探す, Ctrl+G 行へ移動,
-//! Ctrl+K 行を切り取る, Ctrl+U 貼り付ける, Ctrl+Home / Ctrl+End ファイルの先頭・末尾。
+//! Ctrl+K 行を切り取る, Ctrl+U 貼り付ける（どちらもシステムのクリップボードを使う。端末で選んだ文字も
+//! 貼り付けられる）, Ctrl+Home / Ctrl+End ファイルの先頭・末尾。
 //! Ctrl+C はカーネルがプログラムを止める（保存されない）。
 
 #![no_std]
@@ -157,7 +158,14 @@ impl App {
             (_, Some(c)) if !c.is_control() => Action::Insert(c),
             _ => return true,
         };
+        if action == Action::Paste {
+            // ほかのアプリ（端末など）が入れたものも貼り付けられるよう、システムのクリップボードから取る
+            self.editor.set_clipboard_text(&sys::clip_get());
+        }
         self.editor.apply(action);
+        if action == Action::CutLine {
+            sys::clip_set(&self.editor.clipboard_text());
+        }
         true
     }
 

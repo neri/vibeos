@@ -47,7 +47,7 @@ pub const BAR_H: usize = 10;
 /// 全画面のときのステータスバーの高さ（1 行）
 pub const FS_BAR_H: usize = 8;
 const CLOSE_W: usize = 9;
-const DESKTOP_BG: u8 = palette::CUBE_BASE + 13; // 落ち着いた青緑（カラーキューブの 0,2,1）
+pub const DESKTOP_BG: u8 = palette::CUBE_BASE + 13; // 落ち着いた青緑（カラーキューブの 0,2,1）
 const BORDER: u8 = palette::LIGHT_GRAY;
 const TITLE_ACTIVE: u8 = palette::BLUE;
 const TITLE_INACTIVE: u8 = palette::DARK_GRAY;
@@ -127,6 +127,8 @@ enum MouseAction {
     OpenMenu,
     /// メニューの項目を起動する
     Launch(String),
+    /// 端末のウィンドウの中身でのマウス（中身の座標とボタン）
+    Terminal(WinId, i32, i32, u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -168,6 +170,8 @@ pub struct Screen {
     /// バーを描き直す
     bar_dirty: bool,
     menu: Option<bar::Menu>,
+    /// デスクトップの背景の画像（バーの下の全体、画面の幅 × (高さ − BAR_H)）
+    wallpaper: Option<Box<[u8]>>,
 }
 
 /// 画面。コンソール（gfx::console の CONSOLE）と両方取るときはコンソールを先に取ること
@@ -193,6 +197,7 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     status_text: String::new(),
     bar_dirty: false,
     menu: None,
+    wallpaper: None,
 });
 
 /// キー・マウス・閉じる要求が届いたら起こされる
@@ -428,6 +433,19 @@ impl Screen {
         if bottom > 0 {
             self.mark_rows((top + y0 as i32).max(0) as usize, bottom as usize);
         }
+    }
+
+    /// デスクトップの背景の画像を変える（None で単色に戻す）。大きさは `wallpaper_size`
+    pub fn set_wallpaper(&mut self, pixels: Option<Box<[u8]>>) {
+        let (w, h) = self.wallpaper_size();
+        self.wallpaper = pixels.filter(|p| p.len() == w * h);
+        let h = self.height;
+        self.mark_rows(0, h);
+    }
+
+    /// 背景の画像の大きさ（バーの下の全体）
+    pub fn wallpaper_size(&self) -> (usize, usize) {
+        (self.width, self.height - BAR_H)
     }
 
     /// ウィンドウの中身の大きさ
@@ -714,6 +732,7 @@ impl Screen {
             Some((id, Part::Client)) if self.focused() == Some(id) => Some(id),
             _ => None,
         });
+        let mut action = None;
         if let Some(id) = target {
             if let Some(w) = self.windows.get_mut(&id) {
                 let ev = MouseEvent {
@@ -721,13 +740,18 @@ impl Screen {
                     y: (y - w.y).clamp(0, w.h as i32 - 1),
                     buttons,
                 };
-                push_mouse(w, ev);
+                // 端末は文字を選ぶのに使う（ロックの外で gfx::console に渡す）
+                if w.terminal {
+                    action = Some(MouseAction::Terminal(id, ev.x, ev.y, buttons));
+                } else {
+                    push_mouse(w, ev);
+                }
             }
         }
         if !left {
             self.capture = None;
         }
-        None
+        action
     }
 
     /// [x] が押された。gfx_open の画面なら持ち主のプロセスを、端末ならその端末のプロセスを止める
@@ -861,7 +885,13 @@ impl Screen {
                     row.copy_from_slice(&bar[y * self.width..(y + 1) * self.width]);
                     return;
                 }
-                row.fill(DESKTOP_BG);
+                match &self.wallpaper {
+                    Some(wp) => {
+                        let r = y - BAR_H;
+                        row.copy_from_slice(&wp[r * self.width..(r + 1) * self.width]);
+                    }
+                    None => row.fill(DESKTOP_BG),
+                }
                 for &id in &self.order {
                     self.draw_window_row(id, y as i32, row);
                 }
@@ -1011,6 +1041,7 @@ pub fn on_mouse(x: i32, y: i32, buttons: u8) {
             s.present();
         }
         Some(MouseAction::Launch(name)) => launch(&name),
+        Some(MouseAction::Terminal(tty, x, y, b)) => crate::gfx::console::mouse(tty, x, y, b),
         None => {}
     }
     INPUT_WAIT.notify_all();

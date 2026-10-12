@@ -131,6 +131,10 @@ pub mod nr {
     /// win_palette(win, start, count, rgb: *const [u8; 3]) -> 0。ウィンドウ独自のパレット（各 6bit）。
     /// デスクトップでは標準のパレットの近い色に置き換えて出る
     pub const WIN_PALETTE: u32 = 48;
+    /// clip_set(buf, len) -> 0。クリップボードに文字を入れる（4096 バイトまで）
+    pub const CLIP_SET: u32 = 49;
+    /// clip_get(buf, len) -> クリップボードの文字の長さ（buf には入るだけ写す）
+    pub const CLIP_GET: u32 = 50;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -373,6 +377,7 @@ pub mod key {
     pub const END: u8 = 0x80 | 0x4F;
     pub const PAGE_DOWN: u8 = 0x80 | 0x51;
     pub const DELETE: u8 = 0x80 | 0x53;
+    pub const INSERT: u8 = 0x80 | 0x52;
     pub const UP: u8 = 0x80 | 0x48;
     pub const DOWN: u8 = 0x80 | 0x50;
     pub const LEFT: u8 = 0x80 | 0x4B;

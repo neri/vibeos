@@ -1,4 +1,4 @@
-//! 1 行入力の編集（左右移動・挿入・削除・履歴）
+//! 1 行入力の編集（左右移動・挿入・削除・履歴・Ctrl+V で貼り付け）
 //!
 //! 画面への反映はコンソールの相対移動（`\x08`, `ESC [ n C` / `D`）だけで行う。
 //! コンソールは左右移動で行をまたぐので、入力が画面の 1 行を超えても編集できる。
@@ -181,6 +181,14 @@ impl LineEditor {
                         return Input::Line(line);
                     }
                     Some('\x08') => st.backspace(),
+                    Some('\x16') => {
+                        // Ctrl+V: クリップボードの 1 行目を入れる
+                        for c in crate::clipboard::get().chars().take_while(|&c| c != '\n') {
+                            if !c.is_control() {
+                                st.insert(c);
+                            }
+                        }
+                    }
                     Some('\x03') => {
                         st.end();
                         kprintln!("^C");

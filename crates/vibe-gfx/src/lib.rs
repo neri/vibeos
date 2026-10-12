@@ -9,6 +9,7 @@ extern crate alloc;
 
 pub mod bmp;
 pub mod palette;
+pub mod wallpaper;
 
 use vibe_font::Font;
 

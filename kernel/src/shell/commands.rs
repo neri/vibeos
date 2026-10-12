@@ -48,6 +48,12 @@ const COMMANDS: &[Command] = &[
     Command { name: "sleep", usage: "sleep [ms]", help: "sleep (default 500ms, checks timing)", run: sleep },
     Command { name: "history", usage: "history", help: "command history", run: history },
     Command { name: "term", usage: "term", help: "open a new terminal (Alt+F1-F4 to switch)", run: term },
+    Command {
+        name: "wallpaper",
+        usage: "wallpaper file.bmp [tile|center] | none",
+        help: "set the desktop background image",
+        run: wallpaper,
+    },
     Command { name: "demo", usage: "demo", help: "3 threads draw counters for 5s", run: demo },
     Command { name: "beep", usage: "beep [hz] [ms]", help: "sound the PC speaker", run: beep },
     Command { name: "net", usage: "net", help: "network card, address, sockets", run: net_cmd },
@@ -329,6 +335,22 @@ fn sleep(_: &mut Shell, args: &[&str]) {
     let expected = (ms * pit::TICK_HZ).div_ceil(1000);
     let ok = elapsed >= expected && elapsed <= expected + expected / 5 + 2;
     kprintln!("slept {} ticks: {}", elapsed, if ok { "sleep ok" } else { "sleep NG" });
+}
+
+fn wallpaper(_: &mut Shell, args: &[&str]) {
+    use vibe_gfx::wallpaper::parse_setting;
+    match args.get(1..) {
+        Some(["none"]) => crate::gfx::wallpaper::clear(),
+        Some(rest) if !rest.is_empty() => match parse_setting(&rest.join(" ")) {
+            Some((path, fit)) => {
+                if let Err(e) = crate::gfx::wallpaper::load(path, fit) {
+                    kprintln!("wallpaper: {path}: {e}");
+                }
+            }
+            None => kprintln!("usage: wallpaper file.bmp [tile|center] | none"),
+        },
+        _ => kprintln!("usage: wallpaper file.bmp [tile|center] | none"),
+    }
 }
 
 fn term(_: &mut Shell, _: &[&str]) {

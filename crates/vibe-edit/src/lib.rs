@@ -134,6 +134,17 @@ impl Editor {
         self.lines[self.row].len()
     }
 
+    /// 切り取った行を文字列で（行は改行でつなぐ）。システムのクリップボードに渡す
+    pub fn clipboard_text(&self) -> String {
+        self.clipboard.join("\n")
+    }
+
+    /// 貼り付ける行を文字列から決める（システムのクリップボードから。行に分けて読み込みと同じように直す）
+    pub fn set_clipboard_text(&mut self, text: &str) {
+        self.clipboard = if text.is_empty() { Vec::new() } else { to_lines(text) };
+        self.last_was_cut = false;
+    }
+
     pub fn apply(&mut self, action: Action) {
         let cut = action == Action::CutLine;
         match action {
@@ -472,5 +483,24 @@ mod tests {
         assert_eq!(e.cursor(), (2, 0));
         e.goto_line(0);
         assert_eq!(e.cursor(), (0, 0));
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+
+    #[test]
+    fn clipboard_as_text() {
+        let mut e = Editor::new("one\ntwo\nthree\n", 40, 10);
+        e.apply(Action::CutLine);
+        e.apply(Action::CutLine);
+        assert_eq!(e.clipboard_text(), "one\ntwo");
+        // 外から来た文字列を貼り付ける（タブは空白に直る）
+        e.set_clipboard_text("a\tb\nc");
+        e.apply(Action::Paste);
+        assert_eq!(e.text(), "a   b\nc\nthree\n");
+        e.set_clipboard_text("");
+        assert_eq!(e.clipboard_text(), "");
     }
 }
