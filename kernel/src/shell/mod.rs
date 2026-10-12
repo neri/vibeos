@@ -1,5 +1,6 @@
-//! 内蔵シェル（独立したカーネルスレッドで動く）
+//! 内蔵シェル（端末ごとに 1 つ、独立したカーネルスレッドで動く）
 //!
+//! 入出力は今のタスクの端末（`sched::current_tty`）。端末が閉じられたら終わる。
 //! 1 行読んで空白で区切り（"..." で空白を含められる）、コマンドの表から探して実行する。
 //! コマンドを追加するときは `commands.rs` の `COMMANDS` に足す。
 
@@ -18,10 +19,12 @@ pub struct Shell {
     editor: LineEditor,
 }
 
-pub fn run() -> ! {
+/// シェルを動かす。端末が閉じられたら戻る
+pub fn run() {
     kprintln!("\x1b[93mVibeOS shell\x1b[0m - type 'help' for commands");
+    let tty = crate::task::sched::current_tty();
     let mut shell = Shell { editor: LineEditor::new() };
-    loop {
+    while !crate::gui::is_closing(tty) {
         let prompt = alloc::format!("\x1b[92m{}\x1b[0m> ", fs::cwd());
         let line = match shell.editor.read_line(&prompt) {
             Input::Line(l) => l,

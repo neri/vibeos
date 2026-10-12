@@ -46,6 +46,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "hwclock", usage: "hwclock", help: "read the CMOS clock", run: hwclock },
     Command { name: "sleep", usage: "sleep [ms]", help: "sleep (default 500ms, checks timing)", run: sleep },
     Command { name: "history", usage: "history", help: "command history", run: history },
+    Command { name: "term", usage: "term", help: "open a new terminal (Alt+F1-F4 to switch)", run: term },
     Command { name: "demo", usage: "demo", help: "3 threads draw counters for 5s", run: demo },
     Command { name: "beep", usage: "beep [hz] [ms]", help: "sound the PC speaker", run: beep },
     Command { name: "net", usage: "net", help: "network card, address, sockets", run: net_cmd },
@@ -71,10 +72,11 @@ fn help(_: &mut Shell, args: &[&str]) {
         return;
     }
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
-    // 40 桁に収まるように並べる
+    // 端末の幅に収まるように並べる
+    let width = crate::gfx::console::size().map_or(40, |(cols, _)| cols);
     let mut line = String::new();
     for n in names {
-        if line.len() + n.len() + 1 > 38 {
+        if line.len() + n.len() + 1 > width - 2 {
             kprintln!("{line}");
             line.clear();
         }
@@ -318,6 +320,13 @@ fn sleep(_: &mut Shell, args: &[&str]) {
     kprintln!("slept {} ticks: {}", elapsed, if ok { "sleep ok" } else { "sleep NG" });
 }
 
+fn term(_: &mut Shell, _: &[&str]) {
+    match crate::gfx::console::open_terminal(None) {
+        Some(_) => {}
+        None => kprintln!("term: too many terminals"),
+    }
+}
+
 fn history(shell: &mut Shell, _: &[&str]) {
     for (i, h) in shell.editor.history().enumerate() {
         kprintln!("{:3} {h}", i + 1);
@@ -333,6 +342,7 @@ fn demo(_: &mut Shell, _: &[&str]) {
         return;
     }
     let colors = [palette::LIGHT_RED, palette::LIGHT_GREEN, palette::LIGHT_CYAN];
+    let tty = sched::current_tty();
     let ids: Vec<_> = (0..3)
         .map(|i| {
             task::spawn(&format!("counter{i}"), move || {
@@ -342,14 +352,15 @@ fn demo(_: &mut Shell, _: &[&str]) {
                     n += 1;
                     let text = format!("T{i}:{n:6}");
                     let mut s = SCREEN.lock();
-                    let x = (s.console_size().0 - text.len() * FONT_8X8.width) as i32;
-                    // ステータスバーの下に並べる
-                    let y = ((i + 1) * FONT_8X8.height) as i32;
-                    {
-                        s.surface().draw_text(&FONT_8X8, x, y, &text, colors[i], Some(palette::BLACK));
-                        s.mark_dirty(y as usize, y as usize + FONT_8X8.height);
-                        s.present();
+                    let Some((w, _)) = s.window_size(tty) else { break };
+                    // 端末の右上に並べる
+                    let x = (w - text.len() * FONT_8X8.width) as i32;
+                    let y = (i * FONT_8X8.height) as i32;
+                    if let Some(mut surf) = s.window_surface(tty) {
+                        surf.draw_text(&FONT_8X8, x, y, &text, colors[i], Some(palette::BLACK));
                     }
+                    s.mark_window_dirty(tty, y as usize, y as usize + FONT_8X8.height);
+                    s.present();
                     drop(s);
                     // スレッドごとに速さを変える（1 つは休まない）
                     if i > 0 {

@@ -5,9 +5,12 @@
 //! - **デスクトップ**（640x480）: 上端のバー、背景、重なったウィンドウ（タイトルバーと枠付き）を出す。
 //!   クリックで前に出す（フォーカス）、タイトルバーのドラッグで動かす、[x] で閉じる
 //!
-//! 0 番のウィンドウはコンソール（シェルの端末）で、バッファは静的な領域（起動直後から使うため）。
+//! 端末（シェルの画面）もウィンドウの 1 つ。0 番のウィンドウは最初の端末（コンソール）で、バッファは
+//! 静的な領域（起動直後から使うため）。ほかの端末とアプリのウィンドウのバッファはヒープから取る。
+//! ウィンドウはそれぞれ「属する端末」を持つ（作ったプロセスの端末）。全画面では Alt+F1〜F4 で
+//! 端末を切り替え、その端末に属するウィンドウをまとめて前に出す。
 //! 描画は各ウィンドウのバッファに行い、`present` で書き換えた行だけを重ね合わせて VRAM に送る。
-//! マウスカーソルは重ね合わせのときに上に描く。
+//! マウスカーソルは重ね合わせのときに上に描く。全画面では、前面が端末なら一番上の行にステータスバーを出す。
 //!
 //! パレット: 全画面では前面のウィンドウの独自のパレットを VGA にそのまま設定する。デスクトップでは
 //! 他のウィンドウの色が変わらないよう VGA は標準のパレットのまま、独自のパレットを持つウィンドウの
@@ -38,6 +41,8 @@ pub const CONSOLE: WinId = 0;
 /// タイトルバーの高さ・デスクトップの上端のバーの高さ
 pub const TITLE_H: usize = 12;
 pub const BAR_H: usize = 10;
+/// 全画面のときのステータスバーの高さ（1 行）
+pub const FS_BAR_H: usize = 8;
 const CLOSE_W: usize = 9;
 const DESKTOP_BG: u8 = palette::CUBE_BASE + 13; // 落ち着いた青緑（カラーキューブの 0,2,1）
 const BORDER: u8 = palette::LIGHT_GRAY;
@@ -99,6 +104,21 @@ struct Window {
     keys: Ring<KeyEvent, 256>,
     mouse: Ring<MouseEvent, 64>,
     close_requested: bool,
+    /// 端末のウィンドウか
+    terminal: bool,
+    /// 属する端末（端末のウィンドウなら自分）
+    tty: Option<WinId>,
+    /// 端末のとき: シェルが終わるのを待っているプロセス（Ctrl+C で止める相手）
+    fg_proc: Option<TaskId>,
+}
+
+/// マウスの操作の結果、ロックの外で行うこと
+#[derive(Clone, Copy)]
+enum MouseAction {
+    /// プロセスを止める（gfx_open の画面の [x]）
+    Kill(TaskId),
+    /// 端末を閉じる（シェルとその端末のプロセスを止める）
+    CloseTerminal(WinId),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -117,6 +137,8 @@ pub struct Screen {
     height: usize,
     console_w: usize,
     console_h: usize,
+    /// コンソールの中身の上端（ウィンドウを登録する前に使う）
+    console_y: usize,
     windows: BTreeMap<WinId, Window>,
     /// 重なりの順（後ろが手前）
     order: Vec<WinId>,
@@ -141,6 +163,7 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     height: 0,
     console_w: 0,
     console_h: 0,
+    console_y: 0,
     windows: BTreeMap::new(),
     order: Vec::new(),
     next_id: 0,
@@ -158,13 +181,14 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
 /// キー・マウス・閉じる要求が届いたら起こされる
 static INPUT_WAIT: WaitQueue = WaitQueue::new();
 
-/// 起動直後（vga::init の後）に呼ぶ。まずはコンソールを画面いっぱいに出す
+/// 起動直後（vga::init の後）に呼ぶ。まずはコンソールを画面いっぱい（一番上の行はステータスバー）に出す
 pub fn init() {
     let mut s = SCREEN.lock();
     s.width = vga::width();
     s.height = vga::height();
     s.console_w = s.width;
-    s.console_h = s.height;
+    s.console_h = s.height - FS_BAR_H;
+    s.console_y = FS_BAR_H;
     s.cursor_x = (s.width / 2) as i32;
     s.cursor_y = (s.height / 2) as i32;
     vga::set_palette(&palette::standard());
@@ -178,7 +202,10 @@ pub fn init() {
 pub fn init_windows() {
     let mut s = SCREEN.lock();
     let (w, h) = (s.console_w, s.console_h);
-    let win = new_window(w, h, None, "Terminal", None, false, false);
+    let mut win = new_window(w, h, None, "Terminal 1", None, false, false);
+    win.y = s.console_y as i32;
+    win.terminal = true;
+    win.tty = Some(CONSOLE);
     s.windows.insert(CONSOLE, win);
     s.order.push(CONSOLE);
 }
@@ -195,6 +222,7 @@ pub fn start_desktop() -> bool {
     s.console_h = ch.min(s.height - BAR_H - TITLE_H - 2);
     let (cw, ch) = (s.console_w, s.console_h);
     let y = (s.height - ch - 8) as i32;
+    s.console_y = y as usize;
     if let Some(c) = s.windows.get_mut(&CONSOLE) {
         c.w = cw;
         c.h = ch;
@@ -246,6 +274,9 @@ fn new_window(
         keys: Ring::new(NO_KEY),
         mouse: Ring::new(MouseEvent { x: 0, y: 0, buttons: 0 }),
         close_requested: false,
+        terminal: false,
+        tty: None,
+        fg_proc: None,
     }
 }
 
@@ -272,25 +303,61 @@ impl Screen {
         self.mark_window_dirty(CONSOLE, y0, y1);
     }
 
-    /// 上端のバー（デスクトップ）またはコンソールの 1 行目（全画面）に描く
+    /// ステータスバー（デスクトップでは上端のバー、全画面では一番上の行）に描く
     pub fn draw_status_bar(&mut self, draw: impl FnOnce(&mut Surface)) {
-        match self.mode {
-            Mode::Desktop => {
-                let w = self.width;
-                // SAFETY: BAR_BUF は SCREEN のロックの中でだけ触る
-                let bar = unsafe { &mut (&mut *BAR_BUF.as_ptr())[..w * BAR_H] };
-                draw(&mut Surface::new(bar, w, BAR_H));
-                self.mark_rows(0, BAR_H);
-            }
-            Mode::Fullscreen => {
-                draw(&mut self.surface());
-                self.mark_dirty(0, FONT_8X8.height);
-            }
-        }
+        let h = match self.mode {
+            Mode::Desktop => BAR_H,
+            Mode::Fullscreen => FS_BAR_H,
+        };
+        let w = self.width;
+        // SAFETY: BAR_BUF は SCREEN のロックの中でだけ触る
+        let bar = unsafe { &mut (&mut *BAR_BUF.as_ptr())[..w * h] };
+        draw(&mut Surface::new(bar, w, h));
+        self.mark_rows(0, h);
     }
 
-    /// ウィンドウを作って前に出す。`kill_on_close` なら [x] で持ち主を止め、そうでなければ閉じる要求のイベントを届ける
-    pub fn create_window(&mut self, w: usize, h: usize, title: &str, owner: Option<TaskId>, kill_on_close: bool) -> WinId {
+    /// ウィンドウを作って前に出す。`kill_on_close` なら [x] で持ち主を止め、そうでなければ閉じる要求のイベントを届ける。
+    /// `tty` は属する端末（作ったプロセスの端末）
+    pub fn create_window(
+        &mut self,
+        w: usize,
+        h: usize,
+        title: &str,
+        owner: Option<TaskId>,
+        kill_on_close: bool,
+        tty: Option<WinId>,
+    ) -> WinId {
+        let id = self.add_window(w, h, title, owner, kill_on_close);
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.tty = tty;
+        }
+        id
+    }
+
+    /// 端末のウィンドウを作って前に出す。全画面では画面いっぱい（一番上の行を除く）、デスクトップでは
+    /// 64 桁 × 32 行
+    pub fn create_terminal(&mut self, title: &str) -> WinId {
+        let (w, h) = match self.mode {
+            Mode::Fullscreen => (self.width, self.height - FS_BAR_H),
+            Mode::Desktop => self.desktop_terminal_size(),
+        };
+        let id = self.add_window(w, h, title, None, false);
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.terminal = true;
+            win.tty = Some(id);
+            if self.mode == Mode::Fullscreen {
+                win.y = FS_BAR_H as i32;
+            }
+        }
+        id
+    }
+
+    fn desktop_terminal_size(&self) -> (usize, usize) {
+        let (cw, ch) = (TERMINAL_COLS * FONT_8X8.width, TERMINAL_ROWS * FONT_8X8.height);
+        (cw.min(self.width - 2), ch.min(self.height - BAR_H - TITLE_H - 2))
+    }
+
+    fn add_window(&mut self, w: usize, h: usize, title: &str, owner: Option<TaskId>, kill_on_close: bool) -> WinId {
         self.next_id += 1; // 0 はコンソールなので 1 から
         let id = self.next_id;
         let buf = vec![palette::BLACK; w * h].into_boxed_slice();
@@ -334,26 +401,49 @@ impl Screen {
 
     /// ウィンドウ `id` の中身の行 [y0, y1) を書き換えたことを記録する
     pub fn mark_window_dirty(&mut self, id: WinId, y0: usize, y1: usize) {
-        match self.mode {
-            Mode::Fullscreen => {
-                if self.foreground() == id {
-                    self.mark_rows(y0, y1);
-                }
-            }
-            Mode::Desktop => {
-                let Some(win) = self.windows.get(&id) else {
-                    // まだ登録していないコンソール（起動直後）
-                    if id == CONSOLE {
-                        self.mark_rows(y0, y1);
-                    }
-                    return;
-                };
-                let top = win.y + y0 as i32;
-                let bottom = win.y + y1 as i32;
-                if bottom > 0 {
-                    self.mark_rows(top.max(0) as usize, bottom as usize);
-                }
-            }
+        if self.mode == Mode::Fullscreen && self.foreground() != id {
+            return; // 見えていない
+        }
+        let top = match self.windows.get(&id) {
+            Some(win) => win.y,
+            // まだ登録していないコンソール（起動直後）
+            None if id == CONSOLE => self.console_y as i32,
+            None => return,
+        };
+        let bottom = top + y1 as i32;
+        if bottom > 0 {
+            self.mark_rows((top + y0 as i32).max(0) as usize, bottom as usize);
+        }
+    }
+
+    /// ウィンドウの中身の大きさ
+    pub fn window_size(&self, id: WinId) -> Option<(usize, usize)> {
+        match self.windows.get(&id) {
+            Some(w) => Some((w.w, w.h)),
+            None if id == CONSOLE => Some((self.console_w, self.console_h)),
+            None => None,
+        }
+    }
+
+    /// 端末 `tty` でシェルが終わるのを待っているプロセス（Ctrl+C で止める相手）を設定する
+    pub fn set_terminal_foreground(&mut self, tty: WinId, proc: Option<TaskId>) {
+        if let Some(w) = self.windows.get_mut(&tty) {
+            w.fg_proc = proc;
+        }
+    }
+
+    /// 端末 `tty` に属するウィンドウを、重なりの順を保ったまままとめて前に出す
+    pub fn raise_tty(&mut self, tty: WinId) {
+        let (mut mine, others): (Vec<WinId>, Vec<WinId>) =
+            self.order.iter().partition(|id| self.windows.get(id).is_some_and(|w| w.tty == Some(tty)));
+        if mine.is_empty() {
+            return;
+        }
+        let mut order = others;
+        order.append(&mut mine);
+        if order != self.order {
+            self.order = order;
+            self.focus_changed();
         }
     }
 
@@ -500,12 +590,11 @@ impl Screen {
     }
 
     /// 入力スレッドから: マウスが (x, y)（画面の座標）にあり、ボタンが `buttons`
-    fn on_mouse(&mut self, x: i32, y: i32, buttons: u8) -> Option<TaskId> {
+    fn on_mouse(&mut self, x: i32, y: i32, buttons: u8) -> Option<MouseAction> {
         self.set_cursor(x, y);
         let left = buttons & 1 != 0;
         let was_left = self.buttons & 1 != 0;
         self.buttons = buttons;
-        let mut kill = None;
 
         if self.mode == Mode::Fullscreen {
             let fg = self.foreground();
@@ -532,8 +621,7 @@ impl Screen {
                 }
                 Some((id, Part::Close)) => {
                     self.raise(id);
-                    kill = self.request_close(id);
-                    return kill;
+                    return self.request_close(id);
                 }
                 Some((id, Part::Client)) => {
                     self.raise(id);
@@ -560,41 +648,42 @@ impl Screen {
         if !left {
             self.capture = None;
         }
-        kill
+        None
     }
 
-    /// [x] が押された。gfx_open の画面なら持ち主のプロセスを止める（その ID を返す）
-    fn request_close(&mut self, id: WinId) -> Option<TaskId> {
+    /// [x] が押された。gfx_open の画面なら持ち主のプロセスを、端末ならその端末のプロセスを止める
+    fn request_close(&mut self, id: WinId) -> Option<MouseAction> {
         let w = self.windows.get_mut(&id)?;
         w.close_requested = true;
-        if w.kill_on_close { w.owner } else { None }
+        if w.terminal {
+            Some(MouseAction::CloseTerminal(id))
+        } else if w.kill_on_close {
+            w.owner.map(MouseAction::Kill)
+        } else {
+            None
+        }
     }
 
     /// 入力スレッドから: キーをフォーカスのあるウィンドウへ
     fn on_key(&mut self, ev: KeyEvent) {
-        let target = match self.mode {
-            Mode::Fullscreen => self.foreground(),
-            Mode::Desktop => self.focused().unwrap_or(CONSOLE),
-        };
-        // 端末の Ctrl+C は、シェルが待っている前面のプロセスを止めるのに使った（キーボードの割り込みで）。
-        // 入力としては渡さない（後でシェルが ^C として読んでしまわないように）
-        if target == CONSOLE && ev.ch == Some('\x03') && crate::process::foreground().is_some() {
-            return;
-        }
+        let target = self.focused().unwrap_or(CONSOLE);
         if let Some(w) = self.windows.get_mut(&target) {
+            // 端末の Ctrl+C は、シェルが待っている前面のプロセスを止めるのに使った（キーボードの割り込みで）。
+            // 入力としては渡さない（後でシェルが ^C として読んでしまわないように）
+            if w.terminal && ev.ch == Some('\x03') && w.fg_proc.is_some() {
+                return;
+            }
             if !w.keys.push(ev) {
                 klog!("gui: key queue of window {} is full, key dropped", target);
             }
         }
     }
 
-    /// Ctrl+C で止める相手: フォーカスのあるウィンドウがアプリのものならその持ち主
-    pub fn focused_owner(&self) -> Option<TaskId> {
-        let id = match self.mode {
-            Mode::Fullscreen => self.foreground(),
-            Mode::Desktop => self.focused()?,
-        };
-        if id == CONSOLE { None } else { self.windows.get(&id)?.owner }
+    /// Ctrl+C で止める相手: フォーカスのあるウィンドウが端末ならシェルが待っているプロセス、
+    /// アプリのものならその持ち主
+    pub fn interrupt_target(&self) -> Option<TaskId> {
+        let w = self.windows.get(&self.focused()?)?;
+        if w.terminal { w.fg_proc } else { w.owner }
     }
 
     /// パニックのとき: 全画面のコンソールに戻す
@@ -602,12 +691,15 @@ impl Screen {
         self.mode = Mode::Fullscreen;
         self.console_w = self.width;
         self.console_h = self.height;
+        self.console_y = 0;
         self.order.retain(|&w| w != CONSOLE);
         self.order.push(CONSOLE);
         self.cursor_visible = false;
         if let Some(c) = self.windows.get_mut(&CONSOLE) {
             c.w = self.width;
             c.h = self.height;
+            c.x = 0;
+            c.y = 0;
         }
         vga::set_palette(&palette::standard());
         let h = self.height;
@@ -649,19 +741,28 @@ impl Screen {
             Mode::Fullscreen => {
                 row.fill(palette::BLACK);
                 let fg = self.foreground();
-                if fg == CONSOLE || !self.windows.contains_key(&fg) {
+                let top = match self.windows.get(&fg) {
+                    Some(win) => win.y.max(0) as usize,
+                    None => self.console_y,
+                };
+                if y < top {
+                    // 端末の上の行はステータスバー
+                    // SAFETY: 同上
+                    let bar = unsafe { &*BAR_BUF.as_ptr() };
+                    if y < FS_BAR_H {
+                        row.copy_from_slice(&bar[y * self.width..(y + 1) * self.width]);
+                    }
+                } else if let Some(win) = self.windows.get(&fg) {
+                    if y - top < win.h {
+                        let n = win.w.min(row.len());
+                        row[..n].copy_from_slice(&self.client_row(fg, y - top)[..n]);
+                    }
+                } else if y - top < self.console_h {
+                    // まだウィンドウを登録していない（起動直後）
                     // SAFETY: 同上
                     let buf = unsafe { &*CONSOLE_BUF.as_ptr() };
-                    let w = self.console_w.min(row.len());
-                    if y < self.console_h {
-                        row[..w].copy_from_slice(&buf[y * self.console_w..y * self.console_w + w]);
-                    }
-                } else {
-                    let win = &self.windows[&fg];
-                    if y < win.h {
-                        let n = win.w.min(row.len());
-                        row[..n].copy_from_slice(&self.client_row(fg, y)[..n]);
-                    }
+                    let (r, w) = (y - top, self.console_w.min(row.len()));
+                    row[..w].copy_from_slice(&buf[r * self.console_w..r * self.console_w + w]);
                 }
             }
             Mode::Desktop => {
@@ -784,20 +885,31 @@ const CURSOR_SHAPE: [&str; 12] = [
 
 /// マウスのスレッドから
 pub fn on_mouse(x: i32, y: i32, buttons: u8) {
-    let kill = {
+    let action = {
         let mut s = SCREEN.lock();
-        let k = s.on_mouse(x, y, buttons);
+        let a = s.on_mouse(x, y, buttons);
         s.present();
-        k
+        a
     };
-    if let Some(pid) = kill {
-        crate::process::request_kill(pid);
+    match action {
+        Some(MouseAction::Kill(pid)) => crate::process::request_kill(pid),
+        Some(MouseAction::CloseTerminal(tty)) => crate::process::kill_tty(tty),
+        None => {}
     }
     INPUT_WAIT.notify_all();
 }
 
 /// キーボードのスレッドから
 pub fn on_key(ev: KeyEvent) {
+    // Alt+F1〜F4: 端末の切り替え（無ければ作る）。押す・離すのどちらもアプリには渡さない
+    if ev.mods.alt() {
+        if let Some(n @ 1..=4) = ev.key.function_number() {
+            if ev.pressed {
+                crate::gfx::console::switch_to(n as usize);
+            }
+            return;
+        }
+    }
     SCREEN.lock().on_key(ev);
     INPUT_WAIT.notify_all();
 }
@@ -822,9 +934,14 @@ pub fn try_read_key(id: WinId) -> Option<KeyEvent> {
     SCREEN.lock().windows.get_mut(&id)?.keys.pop()
 }
 
-/// ウィンドウ `id` のキーが来るまで待つ。ウィンドウが無くなったか閉じるよう頼まれたら None
+/// ウィンドウ `id` のキーが来るまで待つ。ウィンドウが無くなったか閉じるよう頼まれたか、
+/// 自分（プロセス）が止めるよう頼まれたら None
 pub fn read_key(id: WinId) -> Option<KeyEvent> {
+    let me = crate::task::current_id();
     loop {
+        if crate::process::kill_pending(me) {
+            return None;
+        }
         {
             let mut s = SCREEN.lock();
             let w = s.windows.get_mut(&id)?;
@@ -838,8 +955,14 @@ pub fn read_key(id: WinId) -> Option<KeyEvent> {
         INPUT_WAIT.wait_until(|| {
             let s = SCREEN.lock();
             s.windows.get(&id).is_none_or(|w| !w.keys.is_empty() || w.close_requested)
+                || crate::process::kill_pending(me)
         });
     }
+}
+
+/// ウィンドウが無くなったか、閉じるよう頼まれている（端末のシェルが終わる合図）
+pub fn is_closing(id: WinId) -> bool {
+    SCREEN.lock().windows.get(&id).is_none_or(|w| w.close_requested)
 }
 
 /// ウィンドウの持ち主か
@@ -868,10 +991,14 @@ fn take_event(w: &mut Window) -> Option<Event> {
 }
 
 /// ウィンドウ `id` のイベントを待つ（閉じる要求・キー・マウスの順）。`timeout_ticks` が None なら
-/// いつまでも待つ。時間切れかウィンドウが無くなれば None
+/// いつまでも待つ。時間切れかウィンドウが無くなるか、自分が止めるよう頼まれたら None
 pub fn next_event(id: WinId, timeout_ticks: Option<u32>) -> Option<Event> {
+    let me = crate::task::current_id();
     let start = crate::drivers::pit::ticks();
-    let timed_out = || timeout_ticks.is_some_and(|t| crate::drivers::pit::ticks().wrapping_sub(start) >= t);
+    let timed_out = || {
+        timeout_ticks.is_some_and(|t| crate::drivers::pit::ticks().wrapping_sub(start) >= t)
+            || crate::process::kill_pending(me)
+    };
     loop {
         {
             let mut s = SCREEN.lock();

@@ -1,6 +1,6 @@
-//! テキストエディタ（コンソールの 40 桁 × 24 行を全部使う）
+//! テキストエディタ（端末全体を使う。大きさは起動時の端末の大きさ）
 //!
-//! 1 行目: ファイル名など、2〜23 行目: 本文、24 行目: キーの説明・メッセージ。
+//! 1 行目: ファイル名など、2 行目〜最後の 1 つ前の行: 本文、最後の行: キーの説明・メッセージ。
 //! Ctrl+S 保存（フロッピーへの書き戻しもする）, Ctrl+Q 終わる, Ctrl+F 探す, Ctrl+G 行へ移動,
 //! Ctrl+K 行を切り取る, Ctrl+U 貼り付ける, Ctrl+Home / Ctrl+End ファイルの先頭・末尾。
 //! Ctrl+C はカーネルがプログラムを止める（保存されない）。
@@ -19,12 +19,13 @@ use vibe_rt::{println, sys};
 
 vibe_rt::entry!(main);
 
-const COLS: usize = 40;
-const ROWS: usize = 24;
-const TEXT_ROWS: usize = ROWS - 2;
+/// 端末の大きさが分からないときの大きさ（320x200 の端末）
+const DEFAULT_SIZE: (usize, usize) = (40, 24);
 const HELP: &str = "^S Save ^Q Quit ^F Find ^K Cut ^U Paste";
 
 struct App {
+    cols: usize,
+    rows: usize,
     path: String,
     editor: Editor,
     is_new: bool,
@@ -45,9 +46,12 @@ fn main() -> i32 {
             return 1;
         }
     };
+    let (cols, rows) = sys::term_size().unwrap_or(DEFAULT_SIZE);
     let mut app = App {
+        cols,
+        rows,
         path: String::from(path),
-        editor: Editor::new(&text, COLS, TEXT_ROWS),
+        editor: Editor::new(&text, cols, rows - 2),
         is_new,
         message: None,
         quit_armed: false,
@@ -75,6 +79,7 @@ fn fit(s: &str, w: usize) -> String {
 
 impl App {
     fn render(&self) {
+        let (cols, rows) = (self.cols, self.rows);
         let e = &self.editor;
         let mut out = String::new();
         // 1 行目: ファイル名と位置
@@ -82,7 +87,7 @@ impl App {
         let name = if self.is_new { format!("{} (new)", self.path) } else { self.path.clone() };
         let flag = if e.is_modified() { "*" } else { " " };
         let pos = format!("{}:{}", row + 1, col + 1);
-        let title = format!("{}{flag}", fit(&format!(" {name}"), COLS - 1 - pos.len() - 1));
+        let title = format!("{}{flag}", fit(&format!(" {name}"), cols - 1 - pos.len() - 1));
         out.push_str(&format!("\x1b[1;1H\x1b[30;47m{}{pos} \x1b[0m", title));
         // 本文
         for (i, line) in e.visible_rows().iter().enumerate() {
@@ -90,7 +95,7 @@ impl App {
         }
         // 最後の行: メッセージかキーの説明
         let status = self.message.as_deref().unwrap_or(HELP);
-        out.push_str(&format!("\x1b[{ROWS};1H\x1b[30;47m{}\x1b[0m", fit(status, COLS)));
+        out.push_str(&format!("\x1b[{rows};1H\x1b[30;47m{}\x1b[0m", fit(status, cols)));
         let (r, c) = e.cursor_on_screen();
         out.push_str(&format!("\x1b[{};{}H", r + 2, c + 1));
         sys::write(abi::STDOUT, out.as_bytes());
@@ -182,11 +187,12 @@ impl App {
 
     /// 最後の行で 1 行入力する。Esc で取りやめ
     fn prompt(&mut self, label: &str) -> Option<String> {
+        let (cols, rows) = (self.cols, self.rows);
         let mut input = String::new();
         loop {
-            let line = fit(&format!("{label}{input}"), COLS);
-            let cursor = (label.len() + input.len()).min(COLS - 1) + 1;
-            vibe_rt::print!("\x1b[{ROWS};1H\x1b[30;47m{line}\x1b[0m\x1b[{ROWS};{cursor}H");
+            let line = fit(&format!("{label}{input}"), cols);
+            let cursor = (label.len() + input.len()).min(cols - 1) + 1;
+            vibe_rt::print!("\x1b[{rows};1H\x1b[30;47m{line}\x1b[0m\x1b[{rows};{cursor}H");
             let k = vibe_rt::wait_key();
             match (k.key(), k.ch()) {
                 (key::ESCAPE, _) => return None,
@@ -194,7 +200,7 @@ impl App {
                 (key::BACKSPACE, _) => {
                     input.pop();
                 }
-                (_, Some(c)) if !c.is_control() && label.len() + input.len() < COLS - 1 => input.push(c),
+                (_, Some(c)) if !c.is_control() && label.len() + input.len() < cols - 1 => input.push(c),
                 _ => {}
             }
         }

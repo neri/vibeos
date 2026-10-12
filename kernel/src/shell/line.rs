@@ -139,7 +139,7 @@ impl LineEditor {
         let mut hist_pos = self.history.len();
         let mut draft = String::new();
         loop {
-            let Some(ev) = gui::read_key(gui::CONSOLE) else {
+            let Some(ev) = gui::read_key(crate::task::sched::current_tty()) else {
                 return Input::Cancelled;
             };
             if !ev.pressed {

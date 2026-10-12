@@ -82,6 +82,8 @@ pub struct Task {
     cr3: usize,
     /// ユーザプロセスならそのアドレス空間など
     user: Option<UserRef>,
+    /// つながっている端末（端末のウィンドウの番号）。標準入出力とキーはここへ
+    tty: u32,
 }
 
 pub struct TaskInfo {
@@ -89,6 +91,9 @@ pub struct TaskInfo {
     pub name: String,
     pub state: State,
     pub ticks: u32,
+    pub tty: u32,
+    /// ユーザプロセスか
+    pub user: bool,
 }
 
 struct Scheduler {
@@ -159,6 +164,7 @@ pub fn init() {
                 fs: TaskFs::new_child(&[]),
                 cr3: paging::kernel_page_directory(),
                 user: None,
+                tty: 0,
             }),
         );
         s.current = id;
@@ -254,6 +260,8 @@ fn create(name: &str, start: Start, make_ready: bool, user: Option<UserRef>) -> 
     // カレントディレクトリは作ったタスクから受け継ぐ（ロックの順番を守るため SCHED の外で読む）
     let parent_cwd: Vec<String> = if is_started() { current_fs().lock().cwd_parts().to_vec() } else { Vec::new() };
     let fs = TaskFs::new_child(&parent_cwd);
+    // 端末も作ったタスクから受け継ぐ
+    let tty = current_tty();
     let cr3 = match &user {
         Some(u) => u.lock().space.page_directory(),
         None => paging::kernel_page_directory(),
@@ -272,6 +280,7 @@ fn create(name: &str, start: Start, make_ready: bool, user: Option<UserRef>) -> 
             fs,
             cr3,
             user,
+            tty,
         }),
     );
     if make_ready {
@@ -424,6 +433,19 @@ pub fn current_name() -> String {
     s.task(cur).name.clone()
 }
 
+/// 今のタスクの端末（スケジューラが動く前は最初の端末）
+pub fn current_tty() -> u32 {
+    let s = SCHED.lock();
+    s.tasks.get(&s.current).map_or(0, |t| t.tty)
+}
+
+/// 今のタスクの端末を変える（新しい端末のシェルが始めに呼ぶ）
+pub fn set_current_tty(tty: u32) {
+    let mut s = SCHED.lock();
+    let cur = s.current;
+    s.task(cur).tty = tty;
+}
+
 /// タスクがまだある（終わって回収されていない）か
 pub fn exists(id: TaskId) -> bool {
     SCHED.lock().tasks.contains_key(&id)
@@ -468,7 +490,14 @@ pub fn tasks() -> Vec<TaskInfo> {
         .lock()
         .tasks
         .values()
-        .map(|t| TaskInfo { id: t.id, name: t.name.clone(), state: t.state, ticks: t.ticks })
+        .map(|t| TaskInfo {
+            id: t.id,
+            name: t.name.clone(),
+            state: t.state,
+            ticks: t.ticks,
+            tty: t.tty,
+            user: t.user.is_some(),
+        })
         .collect()
 }
 

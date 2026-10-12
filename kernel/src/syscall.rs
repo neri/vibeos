@@ -59,6 +59,10 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             vibe_abi::CTRL_C_TAKE => Ok(process::take_ctrl_c() as u32),
             _ => Err(err::EINVAL),
         },
+        nr::TERM_SIZE => {
+            let (cols, rows) = crate::gfx::console::size().ok_or(err::ENOTTY)?;
+            Ok((cols as u32) << 16 | rows as u32)
+        }
         nr::SET_TIME => {
             crate::drivers::rtc::set_secs(a);
             Ok(0)
@@ -137,7 +141,7 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
                 // タイトルはプログラムの名前（拡張子を除く）
                 let name = sched::current_name();
                 let title = name.rsplit_once('.').map_or(name.as_str(), |(base, _)| base);
-                let id = s.create_window(APP_W, APP_H, title, Some(sched::current_id()), true);
+                let id = s.create_window(APP_W, APP_H, title, Some(sched::current_id()), true, Some(sched::current_tty()));
                 u.display = Some(id);
             }
             s.set_cursor_visible(a & vibe_abi::GFX_CURSOR != 0);
@@ -187,7 +191,8 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
                 return Err(err::EINVAL);
             }
             let title = user_str(user, c, d)?;
-            let id = SCREEN.lock().create_window(w, h, &title, Some(sched::current_id()), false);
+            let tty = Some(sched::current_tty());
+            let id = SCREEN.lock().create_window(w, h, &title, Some(sched::current_id()), false, tty);
             user.lock().windows.push(id);
             SCREEN.lock().present();
             Ok(id)
@@ -242,7 +247,7 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
         }
         nr::GETKEY => {
             // 画面（ウィンドウ）を開いていればそこへのキー、なければ端末へのキー
-            let win = user.lock().display.unwrap_or(gui::CONSOLE);
+            let win = user.lock().display.unwrap_or_else(sched::current_tty);
             let ev = if a != 0 { gui::try_read_key(win) } else { gui::read_key(win) };
             Ok(ev.map_or(0, |e| {
                 KeyEvent::encode(e.ch, e.key.0, e.pressed, e.mods.shift(), e.mods.ctrl(), e.mods.alt())

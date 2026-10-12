@@ -167,3 +167,9 @@ pub fn win_event(win: i32, timeout_ms: u32) -> Option<vibe_abi::WinEvent> {
 pub fn win_close(win: i32) -> i32 {
     syscall(nr::WIN_CLOSE, win as u32, 0, 0, 0, 0)
 }
+
+/// つながっている端末の大きさ（桁, 行）。端末が無ければ None
+pub fn term_size() -> Option<(usize, usize)> {
+    let v = syscall(nr::TERM_SIZE, 0, 0, 0, 0, 0);
+    (v > 0).then(|| ((v as u32 >> 16) as usize, (v as u32 & 0xFFFF) as usize))
+}

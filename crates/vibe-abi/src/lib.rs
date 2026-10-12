@@ -113,6 +113,8 @@ pub mod nr {
     pub const CTRL_C: u32 = 39;
     /// set_time(secs) -> 0。時計を 1970 年からの秒（現地時刻）に合わせ、CMOS にも書く
     pub const SET_TIME: u32 = 40;
+    /// term_size() -> (桁 << 16) | 行。プロセスがつながっている端末の大きさ。端末が無ければ -ENOTTY
+    pub const TERM_SIZE: u32 = 41;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -158,6 +160,7 @@ pub mod err {
     pub const ENOSPC: i32 = 28;
     pub const EROFS: i32 = 30;
     pub const ENOTEMPTY: i32 = 39;
+    pub const ENOTTY: i32 = 25;
 
     pub fn name(e: i32) -> &'static str {
         match e {
@@ -177,6 +180,7 @@ pub mod err {
             ENOSPC => "no space left",
             EROFS => "read-only",
             ENOTEMPTY => "directory not empty",
+            ENOTTY => "no terminal",
             EINTR => "interrupted",
             EAGAIN => "try again",
             ENODEV => "no network card",

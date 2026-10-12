@@ -8,8 +8,6 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use core::sync::atomic::{AtomicU32, Ordering};
-
 use vibe_abi::{EXIT_INTERRUPTED, EXIT_KILLED, USER_BASE, USER_END, USER_STACK_SIZE, USER_STACK_TOP, err};
 use vibe_alloc::frame::PAGE_SIZE;
 use xmas_elf::ElfFile;
@@ -236,10 +234,6 @@ pub fn resolve_program(name: &str) -> String {
     path
 }
 
-const NO_PROCESS: u32 = u32::MAX;
-/// シェルが終わるのを待っている（端末のキーボードを使っている）プロセス
-static FOREGROUND: AtomicU32 = AtomicU32::new(NO_PROCESS);
-
 /// 止めるよう頼まれたプロセス（Ctrl+C・ウィンドウの [x]）と、Ctrl+C によるものか。
 /// 割り込みの中でも使うので固定長
 struct KillList {
@@ -256,14 +250,19 @@ pub fn detach(id: TaskId) {
     DETACHED.lock().insert(id, ());
 }
 
+/// 今の端末でシェルが終わるのを待っている（端末のキーボードを使っている）プロセスを設定する
 pub fn set_foreground(id: Option<TaskId>) {
-    FOREGROUND.store(id.unwrap_or(NO_PROCESS), Ordering::Relaxed);
+    SCREEN.lock().set_terminal_foreground(sched::current_tty(), id);
 }
 
-/// シェルが終わるのを待っているプロセス
-pub fn foreground() -> Option<TaskId> {
-    let f = FOREGROUND.load(Ordering::Relaxed);
-    (f != NO_PROCESS).then_some(f)
+/// 端末が閉じられた: その端末につながっているプロセスをすべて止める（シェルは自分で終わる）
+pub fn kill_tty(tty: WinId) {
+    for t in sched::tasks() {
+        if t.user && t.tty == tty && t.state != sched::State::Dead {
+            klog!("term: stopping {} ({})", t.name, t.id);
+            request_kill(t.id);
+        }
+    }
 }
 
 /// プロセスを止めるよう頼む。ユーザモードへ戻る直前に止まる（割り込みの中から呼んでよい）
@@ -347,7 +346,7 @@ fn mark_ctrl_c(me: TaskId) -> bool {
 /// キーボードの割り込みから: Ctrl+C が押された。フォーカスのあるウィンドウがアプリのものなら
 /// その持ち主、端末ならシェルが待っているプロセスを止める
 pub fn request_interrupt() {
-    let target = SCREEN.lock().focused_owner().or_else(foreground);
+    let target = SCREEN.lock().interrupt_target();
     if let Some(id) = target {
         request_kill_with(id, true);
     }
