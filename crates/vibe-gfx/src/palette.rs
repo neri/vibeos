@@ -28,6 +28,9 @@ pub const WHITE: u8 = 15;
 
 pub const GRAY_BASE: u8 = 16;
 pub const CUBE_BASE: u8 = 32;
+
+/// デスクトップの背景の色（落ち着いた青緑。カラーキューブの 0,2,1）
+pub const DESKTOP_BG: u8 = CUBE_BASE + 13;
 pub const RESERVED_BASE: u8 = 248;
 /// マウスカーソル用（予約領域）
 pub const CURSOR_BLACK: u8 = 254;

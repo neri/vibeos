@@ -201,6 +201,7 @@ pub fn read_dir(path: &str) -> Result<Vec<DirEntry>> {
 }
 
 /// ファイルを読むために開く
+#[allow(dead_code)]
 pub fn open(path: &str) -> Result<Fd> {
     open_with(path, 0)
 }
@@ -286,20 +287,6 @@ pub fn dup2(old: Fd, new: Fd) -> Result<Fd> {
     Ok(new)
 }
 
-/// fd 0〜2 を入れ替えて、前のものを返す（シェルがリダイレクトの間だけつなぎ替えるのに使う）
-pub fn swap_stdio(stdio: Stdio) -> Stdio {
-    let tfs = current();
-    let mut t = tfs.lock();
-    if t.files.len() < 3 {
-        t.files.resize(3, None);
-    }
-    let mut old: Stdio = [None, None, None];
-    for (i, d) in stdio.into_iter().enumerate() {
-        old[i] = core::mem::replace(&mut t.files[i], d);
-    }
-    old
-}
-
 /// 今のタスクの fd 0〜2 の写し
 pub fn stdio() -> Stdio {
     current().lock().stdio()
@@ -326,6 +313,7 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
 }
 
 /// 書いたバイト数を返す
+#[allow(dead_code)]
 pub fn write(fd: Fd, data: &[u8]) -> Result<usize> {
     with_file(fd, |file| write_open(file, data))
 }
@@ -351,6 +339,7 @@ pub fn write_open(file: &mut OpenFile, data: &[u8]) -> Result<usize> {
 }
 
 /// ファイルを丸ごと書く（無ければ作る）
+#[allow(dead_code)]
 pub fn write_file(path: &str, data: &[u8]) -> Result<()> {
     let fd = open_with(path, OPEN_WRITE | OPEN_CREATE | OPEN_TRUNCATE)?;
     let r = write(fd, data);

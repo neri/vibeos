@@ -50,10 +50,6 @@ impl LineEditor {
         LineEditor(vibe_line::LineEditor::new())
     }
 
-    pub fn history(&self) -> impl Iterator<Item = &String> {
-        self.0.history()
-    }
-
     /// プロンプトを出して 1 行読む
     pub fn read_line(&mut self, prompt: &str) -> Input {
         self.0.read_line(&mut KernelTerm, prompt)

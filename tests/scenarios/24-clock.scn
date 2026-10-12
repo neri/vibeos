@@ -11,7 +11,7 @@ key ret
 wait-serial 2026-03-14 15:09:
 wait-serial Sat
 # 書いたファイルにその日時が記録される（シェルの ls とホスト側の mdir の両方で）
-type write stamp.txt hi
+type echo hi > stamp.txt
 key ret
 type ls
 key ret

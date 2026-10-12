@@ -7,6 +7,9 @@
 //! argv A B（引数がちょうど A B で、環境変数 FOO がある）| spawnenv（VIBE=1 を足して checkenv を起動）|
 //! checkenv（FOO と VIBE が親から届いた）
 //!
+//! カーネルの例外の試験（パニック画面になる。fault-test 機能のカーネルだけ。DECISIONS.md D-042）:
+//! kdivzero | knull | koverflow | kpanic
+//!
 //! シェルのパイプとリダイレクトの試験: upper（標準入力を大文字にして標準出力へ）|
 //! stderr（標準出力と標準エラーに 1 行ずつ）
 
@@ -103,11 +106,22 @@ fn main() -> i32 {
                 sys::write(abi::STDOUT, chunk);
             }
         }
+        k @ ("kdivzero" | "knull" | "koverflow" | "kpanic") => {
+            let kind = match k {
+                "kdivzero" => abi::FAULT_DIVZERO,
+                "knull" => abi::FAULT_NULL,
+                "koverflow" => abi::FAULT_STACK,
+                _ => abi::FAULT_PANIC,
+            };
+            let r = sys::fault_test(kind);
+            println!("fault_test = {r} (needs a kernel built with fault-test)");
+            return 1;
+        }
         "stderr" => {
             sys::write(abi::STDOUT, b"fault: to stdout\n");
             sys::write(abi::STDERR, b"fault: to stderr\n");
         }
-        other => println!("usage: fault null|kernel|cli|div0|stack|badptr|spin|exit N|pipe|fds|argv|spawnenv|checkenv|upper|stderr (got {other:?})"),
+        other => println!("usage: fault null|kernel|cli|div0|stack|badptr|spin|exit N|pipe|fds|argv|spawnenv|checkenv|upper|stderr|kdivzero|knull|koverflow|kpanic (got {other:?})"),
     }
     0
 }

@@ -56,7 +56,8 @@ pub fn write(fd: Fd, data: &[u8]) -> Result<usize, i32> {
     }
 }
 
-/// 全部書く（途中で止まったらエラー）
+/// 全部書く（途中で止まったらエラー。テスト用）
+#[allow(dead_code)]
 pub fn write_all(fd: Fd, mut data: &[u8]) -> Result<(), i32> {
     while !data.is_empty() {
         let n = write(fd, data)?;

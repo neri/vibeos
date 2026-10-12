@@ -321,12 +321,40 @@ pub fn set_foreground(pids: &[i32]) -> i32 {
     syscall(nr::SET_FOREGROUND, pids.as_ptr() as u32, pids.len() as u32, 0, 0, 0)
 }
 
-/// カーネルの内蔵コマンドを動かす（docs/plans/user-shell.md S3 までのつなぎ）
-pub fn kcmd(argv: &[&str]) -> i32 {
-    let mut block = alloc::vec::Vec::new();
-    for a in argv {
-        block.extend_from_slice(a.as_bytes());
-        block.push(0);
+/// 計算機を起動し直す
+pub fn reboot() -> ! {
+    syscall(nr::REBOOT, 0, 0, 0, 0, 0);
+    unreachable!()
+}
+
+/// デスクトップの背景の画像の大きさ（幅, 高さ）。デスクトップでなければ Err(EPERM)
+pub fn wallpaper_size() -> Result<(usize, usize), i32> {
+    match syscall(nr::WALLPAPER_SIZE, 0, 0, 0, 0, 0) {
+        v if v > 0 => Ok(((v as u32 >> 16) as usize, (v as u32 & 0xFFFF) as usize)),
+        e => Err(-e),
     }
-    syscall(nr::KCMD, block.as_ptr() as u32, block.len() as u32, 0, 0, 0)
+}
+
+/// 背景の画像（標準のパレットの番号、幅 × 高さ）。空なら単色に戻す
+pub fn wallpaper_set(pixels: &[u8]) -> i32 {
+    syscall(nr::WALLPAPER_SET, pixels.as_ptr() as u32, pixels.len() as u32, 0, 0, 0)
+}
+
+/// CMOS の時計を読み直す。Ok(1970 年からの秒)、読めない値なら Err(読んだままの 秒・分・時・日・月・年)
+pub fn cmos_time() -> Result<u32, [u8; 6]> {
+    let mut raw = [0u8; 6];
+    match syscall(nr::CMOS_TIME, raw.as_mut_ptr() as u32, 0, 0, 0, 0) {
+        v if v >= 0 => Ok(v as u32),
+        _ => Err(raw),
+    }
+}
+
+/// 3 つのカーネルスレッドが端末の右上に数を描く（5 秒）
+pub fn demo() -> i32 {
+    syscall(nr::DEMO, 0, 0, 0, 0, 0)
+}
+
+/// カーネルの中でわざと例外を起こす（テスト用のカーネルだけ。ほかは -ENOSYS）
+pub fn fault_test(kind: u32) -> i32 {
+    syscall(nr::FAULT_TEST, kind, 0, 0, 0, 0)
 }

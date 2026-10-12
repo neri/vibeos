@@ -4,9 +4,9 @@ timeout 40
 wait-serial fdc: drive A ready
 wait-serial VIBEOS READY
 wait-serial VibeOS shell
-type write note.txt hello disk
+type echo hello disk > note.txt
 key ret
-type append note.txt second line
+type echo second line >> note.txt
 key ret
 type cat note.txt
 key ret

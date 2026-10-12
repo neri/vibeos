@@ -16,6 +16,7 @@ mod print;
 mod arch;
 mod bootinfo;
 mod clipboard;
+mod demo;
 mod drivers;
 mod fs;
 mod gfx;

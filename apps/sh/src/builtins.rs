@@ -1,14 +1,15 @@
 //! アプリの内蔵コマンド（このプロセスの中で動く。終了コードを返す）
 //!
 //! 言語の内蔵コマンド（`echo`・`test`・`export`・`exit` など）は `vibe_shell::interp` にある。
-//! 出力は標準出力、エラーは標準エラー。カーネルの中でしかできないもの（`hwclock`・`wallpaper` など）は
-//! 今はカーネルの内蔵コマンドを `kcmd` で呼ぶ（S3 でアプリとシステムコールにする）。
+//! 出力は標準出力、エラーは標準エラー。カーネルの中でしかできないもの（`reboot`・`beep`・`hwclock`・`demo`）は
+//! アプリ。`wallpaper` は名前が 8 文字を超えて FAT の名前（8.3）にできないので、ここに置く（DECISIONS.md D-045）。
+//! ファイルに書くのは `echo … >` と `>>`
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use vibe_rt::abi::{self, DirEntry, OPEN_APPEND, OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE, TICK_HZ, err};
+use vibe_rt::abi::{self, DirEntry, OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE, TICK_HZ, err};
 use vibe_rt::{eprintln, io, print, println, sys};
 
 use crate::host::AppHost;
@@ -25,8 +26,6 @@ const BUILTINS: &[Builtin] = &[
     Builtin { name: "clear", usage: "clear", help: "clear the screen", run: clear },
     Builtin { name: "ls", usage: "ls [dir]", help: "list a directory", run: ls },
     Builtin { name: "cat", usage: "cat [file...]", help: "print files (or standard input)", run: cat },
-    Builtin { name: "write", usage: "write file text...", help: "write text to a file (replaces it)", run: write },
-    Builtin { name: "append", usage: "append file text...", help: "add a line of text to a file", run: append },
     Builtin { name: "cp", usage: "cp from to", help: "copy a file", run: cp },
     Builtin { name: "rm", usage: "rm path", help: "remove a file or an empty directory", run: rm },
     Builtin { name: "mv", usage: "mv from to", help: "rename or move a file or directory", run: mv },
@@ -34,7 +33,6 @@ const BUILTINS: &[Builtin] = &[
     Builtin { name: "sync", usage: "sync", help: "save changes to the floppy disk", run: sync },
     Builtin { name: "cd", usage: "cd [dir]", help: "change directory", run: cd },
     Builtin { name: "pwd", usage: "pwd", help: "print current directory", run: pwd },
-    Builtin { name: "hwclock", usage: "hwclock", help: "read the CMOS clock", run: kernel },
     Builtin { name: "sleep", usage: "sleep [ms]", help: "sleep (default 500ms, checks timing)", run: sleep },
     Builtin { name: "history", usage: "history", help: "command history", run: history },
     Builtin { name: "term", usage: "term", help: "open a new terminal (Alt+F1-F4 to switch)", run: term },
@@ -42,15 +40,8 @@ const BUILTINS: &[Builtin] = &[
         name: "wallpaper",
         usage: "wallpaper file.bmp [tile|center] | none",
         help: "set the desktop background image",
-        run: kernel,
+        run: wallpaper,
     },
-    Builtin { name: "demo", usage: "demo", help: "3 threads draw counters for 5s", run: kernel },
-    Builtin { name: "beep", usage: "beep [hz] [ms]", help: "sound the PC speaker", run: kernel },
-    Builtin { name: "reboot", usage: "reboot", help: "restart the computer", run: kernel },
-    Builtin { name: "divzero", usage: "divzero", help: "test: divide by zero", run: kernel },
-    Builtin { name: "nullptr", usage: "nullptr", help: "test: read address 0", run: kernel },
-    Builtin { name: "overflow", usage: "overflow", help: "test: kernel stack overflow", run: kernel },
-    Builtin { name: "panic", usage: "panic", help: "test: kernel panic", run: kernel },
 ];
 
 pub fn find(name: &str) -> Option<&'static Builtin> {
@@ -200,31 +191,6 @@ fn write_to(path: &str, data: &[u8], flags: u32) -> Result<(), i32> {
     r
 }
 
-fn write_text(args: &[&str], flags: u32) -> i32 {
-    let name = args[0];
-    let Some(path) = args.get(1) else {
-        eprintln!("usage: {name} file text...");
-        return 2;
-    };
-    let mut text = args[2..].join(" ");
-    text.push('\n');
-    match write_to(path, text.as_bytes(), flags) {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("{name}: {path}: {}", err::name(e));
-            1
-        }
-    }
-}
-
-fn write(_: &mut AppHost, args: &[&str]) -> i32 {
-    write_text(args, OPEN_TRUNCATE)
-}
-
-fn append(_: &mut AppHost, args: &[&str]) -> i32 {
-    write_text(args, OPEN_APPEND)
-}
-
 fn cp(_: &mut AppHost, args: &[&str]) -> i32 {
     let [_, from, to] = args else {
         eprintln!("usage: cp from to");
@@ -349,13 +315,36 @@ fn term(_: &mut AppHost, _: &[&str]) -> i32 {
     0
 }
 
-/// カーネルの中でしかできないコマンド（S3 まで）
-fn kernel(_: &mut AppHost, args: &[&str]) -> i32 {
-    match sys::kcmd(args) {
-        r if r < 0 => {
-            eprintln!("{}: {}", args[0], err::name(-r));
+/// デスクトップの背景の画像: BMP を読んで標準のパレットに直し、背景の大きさに並べてカーネルに渡す
+fn wallpaper(_: &mut AppHost, args: &[&str]) -> i32 {
+    use vibe_rt::gfx_lib::bmp::Bmp;
+    use vibe_rt::gfx_lib::{palette, wallpaper};
+    const USAGE: &str = "usage: wallpaper file.bmp [tile|center] | none";
+    if args[1..] == ["none"] {
+        sys::wallpaper_set(&[]);
+        return 0;
+    }
+    let setting = args[1..].join(" ");
+    let Some((path, fit)) = (args.len() > 1).then(|| wallpaper::parse_setting(&setting)).flatten() else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+    let set = || -> Result<(), String> {
+        let (sw, sh) = sys::wallpaper_size().map_err(|_| String::from("only on the desktop"))?;
+        let data = vibe_rt::read_file(path).map_err(|e| String::from(err::name(e)))?;
+        let bmp = Bmp::parse(&data).map_err(|e| format!("{e}"))?;
+        let pixels = bmp.to_standard_palette();
+        let out = wallpaper::compose(&pixels, bmp.width as usize, bmp.height as usize, sw, sh, fit, palette::DESKTOP_BG);
+        match sys::wallpaper_set(&out) {
+            0 => Ok(()),
+            e => Err(String::from(err::name(-e))),
+        }
+    };
+    match set() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("wallpaper: {path}: {e}");
             1
         }
-        _ => 0,
     }
 }

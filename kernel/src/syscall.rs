@@ -217,17 +217,52 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             process::set_foreground(&ids);
             Ok(0)
         }
-        nr::KCMD => {
-            if b as usize > 4096 {
-                return Err(err::EINVAL);
-            }
-            let text = user_bytes_str(user, a, b)?;
-            let argv = split_nul(&text);
-            if argv.is_empty() {
-                return Err(err::EINVAL);
-            }
-            crate::shell::run_kernel_command(&argv).map(|_| 0)
+        nr::REBOOT => {
+            klog!("reboot requested by {}", sched::current_name());
+            crate::drivers::power::reboot()
         }
+        nr::WALLPAPER_SIZE => {
+            let s = SCREEN.lock();
+            if s.mode() != gui::Mode::Desktop {
+                return Err(err::EPERM);
+            }
+            let (w, h) = s.wallpaper_size();
+            Ok((w as u32) << 16 | h as u32)
+        }
+        nr::WALLPAPER_SET => {
+            if b == 0 {
+                crate::gfx::wallpaper::clear();
+                return Ok(0);
+            }
+            let (w, h) = {
+                let s = SCREEN.lock();
+                if s.mode() != gui::Mode::Desktop {
+                    return Err(err::EPERM);
+                }
+                s.wallpaper_size()
+            };
+            if b as usize != w * h {
+                return Err(err::EINVAL);
+            }
+            check_user(user, a, b, false)?;
+            // SAFETY: 上で今のプロセスが読めるページだと確かめた
+            let pixels = unsafe { core::slice::from_raw_parts(a as *const u8, b as usize) }.to_vec();
+            let mut s = SCREEN.lock();
+            s.set_wallpaper(Some(pixels.into_boxed_slice()));
+            s.present();
+            Ok(0)
+        }
+        nr::CMOS_TIME => match crate::drivers::rtc::read_cmos() {
+            Ok(t) => Ok(t.to_unix() as u32),
+            Err(raw) => {
+                copy_to_user(user, a, &raw)?;
+                Err(err::EIO)
+            }
+        },
+        nr::DEMO => {
+            if crate::demo::start() { Ok(0) } else { Err(err::EAGAIN) }
+        }
+        nr::FAULT_TEST => fault_test(a),
         nr::FS_INFO => {
             let (free, total) = fs::space().map_err(process::errno_of)?;
             let info = FsInfo { free_bytes: free as u32, total_bytes: total as u32, dirty_sectors: fs::dirty_sectors() };
@@ -463,6 +498,46 @@ fn sys_read(user: &UserRef, fd: u32, buf: u32, len: u32) -> SysResult {
     // SAFETY: 上で確かめた
     unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf as *mut u8, n) };
     Ok(n as u32)
+}
+
+/// わざとカーネルの中で例外を起こす（パニック画面のシナリオ用のカーネルだけ）
+#[cfg(feature = "fault-test")]
+fn fault_test(kind: u32) -> SysResult {
+    match kind {
+        vibe_abi::FAULT_DIVZERO => {
+            // Rust の割り算はゼロ除算を事前に検査して panic するので、CPU の例外を起こすには div 命令を直接使う
+            // SAFETY: わざと #DE を起こす（例外ハンドラの確認用）
+            unsafe { core::arch::asm!("div {0}", in(reg) 0u32, inout("eax") 1u32 => _, inout("edx") 0u32 => _) };
+        }
+        vibe_abi::FAULT_NULL => {
+            // SAFETY: わざと 0 番地を読んでページフォルトを起こす（ページングの確認用）
+            let v = unsafe { core::ptr::read_volatile(core::ptr::null::<u32>()) };
+            kprintln!("read {v:#x} from address 0 (should not happen)");
+        }
+        vibe_abi::FAULT_STACK => {
+            kprintln!("overflowing the stack...");
+            recurse(0);
+        }
+        vibe_abi::FAULT_PANIC => panic!("panic requested by fault_test"),
+        _ => return Err(err::EINVAL),
+    }
+    Ok(0)
+}
+
+/// スタックを使い切るまで再帰する（ガードページと二重フォルト処理の確認用）
+#[cfg(feature = "fault-test")]
+#[inline(never)]
+#[allow(unconditional_recursion)]
+fn recurse(depth: u32) -> u32 {
+    let buf = [depth as u8; 512];
+    let r = recurse(depth + 1);
+    // 再帰の後で buf を使うので、末尾呼び出しの最適化で消えない
+    core::hint::black_box(&buf)[0] as u32 + r
+}
+
+#[cfg(not(feature = "fault-test"))]
+fn fault_test(_: u32) -> SysResult {
+    Err(err::ENOSYS)
 }
 
 /// 0 で区切った文字列の並び（各要素の後ろに 0）を分ける

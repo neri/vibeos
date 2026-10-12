@@ -231,7 +231,8 @@ pub fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> TaskId {
     create(name, Start::Kernel(Box::new(f)), true, None, None)
 }
 
-/// カーネルスレッドを、fd 0〜2 を `stdio` にして作る
+/// カーネルスレッドを、fd 0〜2 を `stdio` にして作る（テスト用）
+#[allow(dead_code)]
 pub fn spawn_with_stdio(name: &str, stdio: Stdio, f: impl FnOnce() + Send + 'static) -> TaskId {
     create(name, Start::Kernel(Box::new(f)), true, None, Some(stdio))
 }

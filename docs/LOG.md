@@ -487,3 +487,14 @@
 - 閉じていない引用符は文法の誤りでなく続きの行を読むようになったので、`54-pipe` の文法の誤りの例を `echo abc | | cat` にした。`help echo` の使い方の文は前のまま（`10-shell` が見る）
 - テストランナーに `disk-put FILE PATH`（ホストのファイルをイメージの写しに入れる）を足した。テスト用のスクリプトは `tests/scripts/`（`sum.sh`・`fizz.sh`）
 - シナリオ `58-sh-language`（スクリプトで 1〜10 の和と FizzBuzz、export した変数だけが子に見える・`X=値 cmd`、`$?`、`&&`・`||`、`for` と `*.txt`、`if` と `test -d`、続きの行、`while true` を Ctrl+C、スクリプトの孫も Ctrl+C で止まる）
+
+## 2026-10-12 ユーザ空間のシェル S3: カーネルの内蔵コマンドの片付け（Phase 43）
+
+- カーネルの `shell/commands.rs`（内蔵コマンドの表）を消した。カーネルの `shell` は、端末で `SH.ELF` を起動する `run_terminal` と、予備のシェル（プログラムを起動するだけ。`|`・`<`・`>`・`&` は使える）だけになった。つなぎのシステムコール `kcmd`（64）も消した
+- システムコール `reboot`（65）・`wallpaper_size`（66）・`wallpaper_set`（67）・`cmos_time`（68）・`demo`（69）・`fault_test`（70）。`demo` のスレッドは `kernel/src/demo.rs` に移した
+- アプリ `reboot`・`beep`（`sound` と `sleep` だけで書ける）・`hwclock`・`demo`。出力は前と同じ。`wallpaper` は名前が 8.3 にならないので `sh` の内蔵コマンドにした（BMP の読み込みと並べ方を `sh` の中で行い、出来上がった画像をカーネルに渡す。DECISIONS.md D-045）。背景の色は `vibe_gfx::palette::DESKTOP_BG` に移した
+- `write`・`append` は消した（`echo … >`・`>>`）。使っていた `17-write-sync`・`24-clock` を書き換えた
+- `divzero`・`nullptr`・`overflow`・`panic` は、`fault-test` 機能のカーネルだけのシステムコール `fault_test` にし、`fault kdivzero`・`knull`・`koverflow`・`kpanic` から呼ぶ。そのカーネルのイメージ `build/vibeos-fault.img` を Makefile に足し（`make test` で作る）、`04`・`06`・`07` をそのイメージにした（D-042・D-045）
+- /BIN のアプリが 41 本になり、`55-pipe-builtins` の数と `more-ls`、メニューの clock が 6 つ目になった `46-desktop-bar` と `bar-menu` を直した。`57-shell-fallback` は予備のシェルに `ls` が無いことを見るようにした
+- 詰まったこと: 前の作業でできた `BIN/*.ELF` が `build/rootfs-apps` に残っていて、別の作業の状態のイメージに入っていた（Makefile は消えたアプリの ELF を消さない）。気づきにくいので、アプリを減らしたときは `build/rootfs-apps` を消して作り直す
+- 圧縮しないイメージの空きは 22,016 バイト（`SH.ELF` は 107,584 バイト）

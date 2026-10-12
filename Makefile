@@ -26,6 +26,9 @@ TEST_IMG := $(BUILD)/vibeos-test.img
 FRAG_IMG := $(BUILD)/vibeos-frag.img
 # カーネルを圧縮しないイメージ（ローダが圧縮していない KERNEL.SYS も読めるかのテスト用）
 RAW_IMG := $(BUILD)/vibeos-raw.img
+# カーネルの中でわざと例外を起こすシステムコール（fault_test）を入れたイメージ（パニック画面のシナリオ用。
+# DECISIONS.md D-042。製品のイメージには入れない）
+FAULT_IMG := $(BUILD)/vibeos-fault.img
 # 圧縮したカーネルの中身を壊したイメージ（ローダが CRC32 などで気づいて止まるかのテスト用）
 BROKEN_IMG := $(BUILD)/vibeos-broken.img
 # 1 ならカーネルを LZSA2 + BCJ で圧縮して KERNEL.SYS にし（docs/plans/compress.md）、
@@ -49,6 +52,7 @@ QEMU_FLAGS := -m 32M -cpu 486 \
 
 KERNEL_ELF := target/i486-vibeos/release/kernel
 TEST_KERNEL_ELF := target/test/i486-vibeos/release/kernel
+FAULT_KERNEL_ELF := target/fault/i486-vibeos/release/kernel
 VIBE_RUN   := target/release/vibe-run
 VIBE_LZSA  := target/release/vibe-lzsa
 SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
@@ -88,6 +92,13 @@ $(BUILD)/test/kernel.sys: $(TEST_KERNEL_ELF)
 	mkdir -p $(dir $@)
 	$(OBJCOPY) -O binary $< $@
 
+$(FAULT_KERNEL_ELF): FORCE
+	cd kernel && $(CARGO) build --release --features fault-test --target-dir ../target/fault
+
+$(BUILD)/fault/kernel.sys: $(FAULT_KERNEL_ELF)
+	mkdir -p $(dir $@)
+	$(OBJCOPY) -O binary $< $@
+
 # 圧縮したカーネル（"VPK1" のヘッダ + LZSA2。BCJ の基準はカーネルが置かれる 0x100000）
 %.vpk: %.sys $(VIBE_LZSA)
 	$(VIBE_LZSA) pack --bcj 0x100000 $< $@
@@ -101,9 +112,11 @@ $(COMPRESS_STAMP): FORCE | $(BUILD)
 ifeq ($(COMPRESS),1)
 KERNEL_FILE := $(BUILD)/kernel.vpk
 TEST_KERNEL_FILE := $(BUILD)/test/kernel.vpk
+FAULT_KERNEL_FILE := $(BUILD)/fault/kernel.vpk
 else
 KERNEL_FILE := $(BUILD)/kernel.sys
 TEST_KERNEL_FILE := $(BUILD)/test/kernel.sys
+FAULT_KERNEL_FILE := $(BUILD)/fault/kernel.sys
 endif
 
 # --- イメージ ---------------------------------------------------------------
@@ -132,7 +145,8 @@ endef
 ROOTFS := $(shell find rootfs -type f)
 # ユーザアプリ（apps/ の中のバイナリ）。ディスクの /BIN/名前.ELF に入れる
 APPS := hello fault view paint mandel snake more fstest edit clock life ping host ntp get httpd calc files tasks mines blocks \
-	hexdump ps mem df date uptime pci net arp grep wc head tail sort tee sh
+	hexdump ps mem df date uptime pci net arp grep wc head tail sort tee sh \
+	reboot beep hwclock demo
 APPS_DIR := $(BUILD)/rootfs-apps
 APPS_STAMP := $(APPS_DIR)/.stamp
 
@@ -182,6 +196,9 @@ $(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(KERNEL_FILE) $(COMPRESS_STAMP) $
 $(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(TEST_KERNEL_FILE) $(COMPRESS_STAMP) $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
 	$(call make-image,$@,$(TEST_KERNEL_FILE),$(APPS_IMG_DIR))
 
+$(FAULT_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(FAULT_KERNEL_FILE) $(COMPRESS_STAMP) $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
+	$(call make-image,$@,$(FAULT_KERNEL_FILE),$(APPS_IMG_DIR))
+
 # カーネルもアプリも圧縮しない（COMPRESS=0 と同じ中身）
 $(RAW_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
 	$(call make-image,$@,$(BUILD)/kernel.sys,$(APPS_DIR))
@@ -229,10 +246,10 @@ test-host:
 $(VIBE_RUN): FORCE
 	$(CARGO) build --release -p vibe-run
 
-test-qemu: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(RAW_IMG) $(BROKEN_IMG) $(VIBE_RUN)
+test-qemu: $(IMG) $(TEST_IMG) $(FAULT_IMG) $(FRAG_IMG) $(RAW_IMG) $(BROKEN_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --img $(IMG) --out $(BUILD)/test-out $(SCENARIOS)
 
-test-bochs: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(RAW_IMG) $(BROKEN_IMG) $(VIBE_RUN)
+test-bochs: $(IMG) $(TEST_IMG) $(FAULT_IMG) $(FRAG_IMG) $(RAW_IMG) $(BROKEN_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --bochs --img $(IMG) --out $(BUILD)/test-out-bochs $(SCENARIOS)
 
 # LAN の機器（既定はデフォルトゲートウェイ = ルータ）に HTTP と ping でつなぐ

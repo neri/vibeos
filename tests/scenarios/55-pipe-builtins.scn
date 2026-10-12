@@ -4,16 +4,16 @@ boot-config video=320x200
 timeout 40
 wait-serial VIBEOS READY
 wait-serial VibeOS shell
-# 内蔵の ls をアプリでつなぐ。/BIN のアプリは 37 本で、全部 .ELF
+# 内蔵の ls をアプリでつなぐ。/BIN のアプリは 41 本で、全部 .ELF
 type ls /BIN | grep ELF | wc -l
 key ret
-wait-serial 37
+wait-serial 41
 # 内蔵コマンドのリダイレクト
 type ls /BIN > A.TXT
 key ret
 type grep -c .ELF A.TXT
 key ret
-wait-serial 37
+wait-serial 41
 type grep -n HELLO A.TXT
 key ret
 wait-serial HELLO.ELF

@@ -1,4 +1,5 @@
 # /BIN/SH.ELF が無いイメージでは、カーネルの中の予備のシェルが動き、プログラムを起動できる
+# （予備のシェルに内蔵コマンドは無い。パイプとリダイレクトは使える）
 disk-delete /BIN/SH.ELF
 timeout 20
 wait-serial VIBEOS READY
@@ -7,7 +8,10 @@ wait-serial VibeOS shell
 type hello fallback
 key ret
 wait-serial argv[1] = fallback
-type ls /BIN | grep -c ELF
+type hello fallback | fault upper
 key ret
-wait-serial 36
+wait-serial ARGV[1] = FALLBACK
+type ls
+key ret
+wait-serial unknown command: ls
 serial-absent PANIC

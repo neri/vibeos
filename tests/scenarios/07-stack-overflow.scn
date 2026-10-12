@@ -1,7 +1,8 @@
 # Phase 5: カーネルスタックがあふれるとガードページで止まり、二重フォルトとしてパニック画面になる
+image build/vibeos-fault.img
 timeout 15
 wait-serial VIBEOS READY
-type overflow
+type fault koverflow
 key ret
 wait-serial overflowing the stack
 wait-serial Double fault (#DF)

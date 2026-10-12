@@ -48,7 +48,7 @@ pub const BAR_H: usize = 10;
 /// 全画面のときのステータスバーの高さ（1 行）
 pub const FS_BAR_H: usize = 8;
 const CLOSE_W: usize = 9;
-pub const DESKTOP_BG: u8 = palette::CUBE_BASE + 13; // 落ち着いた青緑（カラーキューブの 0,2,1）
+pub const DESKTOP_BG: u8 = palette::DESKTOP_BG;
 const BORDER: u8 = palette::LIGHT_GRAY;
 const TITLE_ACTIVE: u8 = palette::BLUE;
 const TITLE_INACTIVE: u8 = palette::DARK_GRAY;

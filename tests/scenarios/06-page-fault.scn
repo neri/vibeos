@@ -1,11 +1,12 @@
 # Phase 4: ページングが有効で、0 番地の読み込みがページフォルトになる
+image build/vibeos-fault.img
 timeout 15
 wait-serial paging: enabled
 wait-serial VIBEOS READY
 type mem
 key ret
 wait-serial heap:
-type nullptr
+type fault knull
 key ret
 wait-serial Page fault (#PF)
 wait-serial cr2=00000000

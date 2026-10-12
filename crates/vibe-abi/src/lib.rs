@@ -163,9 +163,21 @@ pub mod nr {
     pub const WAIT_OPT: u32 = 62;
     /// set_foreground(&[pid], n) -> 0。今の端末の前面のプロセスの集まり（Ctrl+C で止める相手。n = 0 で無し）
     pub const SET_FOREGROUND: u32 = 63;
-    /// kcmd(argv, argv_len) -> 0。カーネルの内蔵コマンドを今のプロセスの中で動かす（argv は 0 区切り）。
-    /// カーネルの中でしかできないコマンドをアプリにするまでの、つなぎ（docs/plans/user-shell.md S3 で消す）
-    pub const KCMD: u32 = 64;
+    // 64 は S1〜S2 のつなぎ（kcmd: カーネルの内蔵コマンドを呼ぶ）に使っていた
+    /// reboot() -> 戻らない。計算機を起動し直す
+    pub const REBOOT: u32 = 65;
+    /// wallpaper_size() -> (幅 << 16) | 高さ。デスクトップの背景の画像の大きさ（デスクトップでなければ -EPERM）
+    pub const WALLPAPER_SIZE: u32 = 66;
+    /// wallpaper_set(pixels, len) -> 0。背景の画像（標準のパレットの番号、幅 × 高さ）。len = 0 なら単色に戻す
+    pub const WALLPAPER_SET: u32 = 67;
+    /// cmos_time(&mut [u8; 6]) -> 1970 年からの秒。CMOS の時計を読み直す。読めない値なら -EIO
+    /// （buf には読んだままの 秒・分・時・日・月・年）
+    pub const CMOS_TIME: u32 = 68;
+    /// demo() -> 0。3 つのカーネルスレッドが端末の右上に数を描く（5 秒。動いている間は -EAGAIN）
+    pub const DEMO: u32 = 69;
+    /// fault_test(kind) -> 戻らない。カーネルの中でわざと例外を起こす（FAULT_* 。テスト用のカーネルだけ。
+    /// ほかは -ENOSYS）
+    pub const FAULT_TEST: u32 = 70;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -255,6 +267,12 @@ pub mod err {
         }
     }
 }
+
+/// fault_test の種類
+pub const FAULT_DIVZERO: u32 = 1;
+pub const FAULT_NULL: u32 = 2;
+pub const FAULT_STACK: u32 = 3;
+pub const FAULT_PANIC: u32 = 4;
 
 /// wait_opt のフラグ: 終わっていなければ待たずに 0 を返す
 pub const WAIT_NOHANG: u32 = 1;
