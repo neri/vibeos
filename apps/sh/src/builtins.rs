@@ -1,5 +1,6 @@
-//! 内蔵コマンド（このプロセスの中で動く。終了コードを返す）
+//! アプリの内蔵コマンド（このプロセスの中で動く。終了コードを返す）
 //!
+//! 言語の内蔵コマンド（`echo`・`test`・`export`・`exit` など）は `vibe_shell::interp` にある。
 //! 出力は標準出力、エラーは標準エラー。カーネルの中でしかできないもの（`hwclock`・`wallpaper` など）は
 //! 今はカーネルの内蔵コマンドを `kcmd` で呼ぶ（S3 でアプリとシステムコールにする）。
 
@@ -10,19 +11,18 @@ use alloc::vec::Vec;
 use vibe_rt::abi::{self, DirEntry, OPEN_APPEND, OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE, TICK_HZ, err};
 use vibe_rt::{eprintln, io, print, println, sys};
 
-use crate::Shell;
+use crate::host::AppHost;
 
 pub struct Builtin {
     pub name: &'static str,
     pub usage: &'static str,
     pub help: &'static str,
-    pub run: fn(&mut Shell, &[&str]) -> i32,
+    pub run: fn(&mut AppHost, &[&str]) -> i32,
 }
 
 const BUILTINS: &[Builtin] = &[
     Builtin { name: "help", usage: "help [command]", help: "show commands", run: help },
     Builtin { name: "clear", usage: "clear", help: "clear the screen", run: clear },
-    Builtin { name: "echo", usage: "echo [text...]", help: "print text", run: echo },
     Builtin { name: "ls", usage: "ls [dir]", help: "list a directory", run: ls },
     Builtin { name: "cat", usage: "cat [file...]", help: "print files (or standard input)", run: cat },
     Builtin { name: "write", usage: "write file text...", help: "write text to a file (replaces it)", run: write },
@@ -47,7 +47,6 @@ const BUILTINS: &[Builtin] = &[
     Builtin { name: "demo", usage: "demo", help: "3 threads draw counters for 5s", run: kernel },
     Builtin { name: "beep", usage: "beep [hz] [ms]", help: "sound the PC speaker", run: kernel },
     Builtin { name: "reboot", usage: "reboot", help: "restart the computer", run: kernel },
-    Builtin { name: "exit", usage: "exit [code]", help: "end the shell", run: exit },
     Builtin { name: "divzero", usage: "divzero", help: "test: divide by zero", run: kernel },
     Builtin { name: "nullptr", usage: "nullptr", help: "test: read address 0", run: kernel },
     Builtin { name: "overflow", usage: "overflow", help: "test: kernel stack overflow", run: kernel },
@@ -58,11 +57,13 @@ pub fn find(name: &str) -> Option<&'static Builtin> {
     BUILTINS.iter().find(|b| b.name == name)
 }
 
-fn help(_: &mut Shell, args: &[&str]) -> i32 {
+fn help(_: &mut AppHost, args: &[&str]) -> i32 {
+    let lang = vibe_shell::interp::BUILTINS;
     if let Some(name) = args.get(1) {
-        return match find(name) {
-            Some(b) => {
-                println!("{}\n  {}", b.usage, b.help);
+        let found = find(name).map(|b| (b.usage, b.help)).or_else(|| lang.iter().find(|b| b.0 == *name).map(|b| (b.1, b.2)));
+        return match found {
+            Some((usage, help)) => {
+                println!("{usage}\n  {help}");
                 0
             }
             None => {
@@ -74,12 +75,12 @@ fn help(_: &mut Shell, args: &[&str]) -> i32 {
     // 端末の幅に収まるように並べる
     let width = sys::term_size().map_or(40, |(cols, _)| cols);
     let mut line = String::new();
-    for b in BUILTINS {
-        if line.len() + b.name.len() + 1 > width - 2 {
+    for name in BUILTINS.iter().map(|b| b.name).chain(lang.iter().map(|b| b.0)) {
+        if line.len() + name.len() + 1 > width - 2 {
             println!("{line}");
             line.clear();
         }
-        line.push_str(b.name);
+        line.push_str(name);
         line.push(' ');
     }
     println!("{line}");
@@ -87,13 +88,8 @@ fn help(_: &mut Shell, args: &[&str]) -> i32 {
     0
 }
 
-fn clear(_: &mut Shell, _: &[&str]) -> i32 {
+fn clear(_: &mut AppHost, _: &[&str]) -> i32 {
     print!("\x1b[2J\x1b[H");
-    0
-}
-
-fn echo(_: &mut Shell, args: &[&str]) -> i32 {
-    println!("{}", args[1..].join(" "));
     0
 }
 
@@ -114,7 +110,7 @@ fn read_dir(path: &str) -> Result<Vec<DirEntry>, i32> {
     }
 }
 
-fn ls(_: &mut Shell, args: &[&str]) -> i32 {
+fn ls(_: &mut AppHost, args: &[&str]) -> i32 {
     let path = args.get(1).copied().unwrap_or(".");
     // 色は端末に出すときだけ
     let color = vibe_rt::isatty(abi::STDOUT);
@@ -141,7 +137,7 @@ fn ls(_: &mut Shell, args: &[&str]) -> i32 {
     0
 }
 
-fn cat(_: &mut Shell, args: &[&str]) -> i32 {
+fn cat(_: &mut AppHost, args: &[&str]) -> i32 {
     if args.len() < 2 {
         return copy_fd(abi::STDIN, false);
     }
@@ -221,15 +217,15 @@ fn write_text(args: &[&str], flags: u32) -> i32 {
     }
 }
 
-fn write(_: &mut Shell, args: &[&str]) -> i32 {
+fn write(_: &mut AppHost, args: &[&str]) -> i32 {
     write_text(args, OPEN_TRUNCATE)
 }
 
-fn append(_: &mut Shell, args: &[&str]) -> i32 {
+fn append(_: &mut AppHost, args: &[&str]) -> i32 {
     write_text(args, OPEN_APPEND)
 }
 
-fn cp(_: &mut Shell, args: &[&str]) -> i32 {
+fn cp(_: &mut AppHost, args: &[&str]) -> i32 {
     let [_, from, to] = args else {
         eprintln!("usage: cp from to");
         return 2;
@@ -265,15 +261,15 @@ fn path_op(args: &[&str], usage: &str, op: fn(&str) -> i32) -> i32 {
     }
 }
 
-fn rm(_: &mut Shell, args: &[&str]) -> i32 {
+fn rm(_: &mut AppHost, args: &[&str]) -> i32 {
     path_op(args, "rm path", sys::remove)
 }
 
-fn mkdir(_: &mut Shell, args: &[&str]) -> i32 {
+fn mkdir(_: &mut AppHost, args: &[&str]) -> i32 {
     path_op(args, "mkdir dir", sys::mkdir)
 }
 
-fn mv(_: &mut Shell, args: &[&str]) -> i32 {
+fn mv(_: &mut AppHost, args: &[&str]) -> i32 {
     let [_, from, to] = args else {
         eprintln!("usage: mv from to");
         return 2;
@@ -287,7 +283,7 @@ fn mv(_: &mut Shell, args: &[&str]) -> i32 {
     }
 }
 
-fn sync(_: &mut Shell, _: &[&str]) -> i32 {
+fn sync(_: &mut AppHost, _: &[&str]) -> i32 {
     match sys::sync() {
         0 => println!("sync: nothing to save"),
         n if n > 0 => println!("sync: saved {n} sectors"),
@@ -304,7 +300,7 @@ fn sync(_: &mut Shell, _: &[&str]) -> i32 {
     0
 }
 
-fn cd(_: &mut Shell, args: &[&str]) -> i32 {
+fn cd(_: &mut AppHost, args: &[&str]) -> i32 {
     let path = args.get(1).copied().unwrap_or("/");
     match sys::chdir(path) {
         r if r < 0 => {
@@ -315,12 +311,12 @@ fn cd(_: &mut Shell, args: &[&str]) -> i32 {
     }
 }
 
-fn pwd(_: &mut Shell, _: &[&str]) -> i32 {
-    println!("{}", crate::cwd());
+fn pwd(_: &mut AppHost, _: &[&str]) -> i32 {
+    println!("{}", crate::host::cwd());
     0
 }
 
-fn sleep(_: &mut Shell, args: &[&str]) -> i32 {
+fn sleep(_: &mut AppHost, args: &[&str]) -> i32 {
     let ms: u32 = match args.get(1).map(|s| s.parse()) {
         None => 500,
         Some(Ok(ms)) => ms,
@@ -338,14 +334,14 @@ fn sleep(_: &mut Shell, args: &[&str]) -> i32 {
     0
 }
 
-fn history(sh: &mut Shell, _: &[&str]) -> i32 {
+fn history(sh: &mut AppHost, _: &[&str]) -> i32 {
     for (i, h) in sh.editor.history().enumerate() {
         println!("{:3} {h}", i + 1);
     }
     0
 }
 
-fn term(_: &mut Shell, _: &[&str]) -> i32 {
+fn term(_: &mut AppHost, _: &[&str]) -> i32 {
     if sys::term_open("") < 0 {
         eprintln!("term: too many terminals");
         return 1;
@@ -353,21 +349,8 @@ fn term(_: &mut Shell, _: &[&str]) -> i32 {
     0
 }
 
-fn exit(sh: &mut Shell, args: &[&str]) -> i32 {
-    let code = match args.get(1).map(|s| s.parse::<i32>()) {
-        None => sh.status,
-        Some(Ok(c)) => c,
-        Some(Err(_)) => {
-            eprintln!("usage: exit [code]");
-            return 2;
-        }
-    };
-    sh.exit = Some(code);
-    code
-}
-
 /// カーネルの中でしかできないコマンド（S3 まで）
-fn kernel(_: &mut Shell, args: &[&str]) -> i32 {
+fn kernel(_: &mut AppHost, args: &[&str]) -> i32 {
     match sys::kcmd(args) {
         r if r < 0 => {
             eprintln!("{}: {}", args[0], err::name(-r));

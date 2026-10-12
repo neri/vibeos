@@ -501,6 +501,36 @@ pub fn current_parent() -> TaskId {
     s.task(cur).parent
 }
 
+/// `roots` の子孫（まだ動いているユーザプロセス。`roots` 自身は除く）を `out` に入れて数を返す。
+/// `skip` が true のタスク（裏で動かしているもの）とその子孫は入れない。割り込みの中から呼んでよい
+pub fn descendants(roots: &[TaskId], out: &mut [TaskId], mut skip: impl FnMut(TaskId) -> bool) -> usize {
+    let s = SCHED.lock();
+    let mut n = 0;
+    for t in s.tasks.values() {
+        if n == out.len() {
+            break;
+        }
+        if t.user.is_none() || t.state == State::Dead || roots.contains(&t.id) {
+            continue;
+        }
+        // 親をたどって roots に着くか（深さは 16 まで）
+        let mut id = t.id;
+        for _ in 0..16 {
+            if skip(id) {
+                break;
+            }
+            let Some(p) = s.tasks.get(&id).map(|t| t.parent).filter(|&p| p != id) else { break };
+            if roots.contains(&p) {
+                out[n] = t.id;
+                n += 1;
+                break;
+            }
+            id = p;
+        }
+    }
+    n
+}
+
 /// `parent` が作った、まだ動いているユーザプロセスがあるか
 pub fn has_live_child(parent: TaskId) -> bool {
     SCHED.lock().tasks.values().any(|t| t.parent == parent && t.user.is_some() && t.state != State::Dead)

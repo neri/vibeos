@@ -6,3 +6,4 @@ license.workspace = true
 description = "シェルの 1 行を、コマンドの並びとつなぎ方（パイプ・リダイレクト）に分ける"
 
 [dependencies]
+vibe-abi = { path = "../vibe-abi" }

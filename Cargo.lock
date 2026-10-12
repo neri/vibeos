@@ -563,6 +563,9 @@ dependencies = [
 [[package]]
 name = "vibe-shell"
 version = "0.1.0"
+dependencies = [
+ "vibe-abi",
+]
 
 [[package]]
 name = "vibe-term"

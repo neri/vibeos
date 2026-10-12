@@ -1,0 +1,65 @@
+# ユーザ空間のシェル S2: スクリプト（sh ファイル）、変数と export、;・&&・||、if・while・for、
+# ファイル名の展開、続きの行、Ctrl+C で止める繰り返し
+disk-put tests/scripts/sum.sh /SUM.SH
+disk-put tests/scripts/fizz.sh /FIZZ.SH
+timeout 30
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type sh SUM.SH
+key ret
+wait-serial sum=55
+type sh fizz.sh 15
+key ret
+wait-serial fizzbuzz: 1 2 Fizz 4 Buzz Fizz 7 8 Fizz Buzz 11 Fizz 13 14 FizzBuzz
+# export した変数だけが子（別の sh）に見える
+type X=1; sh -c 'echo X=[$X]'
+key ret
+wait-serial X=[]
+type export X; sh -c 'echo X=[$X]'; Y=2 sh -c 'echo Y=[$Y]'; echo Y=[$Y]
+key ret
+wait-serial X=[1]
+wait-serial Y=[2]
+wait-serial Y=[]
+# 終了コードと && ||
+type fault exit 7; echo st=$?
+key ret
+wait-serial [fault exited with 7]
+wait-serial st=7
+type false || echo or-ok; true && echo and-ok
+key ret
+wait-serial or-ok
+wait-serial and-ok
+# for とファイル名の展開、if と test
+type for f in *.txt; do echo file $f; done; if [ -d DOCS ]; then echo isdir; fi
+key ret
+wait-serial file HELLO.TXT
+wait-serial isdir
+# 閉じていない if は続きの行を読む
+type if true
+key ret
+type then echo multi
+key ret
+type fi
+key ret
+wait-serial multi
+wait-serial multi
+# 何もしない while true を Ctrl+C で止める
+type while true; do; done
+key ret
+sleep 500
+key ctrl+c
+wait-serial ^C
+type echo after loop
+key ret
+wait-serial after loop
+wait-serial after loop
+# スクリプトの sh が起動したもの（孫）も Ctrl+C で止まる
+type sh -c 'while true; do fault exit 0; done'
+key ret
+sleep 1000
+key ctrl+c
+wait-serial [sh exited with -130]
+type ps | grep FAULT
+key ret
+wait-serial [grep exited with 1]
+serial-absent PANIC

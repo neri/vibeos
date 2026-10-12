@@ -45,13 +45,13 @@ wait-serial fault: to stderr
 type cat D.TXT
 key ret
 wait-serial fault: to stderr
-# 引用符の中の記号はただの文字。閉じていない引用符は文法の誤り
+# 引用符の中の記号はただの文字。コマンドの無い | は文法の誤り（閉じていない引用符は、S2 から続きの行を読む）
 type echo "a | b > c"
 key ret
 wait-serial a | b > c
-type echo "abc
+type echo abc | | cat
 key ret
-wait-serial syntax error: missing closing "
+wait-serial syntax error: unexpected |
 # & でパイプ全体を裏で動かす
 type hello bg | fault upper > E.TXT &
 key ret

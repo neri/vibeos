@@ -36,6 +36,7 @@ use crate::drivers::vga::{self, MAX_HEIGHT, MAX_WIDTH};
 use crate::sync::{BootCell, IrqMutex};
 use crate::task::sched::TaskId;
 use crate::task::wait::WaitQueue;
+use core::sync::atomic::Ordering;
 use crate::util::ring::Ring;
 
 pub type WinId = u32;
@@ -124,6 +125,9 @@ pub struct Foreground {
     len: usize,
 }
 
+/// 端末の前面のプロセスを止めるのに使った Ctrl+C の数（そのキーを端末に渡さないため）
+static CTRL_C_USED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// 前面にできるプロセスの数（パイプでつなげる数の上限）
 pub const MAX_FOREGROUND: usize = 16;
 
@@ -175,7 +179,9 @@ pub struct Screen {
     console_h: usize,
     /// コンソールの中身の上端（ウィンドウを登録する前に使う）
     console_y: usize,
-    windows: BTreeMap<WinId, Window>,
+    /// Window は大きい（キーとマウスのリングを持つ）ので Box に入れる。値のまま B 木に入れると、
+    /// 取り出し・並べ替えのたびに大きな値がスタックの上で動く
+    windows: BTreeMap<WinId, Box<Window>>,
     /// 重なりの順（後ろが手前）
     order: Vec<WinId>,
     next_id: WinId,
@@ -253,7 +259,7 @@ pub fn init_windows() {
     win.y = s.console_y as i32;
     win.terminal = true;
     win.tty = Some(CONSOLE);
-    s.windows.insert(CONSOLE, win);
+    s.windows.insert(CONSOLE, Box::new(win));
     s.order.push(CONSOLE);
 }
 
@@ -414,7 +420,7 @@ impl Screen {
             win.x = (120 + n * 24).min(max_x);
             win.y = ((BAR_H + TITLE_H + 1) as i32 + 24 + n * 20).min((self.height as i32 - h as i32 - 1).max(30));
         }
-        self.windows.insert(id, win);
+        self.windows.insert(id, Box::new(win));
         self.order.push(id);
         self.focus_changed();
         id
@@ -805,9 +811,14 @@ impl Screen {
         let Some(target) = self.focused() else { return };
         if let Some(w) = self.windows.get_mut(&target) {
             // 端末の Ctrl+C は、シェルが待っている前面のプロセスを止めるのに使った（キーボードの割り込みで）。
-            // 入力としては渡さない（後でシェルが ^C として読んでしまわないように）
-            if w.terminal && ev.ch == Some('\x03') && w.fg_procs.len > 0 {
-                return;
+            // 入力としては渡さない（後でシェルが ^C として読んでしまわないように）。このキーが届く前に
+            // シェルが前面を空に戻していることがあるので、割り込みで使った数（CTRL_C_USED）で見る
+            if w.terminal && ev.ch == Some('\x03') {
+                let used = ev.pressed
+                    && CTRL_C_USED.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1)).is_ok();
+                if used || w.fg_procs.len > 0 {
+                    return;
+                }
             }
             if !w.keys.push(ev) {
                 klog!("gui: key queue of window {} is full, key dropped", target);
@@ -816,11 +827,17 @@ impl Screen {
     }
 
     /// Ctrl+C で止める相手: フォーカスのあるウィンドウが端末ならシェルが待っているプロセスの集まり、
-    /// アプリのものならその持ち主（割り込みの中から呼ぶのでメモリを確保しない）
+    /// アプリのものならその持ち主（割り込みの中から呼ぶのでメモリを確保しない）。
+    /// 端末の前面のプロセスを止めるのに使ったら、そのキーは端末に渡さない（`on_key`）
     pub fn interrupt_targets(&self) -> Foreground {
         let Some(w) = self.focused().and_then(|id| self.windows.get(&id)) else { return Foreground::EMPTY };
         match (w.terminal, w.owner) {
-            (true, _) => w.fg_procs,
+            (true, _) => {
+                if w.fg_procs.len > 0 {
+                    CTRL_C_USED.fetch_add(1, Ordering::AcqRel);
+                }
+                w.fg_procs
+            }
             (false, Some(owner)) => Foreground::from(&[owner]),
             (false, None) => Foreground::EMPTY,
         }

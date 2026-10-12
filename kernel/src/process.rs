@@ -462,7 +462,7 @@ fn mark_ctrl_c(me: TaskId) -> bool {
 }
 
 /// キーボードの割り込みから: Ctrl+C が押された。フォーカスのあるウィンドウがアプリのものなら
-/// その持ち主、端末ならシェルが待っているプロセスの集まりを止める
+/// その持ち主、端末ならシェルが待っているプロセスの集まりと、それらの子孫を止める
 pub fn request_interrupt() {
     let targets = SCREEN.lock().interrupt_targets();
     let ids = targets.ids();
@@ -470,6 +470,12 @@ pub fn request_interrupt() {
     let echo = ids.iter().rposition(|&id| sched::is_user(id));
     for (i, &id) in ids.iter().enumerate() {
         request_kill_with(id, Reason::CtrlC(Some(i) == echo));
+    }
+    // その子孫も止める（スクリプトの sh が起動したものなど）。裏で動かしているもの（detach）は除く
+    let mut more = [0; 32];
+    let n = sched::descendants(ids, &mut more, |id| DETACHED.lock().contains_key(&id));
+    for &id in &more[..n] {
+        request_kill_with(id, Reason::CtrlC(false));
     }
 }
 

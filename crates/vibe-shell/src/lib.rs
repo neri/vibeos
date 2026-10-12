@@ -1,6 +1,11 @@
-//! シェルの 1 行を、コマンドの並びとつなぎ方に分ける（docs/plans/pipe.md §3.5）
+//! シェルの文法と実行
 //!
-//! 文法: `cmd [args] [< file] [> file | >> file] [2> file | 2>&1] { | cmd ... } [&]`
+//! - `parse`: 1 行を、コマンドの並びとつなぎ方に分ける（docs/plans/pipe.md §3.5。カーネルの予備のシェルが使う）
+//! - `lex`・`ast`・`interp`・`arith`: `sh` のスクリプトの言語（docs/plans/user-shell.md §3.3）。
+//!   `;`・`&&`・`||`・変数・`export`・引用・`if`・`while`・`for`・`test`・`$((…))`・`$(…)`・ファイル名の展開。
+//!   プロセスの起動などは `interp::Host` に任せるので、ホストのテストでは偽物に差し替える
+//!
+//! `parse` の文法: `cmd [args] [< file] [> file | >> file] [2> file | 2>&1] { | cmd ... } [&]`
 //!
 //! - 空白で区切る。`"..."` と `'...'` の中は空白や記号もそのまま。`\` は次の 1 文字をそのまま
 //!   （`"..."` の中では `\"` と `\\` だけ）
@@ -13,6 +18,11 @@
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
+
+pub mod arith;
+pub mod ast;
+pub mod interp;
+pub mod lex;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -54,8 +64,16 @@ pub struct Pipeline {
     pub background: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
+    /// 途中で終わっている（対話のときは続きの行を読む）。足りないもの
+    Incomplete(&'static str),
+    /// 思っていないところにあった語・記号
+    Unexpected(String),
+    /// `${...}` の中が名前でない
+    BadSubstitution,
+    /// 使えない記号（`(` `)`）
+    Unsupported(char),
     /// 引用符が閉じていない
     UnterminatedQuote(char),
     /// `\` で行が終わった
@@ -73,6 +91,10 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            ParseError::Incomplete(what) => write!(f, "unexpected end (missing {what})"),
+            ParseError::Unexpected(what) => write!(f, "unexpected {what}"),
+            ParseError::BadSubstitution => write!(f, "bad ${{...}}"),
+            ParseError::Unsupported(c) => write!(f, "{c} is not supported"),
             ParseError::UnterminatedQuote(q) => write!(f, "missing closing {q}"),
             ParseError::TrailingBackslash => write!(f, "nothing after \\"),
             ParseError::MissingTarget(op) => write!(f, "missing file name after {op}"),
@@ -239,3 +261,5 @@ pub fn parse(line: &str) -> Result<Option<Pipeline>, ParseError> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_script;

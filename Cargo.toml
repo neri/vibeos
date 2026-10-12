@@ -97,6 +97,14 @@ license = "MIT"
 [profile.release]
 debug = true
 
+# シェルは速さより大きさ（圧縮しないイメージにも入るように。DECISIONS.md D-044）
+[profile.release.package.sh]
+opt-level = "z"
+[profile.release.package.vibe-shell]
+opt-level = "z"
+[profile.release.package.vibe-line]
+opt-level = "z"
+
 # 圧縮器のテストは大きなデータを最適パースするので、テスト（dev）でも最適化する
 [profile.dev.package.vibe-lzsa]
 opt-level = 3
