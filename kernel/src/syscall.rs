@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 
 use alloc::sync::Arc;
 
-use vibe_abi::{DirEntry, KeyEvent, MouseState, NetInfo, PollFd, SockAddr, Stat, WinEvent, err, nr};
+use vibe_abi::{DirEntry, KeyEvent, MouseState, NetInfo, PollFd, ProcInfo, SockAddr, Stat, SysInfo, WinEvent, err, nr};
 use vibe_net::Ipv4;
 
 use crate::arch::trap::TrapFrame;
@@ -68,6 +68,69 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             let cmd = user_str(user, a, b)?;
             let cmd = (!cmd.trim().is_empty()).then_some(cmd);
             crate::gfx::console::open_terminal(None, cmd).ok_or(err::ENOMEM)
+        }
+        nr::PROC_LIST => {
+            let list = sched::tasks();
+            let count = (b as usize).min(list.len());
+            let mut out = Vec::with_capacity(count);
+            for t in &list[..count] {
+                let user_pages = t.user.as_ref().map_or(0, |u| u.lock().space.pages());
+                let mut p = ProcInfo {
+                    id: t.id,
+                    ticks: t.ticks,
+                    mem_kb: ((user_pages + sched::STACK_PAGES) * 4) as u32,
+                    state: match t.state {
+                        sched::State::Ready => vibe_abi::PROC_READY,
+                        sched::State::Running => vibe_abi::PROC_RUNNING,
+                        sched::State::Blocked => vibe_abi::PROC_BLOCKED,
+                        sched::State::Dead => vibe_abi::PROC_DEAD,
+                    },
+                    flags: if t.user.is_some() { vibe_abi::PROC_USER } else { 0 },
+                    tty: t.tty,
+                    ..ProcInfo::EMPTY
+                };
+                let name = t.name.as_bytes();
+                let n = name.len().min(15);
+                p.name[..n].copy_from_slice(&name[..n]);
+                out.push(p);
+            }
+            drop(list);
+            // SAFETY: ProcInfo は repr(C) で、詰め物の無い u32 と u8 だけでできている
+            let bytes = unsafe {
+                core::slice::from_raw_parts(out.as_ptr() as *const u8, out.len() * core::mem::size_of::<ProcInfo>())
+            };
+            copy_to_user(user, a, bytes)?;
+            Ok(count as u32)
+        }
+        nr::KILL => process::kill(a).map(|_| 0),
+        nr::SYS_INFO => {
+            let (free, total) = crate::mm::pmm::stats();
+            let desktop = SCREEN.lock().mode() == gui::Mode::Desktop;
+            let info = SysInfo {
+                free_kb: (free * 4) as u32,
+                total_kb: (total * 4) as u32,
+                ticks: pit::ticks(),
+                idle_ticks: sched::idle_ticks(),
+                screen_width: crate::drivers::vga::width() as u32,
+                screen_height: crate::drivers::vga::height() as u32,
+                flags: if desktop { vibe_abi::SYS_DESKTOP } else { 0 },
+            };
+            copy_to_user(user, a, as_bytes(&info))?;
+            Ok(0)
+        }
+        nr::WIN_PALETTE => {
+            let id = own_window(user, a)?;
+            let (start, count) = (b as usize, c as usize);
+            if start + count > 256 {
+                return Err(err::EINVAL);
+            }
+            check_user(user, d, (count * 3) as u32, false)?;
+            // SAFETY: 上で確かめた
+            let rgb = unsafe { core::slice::from_raw_parts(d as *const [u8; 3], count) };
+            let mut s = SCREEN.lock();
+            s.set_window_palette(id, start, rgb);
+            s.present();
+            Ok(0)
         }
         nr::TERM_SIZE => {
             let (cols, rows) = crate::gfx::console::size().ok_or(err::ENOTTY)?;

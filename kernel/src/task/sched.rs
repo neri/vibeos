@@ -36,7 +36,7 @@ pub enum State {
     Dead,
 }
 
-const STACK_PAGES: usize = 4; // 16KB
+pub const STACK_PAGES: usize = 4; // 16KB
 const QUANTUM: u32 = 2; // 20ms
 const MAX_TASKS_HINT: usize = 64;
 
@@ -92,8 +92,8 @@ pub struct TaskInfo {
     pub state: State,
     pub ticks: u32,
     pub tty: u32,
-    /// ユーザプロセスか
-    pub user: bool,
+    /// ユーザプロセスならそのアドレス空間など
+    pub user: Option<UserRef>,
 }
 
 struct Scheduler {
@@ -496,13 +496,12 @@ pub fn tasks() -> Vec<TaskInfo> {
             state: t.state,
             ticks: t.ticks,
             tty: t.tty,
-            user: t.user.is_some(),
+            user: t.user.clone(),
         })
         .collect()
 }
 
 /// アイドルタスクが動いていた刻み数
-#[allow(dead_code)]
 pub fn idle_ticks() -> u32 {
     let mut s = SCHED.lock();
     let idle = s.idle;

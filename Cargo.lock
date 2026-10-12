@@ -15,6 +15,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
+name = "blocks"
+version = "0.1.0"
+dependencies = [
+ "vibe-games",
+ "vibe-rt",
+]
+
+[[package]]
 name = "calc"
 version = "0.1.0"
 dependencies = [
@@ -175,6 +183,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "mines"
+version = "0.1.0"
+dependencies = [
+ "vibe-games",
+ "vibe-rt",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -324,6 +340,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tasks"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+ "vibe-ui",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -359,6 +383,10 @@ version = "0.1.0"
 dependencies = [
  "font8x8",
 ]
+
+[[package]]
+name = "vibe-games"
+version = "0.1.0"
 
 [[package]]
 name = "vibe-gfx"

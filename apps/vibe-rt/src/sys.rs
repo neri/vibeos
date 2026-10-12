@@ -2,7 +2,7 @@
 
 use core::arch::asm;
 
-use vibe_abi::{DirEntry, MouseState, Stat, nr};
+use vibe_abi::{DirEntry, MouseState, ProcInfo, Stat, SysInfo, nr};
 
 /// システムコール。引数は EBX, ECX, EDX, ESI, EDI の順。
 ///
@@ -187,4 +187,26 @@ pub fn detach(pid: i32) -> i32 {
 /// 新しい端末を開く。`cmd` が空でなければそれを実行し、終わったら端末を閉じる。端末の番号
 pub fn term_open(cmd: &str) -> i32 {
     syscall(nr::TERM_OPEN, cmd.as_ptr() as u32, cmd.len() as u32, 0, 0, 0)
+}
+
+/// タスクの一覧（番号の順）。書いた数
+pub fn proc_list(out: &mut [ProcInfo]) -> i32 {
+    syscall(nr::PROC_LIST, out.as_mut_ptr() as u32, out.len() as u32, 0, 0, 0)
+}
+
+/// プロセスを止める
+pub fn kill(pid: i32) -> i32 {
+    syscall(nr::KILL, pid as u32, 0, 0, 0, 0)
+}
+
+/// メモリ・時間・画面の情報
+pub fn sys_info() -> SysInfo {
+    let mut info = SysInfo::default();
+    syscall(nr::SYS_INFO, &mut info as *mut SysInfo as u32, 0, 0, 0, 0);
+    info
+}
+
+/// ウィンドウ独自のパレット（各 6bit）
+pub fn win_palette(win: i32, start: u8, rgb: &[[u8; 3]]) -> i32 {
+    syscall(nr::WIN_PALETTE, win as u32, start as u32, rgb.len() as u32, rgb.as_ptr() as u32, 0)
 }

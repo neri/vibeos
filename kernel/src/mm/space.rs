@@ -22,6 +22,8 @@ pub struct AddressSpace {
     brk: u32,
     /// sbrk で広げられる上限（スタックの下）
     brk_limit: u32,
+    /// ユーザ空間に置いたページの数
+    pages: usize,
 }
 
 impl AddressSpace {
@@ -30,11 +32,16 @@ impl AddressSpace {
         let kernel = paging::kernel_page_directory();
         // SAFETY: どちらもページディレクトリで、カーネル空間では物理アドレスと同じ番地で触れる
         unsafe { core::ptr::copy_nonoverlapping(kernel as *const u32, pd as *mut u32, KERNEL_PDES) };
-        Some(AddressSpace { pd, brk: USER_BASE, brk_limit: USER_BASE })
+        Some(AddressSpace { pd, brk: USER_BASE, brk_limit: USER_BASE, pages: 0 })
     }
 
     pub fn page_directory(&self) -> usize {
         self.pd
+    }
+
+    /// ユーザ空間に置いたページの数
+    pub fn pages(&self) -> usize {
+        self.pages
     }
 
     /// ユーザ空間の `virt` のページを用意して物理アドレスを返す（既にあればそれを返す）。
@@ -56,6 +63,7 @@ impl AddressSpace {
             pmm::free_pages(phys, 1);
             return None;
         }
+        self.pages += 1;
         Some(phys)
     }
 

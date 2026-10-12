@@ -1,0 +1,14 @@
+[package]
+name = "tasks"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tasks"
+test = false
+bench = false
+
+[dependencies]
+vibe-rt = { path = "../vibe-rt" }
+vibe-ui = { path = "../../crates/vibe-ui" }

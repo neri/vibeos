@@ -270,7 +270,7 @@ pub fn set_foreground(id: Option<TaskId>) {
 /// 端末が閉じられた: その端末につながっているプロセスをすべて止める（シェルは自分で終わる）
 pub fn kill_tty(tty: WinId) {
     for t in sched::tasks() {
-        if t.user && t.tty == tty && t.state != sched::State::Dead {
+        if t.user.is_some() && t.tty == tty && t.state != sched::State::Dead {
             klog!("term: stopping {} ({})", t.name, t.id);
             request_kill(t.id);
         }
@@ -294,6 +294,19 @@ fn request_kill_with(id: TaskId, ctrl_c: bool) {
     // キーやネットワークを待っているなら起こす（戻ってきたところで止める）
     gui::wake_readers();
     crate::net::wake_sockets();
+}
+
+/// システムコールの kill: ユーザプロセスを止めるよう頼む
+pub fn kill(id: TaskId) -> Result<(), i32> {
+    let task = sched::tasks().into_iter().find(|t| t.id == id && t.state != sched::State::Dead);
+    match task {
+        None => Err(err::ECHILD),
+        Some(t) if t.user.is_none() => Err(err::EPERM),
+        Some(_) => {
+            request_kill(id);
+            Ok(())
+        }
+    }
 }
 
 /// 止めるよう頼まれている（待っているシステムコールは -EINTR で戻る）

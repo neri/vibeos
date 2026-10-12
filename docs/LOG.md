@@ -401,3 +401,13 @@
 - テストランナーに `expect-disk-missing PATH`（mdir で無いことを確かめる）を足した
 - シナリオ `48-files`（IMAGES をダブルクリック → PLASMA.BMP をダブルクリックで view、キーボードで DOCS へ、コピー・ルートへ移動・削除がホストの mtools で見える、GUIDE.TXT を開くと新しい端末で edit、フォルダを作る、fsck.fat で不整合なし）。メニューに files が増えたので `bar-menu` を作り直した
 - `make test-apps-gz` が 45.2% で落ちた（calc・files はコードが多く gzip で約 50%）。45% は Phase 30 のアプリ 16 本で確かめ、全部では 50% 以下にした（DECISIONS.md D-037）。全部で 503,888 → 227,799（45.2%）
+
+## 2026-10-12 デスクトップ D5: タスクマネージャ・ゲーム・paint/view のウィンドウ版（Phase 36）
+
+- システムコール `proc_list`（45）・`kill`（46）・`sys_info`（47）・`win_palette`（48）。アドレス空間にユーザのページ数を数えるようにした（`AddressSpace::pages`）。`sched::tasks()` は `UserRef` の写しを返すようにし、ページ数はスケジューラのロックの外で読む
+- `apps/tasks`: 一覧（番号・名前・CPU・メモリ・状態、カーネルスレッドは名前の後ろに *）を 1 秒ごとに読み直す。End task か Delete で確かめてから止める
+- `crates/vibe-games`: `mines`（最初の 1 回は安全・まとめて開く・旗・勝ち負け。テスト 6 本）と `blocks`（形・回転と壁のずらし・袋・列の消去・点数・レベル・終わり。テスト 8 本）。乱数は xorshift
+- `apps/mines`・`apps/blocks`: 引数で種を指定できる。blocks は列が消えると音を鳴らす
+- `view`・`paint`: デスクトップではウィンドウで動く（`vibe_rt::gfx::is_desktop`）。`Window::set_palette` を足した。paint は全画面とウィンドウで同じ描き方の部分を `Paint` にまとめた
+- シナリオ `49-tasks`（life を tasks から止める）、`50-games`（種 5 の盤面で開く・旗・地雷で負け・顔で新しいゲーム。blocks は落としたブロックと一時停止）、`51-paint-view`。mines の時間・blocks の落ちているブロックの高さ・点数は時間で変わるので比べない
+- メニューに blocks が増えて clock が 4 つ目になったので `46-desktop-bar` を直した

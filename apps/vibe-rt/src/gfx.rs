@@ -90,6 +90,11 @@ impl Window {
         sys::win_blit(self.id, &self.buf);
     }
 
+    /// ウィンドウ独自のパレット（各 6bit）。デスクトップでは標準のパレットの近い色で出る
+    pub fn set_palette(&self, start: u8, colors: &[[u8; 3]]) {
+        sys::win_palette(self.id, start, colors);
+    }
+
     /// イベントを待つ（timeout_ms = 0 なら待たない、None ならいつまでも）
     pub fn event(&self, timeout_ms: Option<u32>) -> Option<Event> {
         let ev = sys::win_event(self.id, timeout_ms.unwrap_or(u32::MAX))?;
@@ -106,4 +111,9 @@ impl Drop for Window {
     fn drop(&mut self) {
         sys::win_close(self.id);
     }
+}
+
+/// 画面がデスクトップ（ウィンドウを重ねて出す）か。320x200 の全画面なら false
+pub fn is_desktop() -> bool {
+    sys::sys_info().flags & vibe_abi::SYS_DESKTOP != 0
 }

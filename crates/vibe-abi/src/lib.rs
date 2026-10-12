@@ -122,6 +122,15 @@ pub mod nr {
     /// term_open(cmd, cmd_len) -> 端末の番号。新しい端末を開く。cmd が空でなければ、そのコマンドを
     /// 実行して終わったら端末を閉じる（空なら対話のシェル）
     pub const TERM_OPEN: u32 = 44;
+    /// proc_list(&mut [ProcInfo], n) -> 書いた数。タスク（カーネルスレッドとプロセス）の一覧（番号の順）
+    pub const PROC_LIST: u32 = 45;
+    /// kill(pid) -> 0。プロセスを止める（カーネルスレッドは -EPERM、無ければ -ECHILD）
+    pub const KILL: u32 = 46;
+    /// sys_info(&mut SysInfo) -> 0。メモリ・時間・画面の情報
+    pub const SYS_INFO: u32 = 47;
+    /// win_palette(win, start, count, rgb: *const [u8; 3]) -> 0。ウィンドウ独自のパレット（各 6bit）。
+    /// デスクトップでは標準のパレットの近い色に置き換えて出る
+    pub const WIN_PALETTE: u32 = 48;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -168,6 +177,7 @@ pub mod err {
     pub const EROFS: i32 = 30;
     pub const ENOTEMPTY: i32 = 39;
     pub const ENOTTY: i32 = 25;
+    pub const EPERM: i32 = 1;
 
     pub fn name(e: i32) -> &'static str {
         match e {
@@ -188,6 +198,7 @@ pub mod err {
             EROFS => "read-only",
             ENOTEMPTY => "directory not empty",
             ENOTTY => "no terminal",
+            EPERM => "not permitted",
             EINTR => "interrupted",
             EAGAIN => "try again",
             ENODEV => "no network card",
@@ -264,6 +275,59 @@ pub struct MouseState {
     /// bit0 = 左, bit1 = 右, bit2 = 中
     pub buttons: u32,
 }
+
+/// タスクの情報（proc_list）
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ProcInfo {
+    pub id: u32,
+    /// 動いていたタイマの刻み数
+    pub ticks: u32,
+    /// 使っているメモリ（ユーザ空間のページとカーネルスタック）
+    pub mem_kb: u32,
+    /// PROC_*
+    pub state: u32,
+    /// PROC_USER など
+    pub flags: u32,
+    /// つながっている端末
+    pub tty: u32,
+    /// 名前（0 で終わる）
+    pub name: [u8; 16],
+}
+
+pub const PROC_READY: u32 = 0;
+pub const PROC_RUNNING: u32 = 1;
+pub const PROC_BLOCKED: u32 = 2;
+pub const PROC_DEAD: u32 = 3;
+/// ユーザプロセス（そうでなければカーネルスレッド）
+pub const PROC_USER: u32 = 1;
+
+impl ProcInfo {
+    pub const EMPTY: ProcInfo = ProcInfo { id: 0, ticks: 0, mem_kb: 0, state: 0, flags: 0, tty: 0, name: [0; 16] };
+
+    pub fn name(&self) -> &str {
+        let len = self.name.iter().position(|&b| b == 0).unwrap_or(16);
+        core::str::from_utf8(&self.name[..len]).unwrap_or("?")
+    }
+}
+
+/// システムの情報（sys_info）
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SysInfo {
+    pub free_kb: u32,
+    pub total_kb: u32,
+    /// 起動からの刻み数と、そのうちアイドルだった刻み数
+    pub ticks: u32,
+    pub idle_ticks: u32,
+    pub screen_width: u32,
+    pub screen_height: u32,
+    /// SYS_DESKTOP など
+    pub flags: u32,
+}
+
+/// 画面がデスクトップ（ウィンドウを重ねて出す）
+pub const SYS_DESKTOP: u32 = 1;
 
 /// キーイベントを 32bit に詰めたもの
 /// bit 0..16 = 文字（無ければ 0）, bit 16..24 = キー（セット 1 のコード、E0 付きは 0x80 を足す）,
