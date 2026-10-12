@@ -128,7 +128,9 @@ dependencies = [
  "vibe-font",
  "vibe-gfx",
  "vibe-keyboard",
+ "vibe-lzsa",
  "vibe-net",
+ "vibe-pack",
  "vibe-term",
  "vibe-time",
  "xmas-elf",
@@ -352,11 +354,19 @@ name = "vibe-lzsa-tool"
 version = "0.1.0"
 dependencies = [
  "vibe-lzsa",
+ "vibe-pack",
 ]
 
 [[package]]
 name = "vibe-net"
 version = "0.1.0"
+
+[[package]]
+name = "vibe-pack"
+version = "0.1.0"
+dependencies = [
+ "vibe-lzsa",
+]
 
 [[package]]
 name = "vibe-rt"

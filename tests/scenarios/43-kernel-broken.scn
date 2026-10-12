@@ -1,0 +1,7 @@
+# 圧縮した KERNEL.SYS の中身が壊れていると、ローダが気づいて止まる（変なカーネルに跳ばない）
+# （イメージの作り方は Makefile の BROKEN_IMG。圧縮したデータの途中を書き換えてある）
+image build/vibeos-broken.img
+timeout 15
+wait-serial kernel compressed, bytes:
+wait-serial LOADER ERROR: KERNEL.SYS is broken
+serial-absent VibeOS kernel starting

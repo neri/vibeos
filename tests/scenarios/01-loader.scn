@@ -4,6 +4,7 @@ wait-serial VIBEOS LOADER
 wait-serial A20 enabled
 wait-serial memory map entries:
 wait-serial disk loaded, bytes: 00168000
+wait-serial kernel compressed, bytes:
 wait-serial kernel loaded, bytes:
 wait-serial jumping to kernel
 serial-absent LOADER ERROR

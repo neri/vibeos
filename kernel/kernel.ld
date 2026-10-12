@@ -15,6 +15,8 @@ SECTIONS
     .rodata : ALIGN(16) {
         *(.rodata .rodata.*)
     }
+    /* ここまで（.text・.rodata）は起動後に変わらない（ktest が KERNEL.SYS の中身と比べる） */
+    __rodata_end = .;
 
     .data : ALIGN(16) {
         *(.data .data.*)

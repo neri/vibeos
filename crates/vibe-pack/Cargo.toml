@@ -1,0 +1,14 @@
+[package]
+name = "vibe-pack"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "圧縮したカーネルのファイルの形（ヘッダ・x86 の BCJ フィルタ・CRC32）"
+
+[features]
+default = ["alloc"]
+# 作る側（pack）と Vec を返す展開。カーネルでは default-features = false
+alloc = ["vibe-lzsa/alloc"]
+
+[dependencies]
+vibe-lzsa = { path = "../vibe-lzsa", default-features = false }

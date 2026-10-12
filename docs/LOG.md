@@ -324,3 +324,22 @@
 - 詰まったこと: LZSA2 は探す深さを増やしても 100.75% で止まった。本家と自作の出力を解析すると、自作は一致が約 3,100 回多く rep-match が約 2,000 回少なかった。本家は 1 つの位置で最大 64 個の一致（同じ長さで違うオフセットを含む）を見ている（定義を見ただけで、コードは写していない）
 - `make test` は Z5 で本家に頼らない形にした（`make test-lzsa` = 自作の圧縮 → 展開、2,808 通り・約 11 秒）。本家との突き合わせは `make test-lzsa-ref`（6,318 通り・約 50 秒）
 - crate のテストは大きなデータを最適パースするので、ワークスペースの `Cargo.toml` で `vibe-lzsa` だけ dev でも `opt-level = 3` にした
+
+## 2026-10-12 圧縮の組み込みの計画書
+
+- LZSA をカーネル（ローダで展開）とアプリ（ELF ローダで展開）に組み込む[計画書](plans/compress.md)を作った。実装はしていない
+- オーナーの回答でカーネルだけの計画に直した（DECISIONS.md D-034）: ローダの中でアセンブラで展開・LZSA2・BCJ はカーネルだけ。アプリは別に考える（計画書 §8 に検討と測定を残した）。段階は K1〜K4
+- 計画のために測った値（自作の LZSA2）: kernel.sys 308,528 → 142,544、簡単な BCJ を足すと 135,129（−5.2%）。アプリ 16 本 372,352 → 161,780、BCJ では −2.1% しか縮まない。`HELLO.ELF` を共有の辞書にした見積もりでは、ほかの 15 本が 157,229 → 約 105,600（−33%）
+- ローダはフロッピー全体を読むので、圧縮しても起動は速くならない（空きが増えるだけ。カーネルだけなら約 648KB → 約 820KB）。計画書の §8.2 に書いた
+
+## 2026-10-12 カーネルの圧縮（Phase 27〜29）
+
+- オーナーの回答（D-034: ローダでアセンブラ・LZSA2・BCJ はカーネルだけ・時間は測らない・`COMPRESS=0` を残す・CRC32 を確かめる）と「実装して」の指示で、[計画書](plans/compress.md) の K1〜K3 を行った
+- K1: `crates/vibe-pack`（"VPK1" のヘッダ・BCJ・CRC32・pack/unpack）、`vibe-lzsa pack --bcj BASE`/`unpack`、`make size-report`。KERNEL.SYS は 308,528 → 135,173（43.8%）
+- 詰まったこと（BCJ）: 最初の書き方では往復しなかった。直さなかった E8 の 1〜3 バイト後の E8 を直すと、前の E8 の判断に使ったバイトが書き換わる。直さなかった E8/E9 の後 4 バイトは書き換えを始めないようにした（D-034 に追記）
+- K2: `boot/unlzsa2.inc`（LZSA2 のストリームの展開、32 ビットのレジスタと番地だけ）とローダの BCJ・CRC32（表を作ってから計算）。先頭のクラスタが "VPK1" なら、RAM ディスクの後ろ（0x570000）へ写して展開する。ローダは 3,952 → 5,232 バイト（66/67 の接頭辞が多い）。`check_memory_fits` は終わりの番地を EAX で受け取るようにした。最初の起動で 01・02 が通った
+- ktest `fs_kernel_file_matches_boot_info` は「ファイルの大きさ = kernel_size」から、「KERNEL.SYS を Rust で展開したもの = メモリ上の .text・.rodata」に変えた（リンカスクリプトに `__rodata_end`）
+- シナリオ: `42-kernel-uncompressed`（`build/vibeos-raw.img`）、`43-kernel-broken`（`build/vibeos-broken.img`、圧縮したデータの 40000 バイト目から 4 バイトを書き換え → `KERNEL.SYS is broken`）。`01-loader` に `kernel compressed` の行を足した
+- K3: テスト用カーネルに `boot/unlzsa2_test.asm` を NASM の elf32 で組んでリンクし（`kernel/build.rs`）、`vibe-lzsa` の境目のデータのうち 20KB までのものと大きいもの 3 つを、貪欲と最適の 2 通りで圧縮して埋め込んだ。ktest `lzsa_asm_decodes_samples`・`lzsa_asm_rejects_broken_data` が通った。テスト用カーネルは 621,600 バイト（圧縮後 344,220）になった
+- 486 に無い命令は使っていない（`llvm-objdump` で確かめた）
+

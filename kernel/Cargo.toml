@@ -11,7 +11,7 @@ bench = false
 
 [features]
 # QEMU でのテスト用ビルド: isa-debug-exit で終了コードを返す（実機では使わない）
-qemu-test = []
+qemu-test = ["dep:vibe-pack"]
 
 [dependencies]
 xmas-elf = "0.10"
@@ -24,3 +24,10 @@ vibe-keyboard = { path = "../crates/vibe-keyboard" }
 vibe-term = { path = "../crates/vibe-term" }
 vibe-net = { path = "../crates/vibe-net" }
 vibe-time = { path = "../crates/vibe-time" }
+# ktest が KERNEL.SYS を展開して自分と比べるのに使う（テスト用ビルドだけ）
+vibe-pack = { path = "../crates/vibe-pack", default-features = false, optional = true }
+
+# ktest のデータ（ホストで圧縮した LZSA2）を作るため
+[build-dependencies]
+vibe-lzsa = { path = "../crates/vibe-lzsa" }
+vibe-pack = { path = "../crates/vibe-pack" }

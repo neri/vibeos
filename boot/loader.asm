@@ -11,7 +11,9 @@
 ;   4. メモリマップ取得（E820 → E801 → 88h）
 ;   5. 画面モード 13h に切り替え、進み具合のバーを描く（読み込み中の表示用）
 ;   6. フロッピー全体を RAMDISK_ADDR に読み込む（RAM ディスク）
-;   7. RAM ディスク上の FAT12 から KERNEL.SYS を探して KERNEL_ADDR にコピー
+;   7. RAM ディスク上の FAT12 から KERNEL.SYS を探して KERNEL_ADDR にコピー。
+;      先頭が "VPK1" なら圧縮したカーネル（crates/vibe-pack）: RAM ディスクの後ろの作業用の場所へ
+;      写してから LZSA2 で KERNEL_ADDR へ展開し、BCJ を戻して CRC32 を確かめる
 ;   8. 画面モードを決める: BOOT.CFG の video=640x480 / video=320x200（無ければ 640x480）。
 ;      Shift キーを押していれば 320x200。640x480 は VESA（VBE 2.0 以上・リニアフレームバッファ・
 ;      8 ビット）で探し、無ければ 320x200 のまま
@@ -29,6 +31,17 @@ KERNEL_MAX      equ RAMDISK_ADDR - KERNEL_ADDR
 BOUNCE_SEG      equ 0x1000              ; ディスク読み込みの中継バッファ（物理 0x10000〜）
 BOUNCE_ADDR     equ BOUNCE_SEG * 16
 BPB             equ 0x7C00              ; IPL がメモリに残っているので BPB はここから読む
+
+; 圧縮したカーネルのヘッダ（crates/vibe-pack と同じ形）
+VPK_MAGIC       equ 0x314B5056          ; "VPK1"
+VPK_FORMAT      equ 4                   ; u8: 2 = LZSA2
+VPK_FLAGS       equ 5                   ; u8: bit0 = BCJ
+VPK_HEADER_SIZE equ 6                   ; u16
+VPK_SIZE        equ 8                   ; u32: 展開後の大きさ
+VPK_BCJ_BASE    equ 12                  ; u32
+VPK_CRC         equ 16                  ; u32
+VPK_MIN_HEADER  equ 20
+CRC_TABLE_SIZE  equ 1024
 COM1            equ 0x3F8
 
 ; 進み具合のバー（モード 13h の座標）
@@ -475,10 +488,8 @@ add_mmap_entry:
 .skip:
     ret
 
-; [KERNEL_ADDR, RAMDISK_ADDR + RAM ディスクの大きさ) が 1 つの使用可能領域に収まるか
+; [KERNEL_ADDR, EAX) が 1 つの使用可能領域に収まるか
 check_memory_fits:
-    mov eax, RAMDISK_ADDR
-    add eax, [BI + BI_RAMDISK_SIZE]
     mov [need_end], eax
     mov si, BI + BI_MMAP
     mov cx, [BI + BI_MMAP_COUNT]
@@ -588,6 +599,7 @@ load_disk:
     shl eax, 9
     mov [BI + BI_RAMDISK_SIZE], eax
     mov dword [BI + BI_RAMDISK_ADDR], RAMDISK_ADDR
+    add eax, RAMDISK_ADDR
     call check_memory_fits
 
     mov dword [cur_lba], 0
@@ -736,30 +748,168 @@ load_kernel:
     jz .bad_kernel
     cmp eax, KERNEL_MAX
     ja .too_big
-    mov [BI + BI_KERNEL_SIZE], eax
-    mov dword [BI + BI_KERNEL_ADDR], KERNEL_ADDR
+    mov [file_size], eax
     movzx eax, word [esi + 26]          ; 先頭クラスタ
+    mov [first_cluster], eax
+    mov dword [BI + BI_KERNEL_ADDR], KERNEL_ADDR
 
-    mov edi, KERNEL_ADDR
-    mov dword [clusters_left], KERNEL_MAX / 512   ; FAT が壊れていて無限ループしないための上限
-.chain:
+    ; 先頭のクラスタが "VPK1" で始まれば圧縮したカーネル
     cmp eax, 2
     jb .bad_kernel
-    cmp eax, 0xFF8                      ; 終端
-    jae .chain_done
-    dec dword [clusters_left]
-    jz .bad_kernel
+    call cluster_addr
+    cmp dword [file_size], VPK_MIN_HEADER
+    jb .plain
+    cmp dword [esi], VPK_MAGIC
+    je load_packed_kernel
 
+.plain:
+    mov eax, [file_size]
+    mov [BI + BI_KERNEL_SIZE], eax
+    mov eax, [first_cluster]
+    mov edi, KERNEL_ADDR
+    mov ecx, KERNEL_MAX
+    call copy_chain
+    jmp kernel_loaded
+.too_big:
+    mov si, msg_kernel_big
+    jmp fatal
+.bad_kernel:
+    jmp bad_kernel
+
+; 圧縮したカーネル: RAM ディスクの後ろ（64KB 境界）の作業用の場所へ写し、KERNEL_ADDR へ展開する。
+; 作業用の場所 = [圧縮したファイル（クラスタ単位）][CRC32 の表 1KB]
+load_packed_kernel:
+    mov si, msg_kernel_packed
+    call print
+    mov eax, [file_size]
+    call print_hex32
+    mov si, msg_crlf
+    call print
+
+    mov eax, RAMDISK_ADDR + 0xFFFF
+    add eax, [BI + BI_RAMDISK_SIZE]
+    and eax, 0xFFFF0000
+    mov [work_addr], eax
+    call cluster_bytes                  ; ECX = クラスタの大きさ
+    mov eax, [file_size]
+    add eax, ecx
+    dec eax
+    xor edx, edx
+    div ecx
+    imul eax, ecx                       ; ファイルの大きさをクラスタ単位に切り上げ
+    mov [work_size], eax
+    add eax, [work_addr]
+    mov [crc_table], eax
+    add eax, CRC_TABLE_SIZE
+    call check_memory_fits
+
+    mov eax, [first_cluster]
+    mov edi, [work_addr]
+    mov ecx, [work_size]
+    call copy_chain
+
+    ; ヘッダを確かめる
+    mov esi, [work_addr]
+    cmp byte [esi + VPK_FORMAT], 2
+    jne bad_kernel
+    test byte [esi + VPK_FLAGS], 0xFE
+    jnz bad_kernel
+    movzx eax, word [esi + VPK_HEADER_SIZE]
+    cmp eax, VPK_MIN_HEADER
+    jb bad_kernel
+    cmp eax, [file_size]
+    ja bad_kernel
+    mov ecx, [esi + VPK_SIZE]
+    test ecx, ecx
+    jz bad_kernel
+    cmp ecx, KERNEL_MAX
+    ja load_kernel.too_big
+    mov [BI + BI_KERNEL_SIZE], ecx
+
+    ; LZSA2 で展開（出力の上限 = 展開後の大きさ。ちょうど埋まらなければ壊れている）
+    add esi, eax
+    mov ebx, [work_addr]
+    add ebx, [file_size]
+    mov edi, KERNEL_ADDR
+    lea edx, [edi + ecx]
+    call unlzsa2
+    jc bad_kernel
+    mov eax, KERNEL_ADDR
+    add eax, [BI + BI_KERNEL_SIZE]
+    cmp edi, eax
+    jne bad_kernel
+
+    ; BCJ を戻す
+    mov esi, [work_addr]
+    test byte [esi + VPK_FLAGS], 1
+    jz .crc
+    mov ebx, [esi + VPK_BCJ_BASE]
+    mov edi, KERNEL_ADDR
+    mov ecx, [BI + BI_KERNEL_SIZE]
+    call unbcj
+
+.crc:
+    mov edi, [crc_table]
+    call crc_make_table
+    mov ebx, [crc_table]
+    mov esi, KERNEL_ADDR
+    mov ecx, [BI + BI_KERNEL_SIZE]
+    call crc32
+    mov esi, [work_addr]
+    cmp eax, [esi + VPK_CRC]
+    jne bad_kernel
+    jmp kernel_loaded
+
+kernel_loaded:
+    mov si, msg_kernel
+    call print
+    mov eax, [BI + BI_KERNEL_SIZE]
+    call print_hex32
+    mov si, msg_crlf
+    call print
+    ret
+
+bad_kernel:
+    mov si, msg_bad_kernel
+    jmp fatal
+
+; ECX = 1 クラスタのバイト数
+cluster_bytes:
+    movzx ecx, byte [BPB + 0x0D]
+    shl ecx, 9
+    ret
+
+; EAX = クラスタ番号 → ESI = RAM ディスク上の番地
+cluster_addr:
     push eax
+    push ecx
     sub eax, 2
     movzx ecx, byte [BPB + 0x0D]        ; クラスタあたりセクタ数
     imul eax, ecx
     add eax, [data_lba]
     shl eax, 9
     lea esi, [eax + RAMDISK_ADDR]
-    shl ecx, 7                          ; dword 数
-    a32 rep movsd
+    pop ecx
     pop eax
+    ret
+
+; EAX = 先頭クラスタから FAT をたどって EDI へ写す。ECX = 写してよいバイト数の上限
+; （FAT が壊れていて無限ループ・書きすぎにならないため。越えたら壊れている）
+copy_chain:
+    call enter_unreal
+    mov [copy_left], ecx
+.chain:
+    cmp eax, 2
+    jb bad_kernel
+    cmp eax, 0xFF8                      ; 終端
+    jae .done
+    call cluster_bytes
+    sub [copy_left], ecx
+    jb bad_kernel
+
+    call cluster_addr
+    shr ecx, 2                          ; dword 数
+    a32 rep movsd
 
     ; FAT12 の次のエントリ: オフセット = n * 3 / 2、奇数なら上位 12bit、偶数なら下位 12bit
     mov ebx, eax
@@ -778,21 +928,84 @@ load_kernel:
 .next_cluster:
     movzx eax, dx
     jmp .chain
-
-.chain_done:
-    mov si, msg_kernel
-    call print
-    mov eax, [BI + BI_KERNEL_SIZE]
-    call print_hex32
-    mov si, msg_crlf
-    call print
+.done:
     ret
-.too_big:
-    mov si, msg_kernel_big
-    jmp fatal
-.bad_kernel:
-    mov si, msg_bad_kernel
-    jmp fatal
+
+; BCJ を戻す（crates/vibe-pack の bcj_decode と同じ決まり）。
+; EDI = データ, ECX = 大きさ, EBX = データの先頭が置かれる番地
+unbcj:
+    cmp ecx, 5
+    jb .done
+    lea ebp, [edi + ecx - 4]            ; i + 5 <= 大きさ の間
+    mov esi, edi
+    mov edx, edi                        ; ここより前からは書き換えない（直さなかった E8/E9 + 4）
+    sub ebx, edi                        ; ESI + EBX = その位置が置かれる番地
+.loop:
+    cmp esi, ebp
+    jae .done
+    mov al, [esi]
+    and al, 0xFE
+    cmp al, 0xE8                        ; E8 (call) / E9 (jmp)
+    jne .next
+    cmp esi, edx
+    jb .keep
+    mov al, [esi + 4]
+    inc al
+    cmp al, 1                           ; 上位 1 バイトが 00 か FF
+    ja .keep
+    mov eax, [esi + 1]
+    lea ecx, [esi + ebx + 5]
+    sub eax, ecx                        ; 絶対番地 → 相対番地
+    shl eax, 7                          ; 25 ビットで符号を広げる
+    sar eax, 7
+    mov [esi + 1], eax
+    add esi, 5
+    jmp .loop
+.keep:
+    lea edx, [esi + 4]
+.next:
+    inc esi
+    jmp .loop
+.done:
+    ret
+
+; CRC32 の表（256 項目）を EDI に作る
+crc_make_table:
+    xor ecx, ecx
+.entry:
+    mov eax, ecx
+    mov dl, 8
+.bit:
+    shr eax, 1
+    jnc .no_xor
+    xor eax, 0xEDB88320
+.no_xor:
+    dec dl
+    jnz .bit
+    mov [edi + ecx * 4], eax
+    inc ecx
+    cmp ecx, 256
+    jb .entry
+    ret
+
+; ESI = データ, ECX = 大きさ, EBX = 表 → EAX = CRC32（zlib と同じ）
+crc32:
+    mov eax, 0xFFFFFFFF
+    test ecx, ecx
+    jz .done
+.loop:
+    movzx edx, byte [esi]
+    xor dl, al
+    shr eax, 8
+    xor eax, [ebx + edx * 4]
+    inc esi
+    dec ecx
+    jnz .loop
+.done:
+    not eax
+    ret
+
+%include "unlzsa2.inc"
 
 ; =============================================================================
 ; 画面モード
@@ -999,6 +1212,7 @@ msg_a20         db "A20 enabled", 13, 10, 0
 msg_mem         db "memory map entries: ", 0
 msg_disk        db "disk loaded, bytes: ", 0
 msg_kernel      db "kernel loaded, bytes: ", 0
+msg_kernel_packed db "kernel compressed, bytes: ", 0
 msg_jump        db "jumping to kernel", 13, 10, 0
 msg_shift       db "Shift is held: using 320x200", 13, 10, 0
 msg_no_vbe      db "VESA 640x480x8 is not available", 13, 10, 0
@@ -1031,7 +1245,18 @@ need_end        dd 0
 fat_lba         dd 0
 root_lba        dd 0
 data_lba        dd 0
-clusters_left   dd 0
+copy_left       dd 0
+file_size       dd 0
+first_cluster   dd 0
+work_addr       dd 0
+work_size       dd 0
+crc_table       dd 0
+; unlzsa2.inc の作業用
+unl_sp          dd 0
+unl_in_end      dd 0
+unl_out_start   dd 0
+unl_out_limit   dd 0
+unl_nibble      db 0
 
 ; VESA の情報・設定ファイルの読み込み先
 align 16

@@ -11,3 +11,4 @@ path = "src/main.rs"
 
 [dependencies]
 vibe-lzsa = { path = "../../crates/vibe-lzsa" }
+vibe-pack = { path = "../../crates/vibe-pack" }

@@ -32,6 +32,8 @@ const TESTS: &[(&str, fn())] = &[
     ("sched_reclaims_stacks", sched_reclaims_stacks),
     ("mutex_sleeps_while_contended", mutex_sleeps_while_contended),
     ("fs_kernel_file_matches_boot_info", fs_kernel_file_matches_boot_info),
+    ("lzsa_asm_decodes_samples", lzsa_asm_decodes_samples),
+    ("lzsa_asm_rejects_broken_data", lzsa_asm_rejects_broken_data),
     ("fs_read_text_files", fs_read_text_files),
     ("fs_errors", fs_errors),
     ("fs_fd_read_in_chunks", fs_fd_read_in_chunks),
@@ -244,14 +246,101 @@ fn mutex_sleeps_while_contended() {
     assert_eq!(*m.lock(), 1);
 }
 
+unsafe extern "C" {
+    static __rodata_end: u8;
+    /// ローダと同じ LZSA2 の展開ルーチン（boot/unlzsa2_test.asm）
+    fn unlzsa2_call(src: *const u8, src_len: usize, dst: *mut u8, dst_cap: usize) -> isize;
+}
+
+/// ローダが置いたカーネル（.text・.rodata）が、KERNEL.SYS を Rust の展開器で展開したものと同じ。
+/// 圧縮したカーネルなら、ローダのアセンブラの展開・BCJ・CRC32 を毎回 Rust の実装と突き合わせる
 fn fs_kernel_file_matches_boot_info() {
     let info = crate::bootinfo::get();
-    let st = fs::stat("/KERNEL.SYS").unwrap();
-    assert_eq!(st.size, info.kernel_size);
-    let data = fs::read_file("/kernel.sys").unwrap();
-    // SAFETY: カーネル本体の先頭（ローダがファイルの中身をそのまま置いた）
-    let loaded = unsafe { core::slice::from_raw_parts(info.kernel_addr as *const u8, 64) };
-    assert_eq!(&data[..64], loaded);
+    let file = fs::read_file("/kernel.sys").unwrap();
+    let start = info.kernel_addr as usize;
+    let len = &raw const __rodata_end as usize - start;
+    // SAFETY: [kernel_addr, __rodata_end) はカーネルの .text・.rodata で、起動後に書き換えない
+    let loaded = unsafe { core::slice::from_raw_parts(start as *const u8, len) };
+    let image = if vibe_pack::is_packed(&file) {
+        let mut out = vec![0; info.kernel_size as usize];
+        assert_eq!(vibe_pack::unpack(&file, &mut out), Ok(out.len()));
+        out
+    } else {
+        file
+    };
+    assert_eq!(image.len(), info.kernel_size as usize);
+    assert!(image[..len] == *loaded, "kernel in memory differs from KERNEL.SYS");
+}
+
+/// アセンブラの展開ルーチンで展開する（`None` は壊れている）
+fn asm_unlzsa2(src: &[u8], dst: &mut [u8]) -> Option<usize> {
+    // SAFETY: src・dst は有効なスライスで、展開ルーチンは dst の外に書かない
+    let n = unsafe { unlzsa2_call(src.as_ptr(), src.len(), dst.as_mut_ptr(), dst.len()) };
+    (n >= 0).then_some(n as usize)
+}
+
+/// build.rs が埋め込んだデータ: (元の大きさ, 元の CRC32, 圧縮したもの)
+fn lzsa_samples() -> Vec<(usize, u32, &'static [u8])> {
+    static BLOB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/lzsa_samples.bin"));
+    let u32_at = |i: usize| u32::from_le_bytes([BLOB[i], BLOB[i + 1], BLOB[i + 2], BLOB[i + 3]]);
+    let mut v = Vec::new();
+    let mut p = 4;
+    for _ in 0..u32_at(0) {
+        let (len, crc, n) = (u32_at(p) as usize, u32_at(p + 4), u32_at(p + 8) as usize);
+        v.push((len, crc, &BLOB[p + 12..p + 12 + n]));
+        p += 12 + n;
+    }
+    v
+}
+
+/// ホストで圧縮した境目のデータ（長さ・オフセットの形の境目、フレームの境目、遠いオフセット）を
+/// ローダの展開ルーチンで展開し、元と同じになる
+fn lzsa_asm_decodes_samples() {
+    let samples = lzsa_samples();
+    assert!(samples.len() > 300, "{}", samples.len());
+    for (i, &(len, crc, packed)) in samples.iter().enumerate() {
+        let mut out = vec![0u8; len];
+        assert_eq!(asm_unlzsa2(packed, &mut out), Some(len), "sample {i}");
+        assert_eq!(vibe_pack::crc32(&out), crc, "sample {i}");
+    }
+}
+
+/// 壊れたデータ・途中で切れたデータ・出力先が足りないときに、出力の上限を越えて書かない
+fn lzsa_asm_rejects_broken_data() {
+    const GUARD: usize = 64;
+    let check = |packed: &[u8], cap: usize| {
+        let mut out = vec![0xA5u8; cap + GUARD];
+        let r = asm_unlzsa2(packed, &mut out[..cap]);
+        assert!(r.is_none_or(|n| n <= cap));
+        assert!(out[cap..].iter().all(|&b| b == 0xA5), "wrote past the limit");
+    };
+    let mut seed = 1u32;
+    let mut rand = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed as usize
+    };
+    for &(len, _, packed) in lzsa_samples().iter().filter(|s| (1000..20_000).contains(&s.0)).take(20) {
+        // 出力先が 1 バイト足りない
+        let mut out = vec![0u8; len - 1];
+        assert_eq!(asm_unlzsa2(packed, &mut out), None);
+        check(packed, len - 1);
+        // 途中で切れている
+        for cut in [3, 4, 6, packed.len() / 2, packed.len() - 4] {
+            check(&packed[..cut], len);
+        }
+        // バイトを書き換える
+        for _ in 0..30 {
+            let mut bad = packed.to_vec();
+            let i = rand() % bad.len();
+            bad[i] ^= (1 + rand() % 255) as u8;
+            check(&bad, len);
+        }
+    }
+    assert_eq!(asm_unlzsa2(b"", &mut [0; 4]), None);
+    assert_eq!(asm_unlzsa2(&[0x7b, 0x9e, 0x00, 0, 0, 0], &mut [0; 4]), None); // LZSA1 のヘッダ
+    assert_eq!(asm_unlzsa2(&[0x7b, 0x9e, 0x20, 0, 0, 0], &mut [0; 4]), Some(0));
 }
 
 fn fs_read_text_files() {

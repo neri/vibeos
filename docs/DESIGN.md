@@ -197,7 +197,8 @@ LBA 33〜     : データ領域
 mkfs.fat -C -F 12 -R 1 -n VIBEOS vibeos.img 1440
 dd if=boot.bin of=vibeos.img conv=notrunc bs=512 count=1   # BPB は mkfs と同じ値を boot.asm に持たせる（Makefile で照合）
 mcopy -i vibeos.img loader.bin ::LOADER.SYS
-mcopy -i vibeos.img kernel.sys ::KERNEL.SYS
+vibe-lzsa pack --bcj 0x100000 kernel.sys kernel.vpk          # カーネルを圧縮する（§4.4。COMPRESS=0 なら圧縮しない）
+mcopy -i vibeos.img kernel.vpk ::KERNEL.SYS
 ```
 
 ### 4.2 起動シーケンス
@@ -218,7 +219,7 @@ mcopy -i vibeos.img kernel.sys ::KERNEL.SYS
    5. 画面モード 13h に設定（`int 10h AX=0013h`）← BIOS が使えるうちに行う。画面下部に読み込みの進み具合のバーを描く
    6. `[KERNEL_ADDR, RAMDISK_ADDR + ディスクの大きさ)` が 1 つの使用可能領域に収まるか E820 で確認
    7. フロッピー全体を **RAM ディスク（`0x400000`）** に読み込む（§7.1）。トラック単位で中継バッファ（`0x10000`, DMA の 64KB 境界をまたがない）に読み、unreal モードでコピーする。失敗時はリセットして 3 回までリトライ
-   8. RAM ディスク上の FAT12 から `KERNEL.SYS` を探し、クラスタをたどって `0x100000`（1MB）へコピー（ディスクを読み直さない）
+   8. RAM ディスク上の FAT12 から `KERNEL.SYS` を探す（ディスクを読み直さない）。先頭が `VPK1` なら圧縮したカーネル（§4.4）で、クラスタをたどって作業用の場所へ写し、`0x100000`（1MB）へ展開する。印が無ければ今までどおりクラスタをたどって `0x100000` へそのままコピーする
    9. `cli` → NMI 禁止 → GDT ロード → CR0.PE=1 → far jmp で 32bit コードへ → `EAX=マジック, EBX=ブート情報` でカーネルへジャンプ
 4. **カーネル**（`_start`, `global_asm!`）
    - スタック設定 → **BSS を必ずゼロクリア**（実機のメモリは初期化されていない）→ `kmain(bootinfo)`
@@ -243,12 +244,25 @@ pub struct BootInfo {
     pub screen_w: u16,        // 320
     pub screen_h: u16,        // 200
     pub kernel_addr: u32,     // 0x100000
-    pub kernel_size: u32,     // KERNEL.SYS の大きさ
+    pub kernel_size: u32,     // カーネルのメモリ上の大きさ（圧縮していれば展開後の大きさ）
     pub pitch: u32,           // 画面 1 行のバイト数
 }
 ```
 
 置き場所は `0x0500`。オフセットは `boot/bootinfo.inc` に定義する。
+
+### 4.4 カーネルの圧縮
+
+フロッピーの空きを増やすため、`KERNEL.SYS` は圧縮した形で置く（DECISIONS.md D-033・D-034, [plans/compress.md](plans/compress.md)）。
+
+- **形**（`crates/vibe-pack`）: 20 バイトのヘッダ（印 `VPK1`, 形式 2 = LZSA2, フラグ bit0 = BCJ, ヘッダの大きさ, 展開後の大きさ, BCJ の基準の番地, 展開後の CRC32）+ LZSA2 のストリーム（`crates/vibe-lzsa`、64KB ごとのフレーム）
+- **BCJ**: 圧縮の前に `call`（E8）・`jmp`（E9）の相対番地を絶対番地に直す（同じ関数を呼ぶ命令が同じバイト列になり、約 5% 縮む）。相対番地の上位 1 バイトが 00/FF のときだけ直し、結果を 25 ビットで符号を広げる。直さなかった E8/E9 の 4 バイト後より前から始まる書き換えはしない（戻す側が同じ位置で同じ判断をできるように）
+- **ローダでの展開**（unreal モードのまま、BIOS を呼ばずに行う）:
+  1. 圧縮したファイルを RAM ディスクの後ろ（64KB 境界に切り上げた所）の作業用の場所へ、クラスタをたどって続けて写す。作業用の場所と CRC32 の表（1KB）が使用可能領域に収まるか E820 で確かめる
+  2. ヘッダを確かめ（形式・フラグ・大きさが `0x400000` まで）、LZSA2 の展開ルーチン（`boot/unlzsa2.inc`）で `0x100000` へ展開する。展開ルーチンは入力と出力の上限を毎回確かめ、越えたら壊れているとして止まる。展開した大きさがヘッダと違えば止まる
+  3. BCJ を戻し、表を作って CRC32 を確かめる。合わなければ `KERNEL.SYS is broken` と表示して止まる
+- 作業用の場所は起動後は使わない（カーネルは予約しないので空きになる）
+- `boot/unlzsa2.inc` は 32 ビットのレジスタと番地だけで書き、ローダ（`bits 16` の unreal モード）とテスト用カーネル（`bits 32`, ktest）で同じものを使う
 
 ---
 
@@ -267,6 +281,7 @@ pub struct BootInfo {
 | `0xB0000`–`0xFFFFF` | | VGA テキスト / BIOS ROM（未使用） |
 | `0x100000`–`0x3FFFFF` | 最大 3MB | カーネル（.text / .rodata / .data / .bss） |
 | `0x400000`–`0x567FFF` | 1.44MB | RAM ディスク（フロッピー全体） |
+| `0x570000`– | 約 140KB | 起動時だけ: 圧縮したカーネルの作業用の場所（RAM ディスクの終わりを 64KB に切り上げた所から。§4.4）→ 起動後は空き |
 | それ以外の使用可能領域 | | カーネルスタック, ヒープ, 物理ページプール（E820 から決める） |
 
 - QEMU のメモリは `-m 32M` を標準とする。**実機では E820 の結果だけを信用し、メモリ量や空き領域を決め打ちしない**
@@ -547,6 +562,7 @@ vibeos/
 │   ├── vibe-keyboard/        # スキャンコード（セット 1）の解釈とキー配列
 │   ├── vibe-lzsa/            # LZSA1/LZSA2 の展開（ヒープ不要）と圧縮（本家の lzsa と互換）
 │   ├── vibe-net/             # TCP/IP（Ethernet・ARP・IPv4・ICMP・UDP・TCP・DHCP・DNS・SNTP・HTTP）
+│   ├── vibe-pack/            # 圧縮したカーネルの形（ヘッダ・BCJ・CRC32）
 │   ├── vibe-term/            # 制御文字・ANSI エスケープシーケンスの解釈
 │   └── vibe-time/            # 日付と時刻の計算（1970 年からの秒・FAT の形式）
 ├── apps/
@@ -596,7 +612,7 @@ qemu-system-i386 -m 32M -cpu 486 \
 | 起動テスト | 一定時間内にシリアルに `VIBEOS READY` が出るか確認 |
 | ネットワーク | シナリオの `net` で QEMU にカードを付け、テストランナーがフレームを記録・解析し、DNS・NTP・HTTP に答える（§12.6） |
 | TCP/IP の単体テスト | `crates/vibe-net` をホストで。2 つのスタックを直結し、落とす・重ねる・入れ替える回線で通信させる |
-| 圧縮（LZSA） | `crates/vibe-lzsa` の `cargo test` と `make test-lzsa`（カーネル・アプリ・境目のデータを自作で圧縮 → 展開して比べる）。本家の `lzsa` との突き合わせ（`make test-lzsa-ref`）と率の表（`make lzsa-bench`）は `make test` に含めない（DECISIONS.md D-033） |
+| 圧縮（LZSA） | `crates/vibe-lzsa`・`crates/vibe-pack` の `cargo test` と `make test-lzsa`（カーネル・アプリ・境目のデータを自作で圧縮 → 展開して比べる。kernel.vpk が元の 50% 以下）。ローダの展開ルーチンは、テスト用カーネルにも 32 ビットで組み込み、ホストで圧縮した境目のデータを ktest で展開させる。カーネルは自分の `KERNEL.SYS` を Rust で展開してメモリ上の `.text`・`.rodata` と比べる。圧縮していない・壊れた `KERNEL.SYS` のイメージでの起動もシナリオで確かめる。本家の `lzsa` との突き合わせ（`make test-lzsa-ref`）と率の表（`make lzsa-bench`）は `make test` に含めない（DECISIONS.md D-033） |
 
 `isa-debug-exit` への書き込みはテスト用ビルドのときだけ行う（実機ではそのポートに何があるか分からないため）。
 

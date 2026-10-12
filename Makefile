@@ -13,6 +13,8 @@
 #   make test-lzsa-ref  自作の LZSA を本家の lzsa と突き合わせる（本家で展開・本家の出力を展開。make test には含めない）
 #   make lzsa-bench  自作の LZSA と本家の圧縮後の大きさの表
 #   make lzsa-ref    本家の lzsa を GitHub から取ってきてビルドする（build/ext/lzsa。DECISIONS.md D-033）
+#   make size-report KERNEL.SYS の圧縮前後の大きさとフロッピーの空き
+#   make COMPRESS=0  カーネルを圧縮しないイメージを作る（ローダは印の無い KERNEL.SYS をそのまま写す）
 #   make clean
 
 BUILD   := build
@@ -21,6 +23,12 @@ IMG     := $(BUILD)/vibeos.img
 TEST_IMG := $(BUILD)/vibeos-test.img
 # LOADER.SYS がとびとびのクラスタに置かれたイメージ（ブートセクタが FAT をたどれるかのテスト用）
 FRAG_IMG := $(BUILD)/vibeos-frag.img
+# カーネルを圧縮しないイメージ（ローダが圧縮していない KERNEL.SYS も読めるかのテスト用）
+RAW_IMG := $(BUILD)/vibeos-raw.img
+# 圧縮したカーネルの中身を壊したイメージ（ローダが CRC32 などで気づいて止まるかのテスト用）
+BROKEN_IMG := $(BUILD)/vibeos-broken.img
+# 1 ならカーネルを LZSA2 + BCJ で圧縮して KERNEL.SYS にする（docs/plans/compress.md）
+COMPRESS ?= 1
 QEMU    ?= qemu-system-i386
 CARGO   ?= cargo
 NASM    ?= nasm
@@ -44,7 +52,7 @@ SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 0x8000 に読み込む。中継バッファ（0x10000）の手前まで
 
-.PHONY: all run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref lzsa-bench lzsa-ref screenshots clean FORCE
+.PHONY: all run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref lzsa-bench lzsa-ref size-report screenshots clean FORCE
 
 all: $(IMG)
 
@@ -76,6 +84,24 @@ $(TEST_KERNEL_ELF): FORCE
 $(BUILD)/test/kernel.sys: $(TEST_KERNEL_ELF)
 	mkdir -p $(dir $@)
 	$(OBJCOPY) -O binary $< $@
+
+# 圧縮したカーネル（"VPK1" のヘッダ + LZSA2。BCJ の基準はカーネルが置かれる 0x100000）
+%.vpk: %.sys $(VIBE_LZSA)
+	$(VIBE_LZSA) pack --bcj 0x100000 $< $@
+
+# 前と違う COMPRESS で make したときにイメージを作り直すため、値を覚えておく
+COMPRESS_STAMP := $(BUILD)/compress.stamp
+$(COMPRESS_STAMP): FORCE | $(BUILD)
+	@echo $(COMPRESS) | cmp -s - $@ || echo $(COMPRESS) > $@
+
+# イメージに KERNEL.SYS として入れるファイル
+ifeq ($(COMPRESS),1)
+KERNEL_FILE := $(BUILD)/kernel.vpk
+TEST_KERNEL_FILE := $(BUILD)/test/kernel.vpk
+else
+KERNEL_FILE := $(BUILD)/kernel.sys
+TEST_KERNEL_FILE := $(BUILD)/test/kernel.sys
+endif
 
 # --- イメージ ---------------------------------------------------------------
 # 標準の FAT12 / 1.44MB（予約セクタ 1）。2nd ステージは LOADER.SYS というファイルにし、
@@ -127,11 +153,23 @@ $(GEN_STAMP): $(shell find tools/mkassets -type f) | $(BUILD)
 	$(CARGO) run -q --release -p mkassets -- $(GEN_ROOTFS)
 	touch $@
 
-$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
+$(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(KERNEL_FILE) $(COMPRESS_STAMP) $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
+	$(call make-image,$@,$(KERNEL_FILE))
+
+$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(TEST_KERNEL_FILE) $(COMPRESS_STAMP) $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
+	$(call make-image,$@,$(TEST_KERNEL_FILE))
+
+$(RAW_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
 	$(call make-image,$@,$(BUILD)/kernel.sys)
 
-$(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/test/kernel.sys $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
-	$(call make-image,$@,$(BUILD)/test/kernel.sys)
+# 圧縮したデータの途中（先頭から 40000 バイト目）を書き換える。元と変わったことも確かめる
+$(BUILD)/kernel-broken.vpk: $(BUILD)/kernel.vpk
+	cp $< $@
+	printf '\245\132\245\132' | dd of=$@ bs=1 seek=40000 conv=notrunc status=none
+	! cmp -s $< $@
+
+$(BROKEN_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel-broken.vpk $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
+	$(call make-image,$@,$(BUILD)/kernel-broken.vpk)
 
 # 先頭の LOADER.SYS を消し、空いた所に 1 クラスタのファイルを並べて 1 つおきに消してから
 # 置き直す。LOADER.SYS は 1 クラスタずつの飛び地と、後ろの空き領域の連続した塊に分かれる
@@ -167,10 +205,10 @@ test-host:
 $(VIBE_RUN): FORCE
 	$(CARGO) build --release -p vibe-run
 
-test-qemu: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(VIBE_RUN)
+test-qemu: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(RAW_IMG) $(BROKEN_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --img $(IMG) --out $(BUILD)/test-out $(SCENARIOS)
 
-test-bochs: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(VIBE_RUN)
+test-bochs: $(IMG) $(TEST_IMG) $(FRAG_IMG) $(RAW_IMG) $(BROKEN_IMG) $(VIBE_RUN)
 	$(VIBE_RUN) test --bochs --img $(IMG) --out $(BUILD)/test-out-bochs $(SCENARIOS)
 
 # LAN の機器（既定はデフォルトゲートウェイ = ルータ）に HTTP と ping でつなぐ
@@ -209,12 +247,21 @@ lzsa-ref: $(LZSA_REF)
 $(VIBE_LZSA): FORCE
 	$(CARGO) build --release -p vibe-lzsa-tool
 
-test-lzsa: $(IMG) $(VIBE_LZSA)
+test-lzsa: $(IMG) $(BUILD)/kernel.vpk $(VIBE_LZSA)
 	$(VIBE_LZSA) roundtrip $(LZSA_FILES)
-
+	$(VIBE_LZSA) unpack $(BUILD)/kernel.vpk $(BUILD)/kernel-unpacked.sys
+	cmp $(BUILD)/kernel-unpacked.sys $(BUILD)/kernel.sys
+	@size=$$(stat -c %s $(BUILD)/kernel.vpk); orig=$$(stat -c %s $(BUILD)/kernel.sys); \
+		if [ $$((size * 2)) -gt $$orig ]; then echo "kernel.vpk is not under 50% ($$size / $$orig)"; exit 1; fi
 
 test-lzsa-ref: $(IMG) $(LZSA_REF) $(VIBE_LZSA)
 	$(VIBE_LZSA) compat --ref $(LZSA_REF) --work $(BUILD)/lzsa-work $(LZSA_FILES)
+
+size-report: $(IMG) $(BUILD)/kernel.vpk
+	@orig=$$(stat -c %s $(BUILD)/kernel.sys); packed=$$(stat -c %s $(BUILD)/kernel.vpk); \
+		echo "| kernel.sys | $$orig |"; \
+		echo "| kernel.vpk (LZSA2 + BCJ) | $$packed | $$((packed * 1000 / orig / 10)).$$((packed * 1000 / orig % 10))% |"; \
+		echo "| free on $(IMG) | $$(mdir -i $(IMG) :: | sed -n 's/ *\([0-9 ]*\) bytes free/\1/p' | tr -d ' ') |"
 
 lzsa-bench: $(IMG) $(LZSA_REF) $(VIBE_LZSA)
 	$(VIBE_LZSA) bench --ref $(LZSA_REF) --work $(BUILD)/lzsa-work $(LZSA_FILES)

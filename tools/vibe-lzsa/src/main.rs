@@ -4,6 +4,11 @@
 //!   vibe-lzsa [-d] [-f1|-f2] [-r] [-p PARSER] [--depth N] [--arrivals K] [--extra N] IN OUT
 //!       圧縮（-d で展開）。引数の形は本家の lzsa と同じ。PARSER は greedy / lazy / optimal / rep
 //!       （既定は rep）。-r は raw block（64KB まで）
+//!   vibe-lzsa pack [--bcj BASE] IN OUT
+//!       カーネル用の形（"VPK1" のヘッダ + LZSA2。crates/vibe-pack）に圧縮する。BASE は展開後に
+//!       置かれる番地（0x 付きの 16 進でもよい）で、指定すると BCJ フィルタをかける
+//!   vibe-lzsa unpack IN OUT
+//!       pack の逆（CRC32 も確かめる）
 //!   vibe-lzsa roundtrip FILE...
 //!       FILE とテスト用のデータを、すべての設定で自作の圧縮 → 自作の展開して元と比べる
 //!   vibe-lzsa compat --ref LZSA [--work DIR] FILE...
@@ -33,6 +38,8 @@ const PARSERS: [(Parser, &str); 4] = [
 fn usage() -> ExitCode {
     eprintln!(
         "usage: vibe-lzsa [-d] [-f1|-f2] [-r] [-p PARSER] [--depth N] [--arrivals K] [--extra N] IN OUT\n\
+         \x20      vibe-lzsa pack [--bcj BASE] IN OUT\n\
+         \x20      vibe-lzsa unpack IN OUT\n\
          \x20      vibe-lzsa roundtrip FILE...\n\
          \x20      vibe-lzsa compat --ref LZSA [--work DIR] FILE...\n\
          \x20      vibe-lzsa bench [--ref LZSA] [--work DIR] FILE..."
@@ -43,6 +50,8 @@ fn usage() -> ExitCode {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("pack") => pack(&args[1..]),
+        Some("unpack") => unpack_cmd(&args[1..]),
         Some("roundtrip") => roundtrip(&args[1..]),
         Some("compat") => compat(&args[1..]),
         Some("bench") => bench(&args[1..]),
@@ -114,6 +123,44 @@ fn single(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn parse_number(s: &str) -> Option<u32> {
+    match s.strip_prefix("0x") {
+        Some(hex) => u32::from_str_radix(hex, 16).ok(),
+        None => s.parse().ok(),
+    }
+}
+
+fn read_write(input: &str, output: &str, f: impl FnOnce(&[u8]) -> Result<Vec<u8>, String>) -> ExitCode {
+    let result = fs::read(input)
+        .map_err(|e| format!("{input}: {e}"))
+        .and_then(|d| f(&d))
+        .and_then(|out| fs::write(output, out).map_err(|e| format!("{output}: {e}")));
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn pack(args: &[String]) -> ExitCode {
+    let (base, files) = match args {
+        [flag, base, rest @ ..] if flag == "--bcj" => match parse_number(base) {
+            Some(b) => (Some(b), rest),
+            None => return usage(),
+        },
+        _ => (None, args),
+    };
+    let [input, output] = files else { return usage() };
+    read_write(input, output, |d| Ok(vibe_pack::pack(d, base)))
+}
+
+fn unpack_cmd(args: &[String]) -> ExitCode {
+    let [input, output] = args else { return usage() };
+    read_write(input, output, |d| vibe_pack::unpack_to_vec(d).map_err(|e| format!("{input}: {e:?}")))
 }
 
 /// 比べる対象: 引数のファイルと（`with_samples` なら）テスト用のデータ
