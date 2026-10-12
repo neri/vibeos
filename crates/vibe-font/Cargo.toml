@@ -3,7 +3,11 @@ name = "vibe-font"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "ビットマップフォント（データは font8x8 クレート）"
+description = "ビットマップフォント（データは font8x8 クレート）と .VFN の読み込み"
 
 [dependencies]
 font8x8 = { version = "0.3", default-features = false }
+
+[features]
+# ホストのツール用（.VFN を組み立てる vfn::build）
+std = []

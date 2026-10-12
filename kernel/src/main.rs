@@ -128,6 +128,8 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     drivers::fdc::init();
     // ネットワーク（BOOT.CFG を読むのでファイルシステムの後。アドレスは裏で DHCP がもらう）
     net::init();
+    // なめらかなフォント（デスクトップの文字。ファイルシステムの後、デスクトップにする前）
+    gfx::fonts::load();
 
     klog!("VIBEOS READY");
 

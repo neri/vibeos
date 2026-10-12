@@ -1,4 +1,5 @@
 # Phase 37（デスクトップ D6）: デスクトップの背景の画像（BOOT.CFG の wallpaper= と、シェルの wallpaper）
+# 640x480 では端末（中身 8,72 から 638x400、タイトルバー y=48〜71）がほぼ全体を覆うので、バーとの間（y=24〜46）で見る
 boot-config video=640x480
 boot-config wallpaper=/IMAGES/PLASMA.BMP tile
 timeout 30
@@ -6,29 +7,33 @@ wait-serial gui: desktop 640x480
 wait-serial gui: wallpaper /IMAGES/PLASMA.BMP
 wait-serial VibeOS shell
 sleep 300
-# 端末の右側の空いている所（敷き詰めた plasma）
-expect-screen wallpaper-tile 530 20 110 180
-# 真ん中に 1 枚（160x100 の gradient を 240,195 に）。周りは単色の背景
+# 端末の上の空いている所（敷き詰めた plasma）
+expect-screen wallpaper-tile 300 24 340 22
+# 真ん中に 1 枚（160x100 の gradient を 240,202 に）。周りは単色の背景
 type wallpaper /images/gradient.bmp center
 key ret
 sleep 500
-# 端末が重なるので [_]（509〜517, 205〜213）で最小化して見る（カーソル 320,240 → 513,209）
-mouse-move 193 -31
+# 端末が重なるので [_]（624〜639, 48〜71）で最小化して見る（カーソル 320,240 → 630,60）
+mouse-move 310 -180
 mouse-button left down
 mouse-button left up
 sleep 300
-expect-screen wallpaper-center 236 191 168 108
+expect-screen wallpaper-center 236 198 168 108
 expect-pixel 600 30 0 103 55
-# バーの Terminal 1 のボタン（→ 100,5）で戻す
-mouse-move -413 -204
+# バーの Terminal 1 のボタン（→ 100,10）で戻す
+mouse-move -530 -50
 mouse-button left down
 mouse-button left up
 sleep 300
-# 単色に戻す
+# 敷き詰めてから単色に戻す（端末の上の所が plasma → 背景の色）
+type wallpaper /images/plasma.bmp tile
+key ret
+sleep 300
+expect-screen wallpaper-tile 300 24 340 22
 type wallpaper none
 key ret
 sleep 300
-expect-pixel 300 200 0 103 55
+expect-pixel 300 30 0 103 55
 type wallpaper /hello.txt
 key ret
 wait-serial wallpaper: /hello.txt: not a BMP file

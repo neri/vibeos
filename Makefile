@@ -14,6 +14,7 @@
 #   make lzsa-bench  自作の LZSA と本家の圧縮後の大きさの表
 #   make lzsa-ref    本家の lzsa を GitHub から取ってきてビルドする（build/ext/lzsa。DECISIONS.md D-033）
 #   make size-report KERNEL.SYS の圧縮前後の大きさとフロッピーの空き
+#   make fonts    assets/fonts の .VFN をホストの Noto のフォントから作り直す（tools/vibe-fontgen）
 #   make COMPRESS=0  カーネルとアプリを圧縮しないイメージを作る（ローダは印の無い KERNEL.SYS を
 #                    そのまま写し、カーネルは gzip でない ELF をそのまま読む）
 #   make clean
@@ -59,7 +60,7 @@ SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 0x8000 に読み込む。中継バッファ（0x10000）の手前まで
 
-.PHONY: all run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref test-apps-gz lzsa-bench lzsa-ref size-report screenshots clean FORCE
+.PHONY: all fonts run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref test-apps-gz lzsa-bench lzsa-ref size-report screenshots clean FORCE
 
 all: $(IMG)
 
@@ -181,14 +182,27 @@ APPS_IMG_DIR := $(APPS_DIR)
 APPS_IMG_STAMP := $(APPS_STAMP)
 endif
 
-# ビルド時に生成してディスクに入れるもの（tools/mkassets）
+# ビルド時に生成してディスクに入れるもの（tools/mkassets）と、/SYSTEM/FONTS のフォント（assets/fonts。
+# フォントは COMPRESS に関係なくいつも gzip で入れる。DECISIONS.md D-047。許諾の OFL.TXT はそのまま）
 GEN_ROOTFS := $(BUILD)/rootfs-gen
 GEN_STAMP := $(GEN_ROOTFS)/.stamp
+FONT_FILES := $(wildcard assets/fonts/*.VFN)
 
-$(GEN_STAMP): $(shell find tools/mkassets -type f) | $(BUILD)
+$(GEN_STAMP): $(shell find tools/mkassets -type f) $(FONT_FILES) assets/fonts/OFL.TXT | $(BUILD)
 	rm -rf $(GEN_ROOTFS)
 	$(CARGO) run -q --release -p mkassets -- $(GEN_ROOTFS)
+	mkdir -p $(GEN_ROOTFS)/SYSTEM/FONTS
+	for f in $(FONT_FILES); do gzip -9 -n -c $$f > $(GEN_ROOTFS)/SYSTEM/FONTS/$$(basename $$f) || exit 1; done
+	cp assets/fonts/OFL.TXT $(GEN_ROOTFS)/SYSTEM/FONTS/
 	touch $@
+
+# assets/fonts の .VFN を作り直す（ホストの Noto のフォントから。ふだんのビルドでは使わない）
+NOTO_DIR ?= /usr/share/fonts/truetype/noto
+fonts:
+	$(CARGO) build -q --release -p vibe-fontgen
+	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Regular.ttf 13 assets/fonts/UI.VFN
+	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Bold.ttf 13 assets/fonts/UIBOLD.VFN
+	target/release/vibe-fontgen $(NOTO_DIR)/NotoSansMono-Regular.ttf 13 assets/fonts/MONO.VFN 8x16 12
 
 $(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(KERNEL_FILE) $(COMPRESS_STAMP) $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
 	$(call make-image,$@,$(KERNEL_FILE),$(APPS_IMG_DIR))

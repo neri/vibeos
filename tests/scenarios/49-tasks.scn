@@ -1,7 +1,7 @@
 # Phase 36（デスクトップ D5）: タスクマネージャ。タスクの一覧を出し、裏で動いているプロセス（life）を止められる
-# life のウィンドウは中身 120,47 に 192x144、tasks は 144,67 に 320x192（End task のボタンは 148〜227, 239〜254）
+# life のウィンドウは中身 120,73 に 192x144、tasks は 144,93 に 320x192（End task のボタンは 148〜227, 265〜280）
 timeout 30
-wait-serial gui: desktop 640x480
+wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
 type life &
 key ret
@@ -15,12 +15,12 @@ key ret
 wait-serial tasks: started
 sleep 1500
 # 見出しの行（毎回同じ）
-expect-screen tasks-header 148 71 312 10
+expect-screen tasks-header 148 97 312 10
 # 一覧は番号の順。最後が tasks 自身、その 1 つ前が life
 key end
 key up
-# End task（→ 188,247）→ 確かめるダイアログで Enter（Yes）
-mouse-move -132 7
+# End task（→ 188,273）→ 確かめるダイアログで Enter（Yes）
+mouse-move -324 -111
 mouse-button left down
 mouse-button left up
 sleep 300
@@ -29,7 +29,7 @@ wait-serial tasks: killed
 wait-serial (life.ELF)
 sleep 500
 # life のウィンドウが消えた（tasks の左側に見えていた所が背景に戻る）
-expect-pixel 125 60 0 103 55
+expect-pixel 125 86 0 103 55
 # カーネルスレッドは止められない（先頭の boot か idle を選んで Delete キー）
 key home
 key delete

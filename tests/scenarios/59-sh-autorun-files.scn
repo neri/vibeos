@@ -4,7 +4,7 @@ qemu-only
 disk-put tests/scripts/autorun.sh /AUTORUN.SH
 disk-put tests/scripts/hi.sh /DOCS/HI.SH
 timeout 30
-wait-serial gui: desktop 640x480
+wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
 wait-serial autorun: hello from /AUTORUN.SH
 wait-serial autorun: sum 6

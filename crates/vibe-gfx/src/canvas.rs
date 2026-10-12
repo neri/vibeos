@@ -8,7 +8,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use vibe_font::Font;
+use vibe_font::{Font, VFont, vfn::SUBPIXELS};
 
 use crate::palette;
 
@@ -461,6 +461,48 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// 領域 (x, y, w, h) を `dy` ピクセル上へずらし、空いた下端を `fill` で塗る
+    pub fn scroll_up(&mut self, x: i32, y: i32, w: i32, h: i32, dy: i32, fill: Color) {
+        let Some((x0, y0, x1, y1)) = self.clip(x, y, w, h) else { return };
+        if dy <= 0 {
+            return;
+        }
+        let dy = (dy as usize).min(y1 - y0);
+        for row in y0..y1 - dy {
+            let dst = row * self.width;
+            let src = (row + dy) * self.width;
+            self.pixels.copy_within(src + x0..src + x1, dst + x0);
+        }
+        self.fill_rect(x0 as i32, (y1 - dy) as i32, (x1 - x0) as i32, dy as i32, fill);
+    }
+
+    /// なめらかなフォントで 1 文字描く（`pen_x` はペンの位置、`top` は行の上端）。送り幅（1/16 ピクセル）を返す
+    pub fn draw_glyph(&mut self, font: &VFont, pen_x: i32, top: i32, c: char, color: Color) -> i32 {
+        let Some(g) = font.glyph_or_replacement(c) else { return 0 };
+        let gx = pen_x + g.left as i32;
+        let gy = top + font.ascent as i32 + g.top as i32;
+        for y in 0..g.height as usize {
+            for x in 0..g.width as usize {
+                let a = g.alpha(x, y);
+                if a != 0 {
+                    self.blend_pixel(gx + x as i32, gy + y as i32, color, a);
+                }
+            }
+        }
+        g.advance as i32
+    }
+
+    /// なめらかなフォントで文字列を 1 行描く（`top` は行の上端）。描いた幅を返す。
+    /// ペンは 1/16 ピクセルで進め、字は丸めた位置に置く
+    pub fn draw_vtext(&mut self, font: &VFont, x: i32, top: i32, text: &str, color: Color) -> i32 {
+        let mut pen = 0i32;
+        for c in text.chars() {
+            let px = x + (pen + SUBPIXELS / 2) / SUBPIXELS;
+            pen += self.draw_glyph(font, px, top, c, color);
+        }
+        (pen + SUBPIXELS / 2) / SUBPIXELS
+    }
+
     /// 文字列を 1 行で描く。描いた幅を返す
     pub fn draw_text(&mut self, font: &Font, x: i32, y: i32, text: &str, fg: Color, bg: Option<Color>) -> i32 {
         let mut cx = x;
@@ -638,6 +680,37 @@ mod tests {
         assert_eq!(p[to_palette8(rgb(255, 0, 0)) as usize], [63, 0, 0]);
         let g = p[to_palette8(rgb(128, 128, 128)) as usize];
         assert!(g[0] == g[1] && (30..=34).contains(&g[0]), "{g:?}");
+    }
+
+    #[test]
+    fn vtext_blends_glyphs() {
+        use vibe_font::vfn::build::{GlyphData, encode};
+        let mut glyphs = vec![
+            GlyphData { code: 'a' as u32, width: 2, height: 2, left: 0, top: -2, advance: 48, alpha: vec![15, 0, 0, 15] },
+            GlyphData { code: '?' as u32, width: 1, height: 1, left: 0, top: -1, advance: 16, alpha: vec![15] },
+        ];
+        let data = encode(4, 4, 3, 0, &mut glyphs);
+        let font = VFont::parse(&data).unwrap();
+        let mut buf = [W; 8 * 4];
+        let mut c = Canvas::new(&mut buf, 8, 4);
+        // 行の上端 0、ベースライン 3: 字の上端は 1
+        assert_eq!(c.draw_vtext(&font, 0, 0, "aa", K), 6);
+        assert_eq!(c.get(0, 1), Some(K));
+        assert_eq!(c.get(1, 1), Some(W));
+        assert_eq!(c.get(1, 2), Some(K));
+        assert_eq!(c.get(3, 1), Some(K)); // 2 文字目は 3 ピクセル目から
+        assert_eq!(c.get(0, 0), Some(W));
+    }
+
+    #[test]
+    fn scroll_up_moves_rows() {
+        let mut buf = [0u32; 6];
+        let mut c = Canvas::new(&mut buf, 2, 3);
+        for y in 0..3 {
+            c.hline(0, y, 2, y as u32 + 1);
+        }
+        c.scroll_up(0, 0, 2, 3, 1, 9);
+        assert_eq!(c.pixels(), &[2, 2, 3, 3, 9, 9]);
     }
 
     #[test]

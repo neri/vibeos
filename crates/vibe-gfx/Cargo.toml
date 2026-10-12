@@ -7,3 +7,6 @@ description = "8bit パレット画像への描画（ハードウェアに依存
 
 [dependencies]
 vibe-font = { path = "../vibe-font" }
+
+[dev-dependencies]
+vibe-font = { path = "../vibe-font", features = ["std"] }

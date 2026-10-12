@@ -5,7 +5,7 @@ wait-serial VibeOS shell
 # ステータスバー（青）が描かれ、時刻が進む
 sleep 300
 expect-pixel 4 4 0 0 168
-expect-change 400 0 240 16 1500
+expect-change 760 0 264 24 1500
 # 行の途中に挿入: "eco hi" → Home, → → で 'c' の前に 'h' を入れて "echo hi"
 type eco hi
 key home

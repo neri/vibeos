@@ -9,7 +9,7 @@
 //!   boot-config TEXT      イメージの写しの BOOT.CFG を TEXT にしてから起動する（例: video=320x200）。
 //!                         何行か書くと、その行を並べたものになる。
 //!                         画面の大きさをそろえるため、BOOT.CFG に video= を書かないシナリオは
-//!                         video=640x480 で起動する（DEFAULT_VIDEO。イメージの BOOT.CFG の video= も置き換える）
+//!                         video=1024x768 で起動する（DEFAULT_VIDEO。イメージの BOOT.CFG の video= も置き換える）
 //!   disk-delete PATH      イメージの写しからファイル PATH を消してから起動する（例: /BIN/SH.ELF）
 //!   disk-put FILE PATH    ホストのファイル FILE をイメージの写しの PATH に入れてから起動する（テスト用のスクリプトなど）
 //!   key-hold KEY / key-release KEY  キーを押したまま / 離す（起動中に Shift を押しておくなど）
@@ -902,7 +902,7 @@ impl Image {
 }
 
 /// BOOT.CFG に video= を書かないシナリオの画面の大きさ
-const DEFAULT_VIDEO: &str = "640x480";
+const DEFAULT_VIDEO: &str = "1024x768";
 
 /// イメージの BOOT.CFG を読む（無ければ空）
 fn read_boot_config(img: &Path) -> Result<String> {

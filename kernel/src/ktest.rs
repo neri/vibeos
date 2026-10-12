@@ -55,6 +55,7 @@ const TESTS: &[(&str, fn())] = &[
     ("fdc_read_matches_ramdisk", fdc_read_matches_ramdisk),
     ("fs_write_and_sync", fs_write_and_sync),
     ("gfx_compose_speed", gfx_compose_speed),
+    ("fonts_loaded", fonts_loaded),
 ];
 
 pub fn run_all() -> ! {
@@ -739,4 +740,18 @@ fn gfx_compose_speed() {
     klog!("bench: compose 1024x768 with 4 windows: {} ms per frame", ms);
     assert!(screen[W * H / 2] != 0);
     assert!(ms <= 100, "composing one frame took {ms} ms");
+}
+
+/// /SYSTEM/FONTS のフォント（gzip）を起動時に読み込めた（M3）
+fn fonts_loaded() {
+    use crate::gfx::fonts;
+    let ui = fonts::ui().expect("UI.VFN");
+    let bold = fonts::ui_bold().expect("UIBOLD.VFN");
+    let mono = fonts::mono().expect("MONO.VFN");
+    assert_eq!((mono.cell_width, mono.line_height), (8, 16));
+    assert_eq!(mono.measure("VibeOS"), 48);
+    assert!(ui.measure("VibeOS") > 30 && ui.measure("VibeOS") < 60, "{}", ui.measure("VibeOS"));
+    assert!(bold.measure("VibeOS") >= ui.measure("VibeOS"));
+    // ASCII の字はすべてある
+    assert!((' '..='~').all(|c| ui.glyph(c).is_some() && mono.glyph(c).is_some()));
 }

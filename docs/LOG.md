@@ -10,6 +10,7 @@
 | 2026-10-11 | png（ホスト） | 0.17 | vibe-run の画面比較 | ホスト側ツール |
 | 2026-10-11 | font8x8 | 0.3（default-features なし） | 8×8 フォントのデータ | DESIGN.md §3.4 で可としたもの。描画は自作 |
 | 2026-10-12 | miniz_oxide | 0.9（default-features なし） | アプリ（gzip）の deflate の展開（`crates/vibe-pack` 経由でカーネルが使う） | DESIGN.md §3.4 で可としたもの（D-035）。gzip の枠は自作。ホストのテストでは deflate の圧縮にも使う |
+| 2026-10-13 | ab_glyph（ホスト） | 0.2.32 | `tools/vibe-fontgen` で TrueType をラスタライズする | ホスト側ツール（ブランチ `modern-look`、M3）。カーネル・アプリには入れない |
 
 ---
 
@@ -525,3 +526,17 @@
 - `crates/vibe-gfx/src/canvas.rs`: 32 ビットの `Canvas`。半透明の合成 `blend`（整数だけ。RB と G を 16 ビットずつ並べて 2 つ同時に掛け、255 で割って丸める。どの値でも `(s*a + d*(255-a) + 127) / 255` と同じになることをテストで確かめた）、`lerp`・縦横のグラデーション、角の丸い矩形（`Corner`: 1/4 円の覆う割合を 4×4 の点で数えた表。塗りと 1 ピクセルの枠）、影（`Shadow`: 3t²−2t³ の S 字の 1 次元の表。ぼかした矩形を縦と横の表の積で描き、矩形の中は飛ばす）、32 ビット・8 ビット（表で直す）・アルファ付き（事前に掛けたアルファ）の画像の転送、8x8 のフォントの文字、32 ビット → 標準のパレットの色（`to_palette8`）
 - ホストのテスト 11 本。試しに描いた画像（グラデーションの上に影と角の丸いウィンドウ 2 つ）を目で確かめた
 - ktest `gfx_compose_speed`: 1024x768 に背景のグラデーションと、影・角の丸い枠・8 ビットの中身のウィンドウ 4 つを 10 回描き、1 枚の時間をシリアルに出す（`bench: compose 1024x768 with 4 windows: 10 ms per frame`）。上限は 100ms（QEMU の速さで、遅くなったことに気づくため）
+
+## 2026-10-13 見た目を今風に M3: フォントと大きさ（ブランチ `modern-look`）
+
+- `.VFN`（`crates/vibe-font/src/vfn.rs`）: 決まった大きさで先にラスタライズした字を 4 ビットの濃さで持つ形式。字の表は文字コードの順で二分探索。`measure`・`fit`。壊れたデータ（短い・印が違う・濃さがデータの外・順番が違う）を拒むテスト。組み立て（`vfn::build`）は `std` 機能のときだけ
+- `tools/vibe-fontgen`（`ab_glyph`。ホストのツール）: TrueType を em の大きさでラスタライズする（`ab_glyph` の `PxScale` は ascent − descent の高さなので直す。最初は 13 を `PxScale` に渡して小さすぎた）。固定幅は枠とベースラインを指定（`MONO.VFN` は 8x16、ベースライン 12。全部の字が枠に入ることを確かめた）。`make fonts`
+- フォントはこのパソコンの Noto Sans / Noto Sans Mono（OFL）。`assets/fonts/*.VFN`（4.6〜5.0KB、gzip で 2.9〜3.3KB）と `OFL.TXT`（Debian の copyright から OFL の本文を取り出した）。フロッピーの `/SYSTEM/FONTS/`（フォントはいつも gzip）
+- `Canvas::draw_glyph`・`draw_vtext`（濃さをアルファに。ペンは 1/16 ピクセル）・`scroll_up`
+- カーネル `gfx::fonts`: 起動時（`VIBEOS READY` の前）に読み込み、`Box::leak` でずっと持つ。無ければ 8x8
+- `gui`: ウィンドウの中身を `Pixels`（静的な領域・8 ビット・32 ビット）にした。デスクトップの端末（最初の端末も、デスクトップにするときにヒープの 32 ビットに替える）は 32 ビット。端末は `WinPixels`（8 ビットの `Surface` か 32 ビットの `Canvas`）に描き、32 ビットなら `MONO.VFN`。上端のバー（`Screen::bar`）・タイトルバー・メニューを 32 ビットにし、UI のフォントで描く（`Face`: ふつう・太字・固定幅）
+- 大きさ: バー 24・タイトルバー 24・[_]/[x] の幅 20・メニューの 1 項目 22（入りきらなければ何列か）・端末 80x25（640x400）。テストの画面を 1024x768 にし、デスクトップのシナリオ（10・15・25・28・29・34・44・46〜53・59・63）の座標を直した。直し方は、アプリのウィンドウの中身が 26 ピクセル下（47 → 73）、タイトルバーを含む切り抜きは 12 ピクセル高く、カーソルは 512,384 から。25 と 52 は 640x480 のまま（`boot-config video=640x480`）。52 は 640x480 だと端末がほぼ全体を覆うので、バーと端末の間で背景を見るようにした
+- 詰まったこと: 28 でドラッグした後のタイトルバーの色が黒と出た。確かめる点がちょうどマウスカーソルの先だった
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, calc-46, clip-edit, clip-selected, desktop-moved, desktop-terminal, files-images, net-statusbar-ip, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-tile。新しく fonts-fallback（`65-fonts-missing`）。アプリの中身だけを切り抜くもの（mines・blocks・calc-cleared・tasks-header など）はそのまま通った
+- ktest `fonts_loaded`
+- フロッピーの空き: 圧縮したイメージ 617,984 バイト、圧縮しないイメージ（`vibeos-raw.img`）13,824 バイト（フォントと OFL.TXT で約 14KB 使った）
