@@ -13,6 +13,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::drivers::{pit, qemu};
 use crate::fs;
+use crate::io;
 use crate::mm::{heap, paging, pmm};
 use crate::task::{self, sched, wait::WaitQueue};
 
@@ -38,10 +39,17 @@ const TESTS: &[(&str, fn())] = &[
     ("fs_errors", fs_errors),
     ("fs_fd_read_in_chunks", fs_fd_read_in_chunks),
     ("fs_cwd_is_per_task", fs_cwd_is_per_task),
+    ("pipe_transfers_until_eof", pipe_transfers_until_eof),
+    ("pipe_full_blocks_writer", pipe_full_blocks_writer),
+    ("pipe_close_counts_references", pipe_close_counts_references),
+    ("pipe_wait_is_interrupted", pipe_wait_is_interrupted),
     ("process_exit_codes", process_exit_codes),
     ("process_spawn_errors", process_spawn_errors),
     ("process_runs_gzip_and_plain_elf", process_runs_gzip_and_plain_elf),
     ("process_reclaims_memory", process_reclaims_memory),
+    ("process_inherits_only_stdio", process_inherits_only_stdio),
+    ("process_stdout_to_pipe", process_stdout_to_pipe),
+    ("process_args_and_env", process_args_and_env),
     ("fdc_read_matches_ramdisk", fdc_read_matches_ramdisk),
     ("fs_write_and_sync", fs_write_and_sync),
 ];
@@ -385,12 +393,124 @@ fn fs_cwd_is_per_task() {
         fs::chdir("docs").unwrap();
         assert_eq!(fs::cwd(), "/DOCS");
         assert!(fs::read_file("README.TXT").is_ok());
+        // fd 0〜2 は受け継いだ端末なので、開いたファイルは 3 から
         let fd = fs::open("README.TXT").unwrap();
-        assert_eq!(fd, 0);
+        assert_eq!(fd, 3);
     });
     task::join(id);
     assert_eq!(fs::cwd(), "/");
     assert_eq!(fs::open_count(), 0, "file table must not be shared");
+}
+
+/// パイプの読む側を終わりまで読む
+fn read_to_end(fd: fs::Fd) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut buf = [0u8; 700];
+    loop {
+        match io::read(fd, &mut buf) {
+            Ok(0) => return out,
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+            Err(e) => panic!("read error {e}"),
+        }
+    }
+}
+
+/// fd 1 をパイプの書く側にしたカーネルスレッドで `f` を動かす
+fn spawn_writer(w: fs::Fd, f: impl FnOnce() + Send + 'static) -> task::TaskId {
+    let stdio = [None, Some(fs::get(w).unwrap()), None];
+    sched::spawn_with_stdio("pipe-writer", stdio, f)
+}
+
+/// 書く側のスレッドが書いた分を読む側がすべて受け取り、書く側がみな閉じたら終わり（0）が来る。
+/// スレッドの終わりで fd が閉じる。後にページもタスクも残らない
+fn pipe_transfers_until_eof() {
+    drop(vec![0u8; 256 * 1024]);
+    task::yield_now();
+    let (free_before, _) = pmm::stats();
+    let tasks_before = sched::tasks().len();
+    let (r, w) = io::pipe().unwrap();
+    let id = spawn_writer(w, || {
+        for i in 0..10u8 {
+            io::write_all(1, &[i; 1000]).unwrap();
+        }
+    });
+    fs::close(w).unwrap();
+    let got = read_to_end(r);
+    task::join(id);
+    assert_eq!(got.len(), 10_000);
+    assert!(got.chunks(1000).enumerate().all(|(i, c)| c.iter().all(|&b| b == i as u8)));
+    fs::close(r).unwrap();
+    assert_eq!(fs::open_count(), 0);
+    task::yield_now();
+    assert_eq!(pmm::stats().0, free_before, "pages leaked");
+    assert_eq!(sched::tasks().len(), tasks_before, "tasks remain");
+}
+
+/// 満杯（4KB）になると書く側は読まれるまで待つ
+fn pipe_full_blocks_writer() {
+    static WRITTEN: AtomicBool = AtomicBool::new(false);
+    let (r, w) = io::pipe().unwrap();
+    let id = spawn_writer(w, || {
+        io::write_all(1, &[7u8; 5000]).unwrap();
+        WRITTEN.store(true, Ordering::Relaxed);
+    });
+    fs::close(w).unwrap();
+    pit::sleep_ms(50);
+    assert!(!WRITTEN.load(Ordering::Relaxed), "writer did not wait on a full pipe");
+    let mut buf = [0u8; 4096];
+    assert_eq!(io::read(r, &mut buf), Ok(4096));
+    let rest = read_to_end(r);
+    assert_eq!(rest.len(), 5000 - 4096);
+    assert!(WRITTEN.load(Ordering::Relaxed));
+    task::join(id);
+    fs::close(r).unwrap();
+}
+
+/// 同じ書く側を指す fd が残っている間は終わりにならない。読む側が無ければ書くと EPIPE
+fn pipe_close_counts_references() {
+    use vibe_abi::err;
+    let (r, w) = io::pipe().unwrap();
+    assert_eq!(fs::dup2(w, 10), Ok(10));
+    fs::close(w).unwrap();
+    let rd = fs::get(r).unwrap();
+    assert_eq!(io::readiness(&rd), (false, false), "EOF while a writer is still open");
+    io::write_all(10, b"x").unwrap();
+    assert_eq!(io::readiness(&rd), (true, false));
+    fs::close(10).unwrap();
+    let mut buf = [0u8; 8];
+    assert_eq!(io::read(r, &mut buf), Ok(1));
+    assert_eq!(io::read(r, &mut buf), Ok(0));
+    assert_eq!(fs::close(10).err(), Some(fs::VfsError::BadFd));
+    drop(rd);
+    fs::close(r).unwrap();
+
+    let (r, w) = io::pipe().unwrap();
+    assert_eq!(fs::get(r).unwrap().kind(), vibe_abi::FD_PIPE);
+    fs::close(r).unwrap();
+    assert_eq!(io::write(w, b"lost"), Err(err::EPIPE));
+    assert_eq!(io::read(w, &mut buf), Err(err::EBADF));
+    fs::close(w).unwrap();
+    assert_eq!(fs::open_count(), 0);
+}
+
+/// パイプを待っている間に止めるよう頼まれたら EINTR で戻る
+fn pipe_wait_is_interrupted() {
+    static RESULT: AtomicU32 = AtomicU32::new(0);
+    let (r, w) = io::pipe().unwrap();
+    let stdio = [Some(fs::get(r).unwrap()), None, None];
+    let id = sched::spawn_with_stdio("pipe-reader", stdio, || {
+        let mut buf = [0u8; 4];
+        let e = io::read(0, &mut buf).err().unwrap_or(0);
+        RESULT.store(e as u32, Ordering::Relaxed);
+    });
+    pit::sleep_ms(30);
+    assert_eq!(RESULT.load(Ordering::Relaxed), 0);
+    crate::process::request_kill(id);
+    task::join(id);
+    assert_eq!(RESULT.load(Ordering::Relaxed), vibe_abi::err::EINTR as u32);
+    assert!(!crate::process::kill_pending(id), "kill request left behind");
+    fs::close(r).unwrap();
+    fs::close(w).unwrap();
 }
 
 fn run(path: &str, args: &[&str]) -> i32 {
@@ -466,6 +586,39 @@ fn process_reclaims_memory() {
     task::yield_now();
     let (after, _) = pmm::stats();
     assert_eq!(before, after, "pages leaked by processes");
+}
+
+/// 子は fd 0〜2 だけを受け継ぎ、3 以降（親が開いたファイル）は受け継がない
+fn process_inherits_only_stdio() {
+    let fd = fs::open("/HELLO.TXT").unwrap();
+    assert_eq!(fd, 3);
+    assert_eq!(run("/BIN/FAULT.ELF", &["fault", "fds"]), 0);
+    fs::close(fd).unwrap();
+}
+
+/// 子の標準出力をパイプにつなぐと出力が届き、子が終わると終わり（0）が来る。
+/// 読む側のいないパイプに書いたプロセスは EXIT_PIPE で止まる
+fn process_stdout_to_pipe() {
+    let (r, w) = io::pipe().unwrap();
+    let stdio = [None, Some(fs::get(w).unwrap()), None];
+    let id = crate::process::spawn_ex("/BIN/HELLO.ELF", &["hello", "two words"], &[], Some(stdio)).unwrap();
+    fs::close(w).unwrap();
+    let out = String::from_utf8(read_to_end(r)).unwrap();
+    assert_eq!(crate::process::wait(id), Ok(0));
+    assert!(out.starts_with("Hello from user space!"), "{out}");
+    assert!(out.contains("argv[1] = two words\n"), "{out}");
+    fs::close(r).unwrap();
+    assert_eq!(run("/BIN/FAULT.ELF", &["fault", "pipe"]), vibe_abi::EXIT_PIPE);
+}
+
+/// spawn_ex の引数（空白を含む）と環境が子に届き、vibe-rt の spawn で孫まで受け継がれる
+fn process_args_and_env() {
+    let spawn = |args: &[&str]| crate::process::spawn_ex("/BIN/FAULT.ELF", args, &["FOO=bar baz"], None).unwrap();
+    assert_eq!(crate::process::wait(spawn(&["fault", "argv", "a b", "c"])), Ok(0));
+    assert_eq!(crate::process::wait(spawn(&["fault", "spawnenv"])), Ok(0));
+    assert_eq!(run("/BIN/FAULT.ELF", &["fault", "checkenv"]), 1, "env must be empty with spawn");
+    let huge = alloc::string::String::from_utf8(vec![b'x'; vibe_abi::MAX_ARG_BYTES]).unwrap();
+    assert_eq!(crate::process::spawn("/BIN/HELLO.ELF", &["hello", &huge]).err(), Some(vibe_abi::err::E2BIG));
 }
 
 /// フロッピーから直接読んだ中身が、起動時に RAM ディスクへ読み込まれた中身と同じ

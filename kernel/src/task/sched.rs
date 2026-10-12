@@ -21,7 +21,7 @@ use vibe_alloc::frame::PAGE_SIZE;
 
 use super::wait::WaitQueue;
 use crate::arch::{cpu, gdt};
-use crate::fs::TaskFs;
+use crate::fs::{Stdio, TaskFs};
 use crate::mm::{paging, pmm};
 use crate::process::UserRef;
 use crate::sync::{IrqMutex, Mutex};
@@ -161,7 +161,7 @@ pub fn init() {
                 esp: 0,
                 stack: None,
                 ticks: 0,
-                fs: TaskFs::new_child(&[]),
+                fs: TaskFs::new_root(),
                 cr3: paging::kernel_page_directory(),
                 user: None,
                 tty: 0,
@@ -170,7 +170,7 @@ pub fn init() {
         s.current = id;
         s.active_cr3 = paging::kernel_page_directory();
     }
-    let idle = create("idle", Start::Kernel(Box::new(idle_loop)), false, None);
+    let idle = create("idle", Start::Kernel(Box::new(idle_loop)), false, None, None);
     let mut s = SCHED.lock();
     s.idle = idle;
     s.started = true;
@@ -223,16 +223,23 @@ enum Start {
 }
 
 /// カーネルスレッドを作って実行待ちにする
+/// （fd 0〜2 は作ったタスクのものを受け継ぐ）
 pub fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> TaskId {
-    create(name, Start::Kernel(Box::new(f)), true, None)
+    create(name, Start::Kernel(Box::new(f)), true, None, None)
 }
 
-/// ユーザプロセスのタスクを作る（そのアドレス空間で `entry` から ring 3 で始まる）
-pub fn spawn_user(name: &str, user: UserRef, entry: u32, user_esp: u32) -> TaskId {
-    create(name, Start::User(entry, user_esp), true, Some(user))
+/// カーネルスレッドを、fd 0〜2 を `stdio` にして作る
+pub fn spawn_with_stdio(name: &str, stdio: Stdio, f: impl FnOnce() + Send + 'static) -> TaskId {
+    create(name, Start::Kernel(Box::new(f)), true, None, Some(stdio))
 }
 
-fn create(name: &str, start: Start, make_ready: bool, user: Option<UserRef>) -> TaskId {
+/// ユーザプロセスのタスクを作る（そのアドレス空間で `entry` から ring 3 で始まる）。
+/// `stdio` が None なら fd 0〜2 は作ったタスクのものを受け継ぐ
+pub fn spawn_user(name: &str, user: UserRef, entry: u32, user_esp: u32, stdio: Option<Stdio>) -> TaskId {
+    create(name, Start::User(entry, user_esp), true, Some(user), stdio)
+}
+
+fn create(name: &str, start: Start, make_ready: bool, user: Option<UserRef>, stdio: Option<Stdio>) -> TaskId {
     let stack = KernelStack::new().expect("sched: no memory for a kernel stack");
     let arg = Box::into_raw(Box::new(start)) as u32;
     // switch_context が pop して ret したときに task_start(arg) が呼ばれるよう積んでおく。
@@ -257,9 +264,12 @@ fn create(name: &str, start: Start, make_ready: bool, user: Option<UserRef>) -> 
             sp.write(v);
         }
     }
-    // カレントディレクトリは作ったタスクから受け継ぐ（ロックの順番を守るため SCHED の外で読む）
-    let parent_cwd: Vec<String> = if is_started() { current_fs().lock().cwd_parts().to_vec() } else { Vec::new() };
-    let fs = TaskFs::new_child(&parent_cwd);
+    // カレントディレクトリと fd 0〜2 は作ったタスクから受け継ぐ（ロックの順番を守るため SCHED の外で読む）
+    let fs = {
+        let parent = current_fs();
+        let p = parent.lock();
+        TaskFs::new_child(p.cwd_parts(), stdio.unwrap_or_else(|| p.stdio()))
+    };
     // 端末も作ったタスクから受け継ぐ
     let tty = current_tty();
     let cr3 = match &user {
@@ -402,8 +412,10 @@ pub fn wake(id: TaskId) {
     }
 }
 
-/// 今のタスクを終える
+/// 今のタスクを終える。開いているファイル（パイプ）はここで閉じる（読む側に終わりが届くように）
 pub fn exit() -> ! {
+    crate::fs::close_all();
+    crate::process::forget_requests(current_id());
     cpu::disable_interrupts();
     {
         let mut s = SCHED.lock();

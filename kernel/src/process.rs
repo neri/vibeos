@@ -1,14 +1,15 @@
 //! ユーザプロセス: ELF の読み込み・起動・終了
 //!
 //! プロセスは「ユーザ空間を持つタスク」。ELF の各 LOAD セグメントを新しいアドレス空間に置き、
-//! スタックに引数（argc, argv）を積んで ring 3 で始める。終了コードは `wait` で受け取る。
+//! スタックに引数と環境（argc, argv, envp）を積んで ring 3 で始める。終了コードは `wait` で受け取る。
+//! fd 0〜2 は親から受け継ぐか、起動するときに指定する（`spawn_ex`）。3 以降は受け継がない。
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use vibe_abi::{EXIT_INTERRUPTED, EXIT_KILLED, USER_BASE, USER_END, USER_STACK_SIZE, USER_STACK_TOP, err};
+use vibe_abi::{EXIT_INTERRUPTED, EXIT_KILLED, EXIT_PIPE, MAX_ARG_BYTES, USER_BASE, USER_END, USER_STACK_SIZE, USER_STACK_TOP, err};
 use vibe_alloc::frame::PAGE_SIZE;
 use xmas_elf::ElfFile;
 use xmas_elf::header::{Class, Data, Machine, Type};
@@ -56,7 +57,6 @@ pub fn errno_of(e: fs::VfsError) -> i32 {
     fs_errno(e)
 }
 
-/// ELF を読み込んでプロセスを作る。`args[0]` はプログラムの名前として渡す
 /// プログラムのファイルを読む。gzip（先頭が 1F 8B）なら展開する（アプリはディスクに gzip で
 /// 置いている。docs/plans/app-compress.md）。圧縮していない ELF はそのまま
 fn read_program(path: &str) -> Result<Vec<u8>, i32> {
@@ -73,7 +73,18 @@ fn read_program(path: &str) -> Result<Vec<u8>, i32> {
     })
 }
 
+/// ELF を読み込んでプロセスを作る。`args[0]` はプログラムの名前として渡す。環境は空、fd 0〜2 は
+/// 今のタスクのものを受け継ぐ
 pub fn spawn(path: &str, args: &[&str]) -> Result<TaskId, i32> {
+    spawn_ex(path, args, &[], None)
+}
+
+/// 引数・環境（`名前=値`）・fd 0〜2（None なら今のタスクのものを受け継ぐ）を指定してプロセスを作る
+pub fn spawn_ex(path: &str, args: &[&str], env: &[&str], stdio: Option<fs::Stdio>) -> Result<TaskId, i32> {
+    let arg_bytes: usize = args.iter().chain(env).map(|a| a.len() + 1).sum();
+    if arg_bytes > MAX_ARG_BYTES {
+        return Err(err::E2BIG);
+    }
     let data = read_program(path)?;
     let elf = ElfFile::new(&data).map_err(|_| err::ENOEXEC)?;
     let h = &elf.header;
@@ -122,11 +133,11 @@ pub fn spawn(path: &str, args: &[&str]) -> Result<TaskId, i32> {
         page += PAGE_SIZE as u32;
     }
     space.set_brk(end.next_multiple_of(PAGE_SIZE as u32), stack_bottom - PAGE_SIZE as u32);
-    let esp = push_args(&space, args).ok_or(err::ENOMEM)?;
+    let esp = push_args(&space, args, env).ok_or(err::ENOMEM)?;
 
     let name = path.rsplit('/').next().unwrap_or(path);
     let user = Arc::new(Mutex::new(UserProc { space, display: None, windows: Vec::new() }));
-    Ok(sched::spawn_user(name, user, entry, esp))
+    Ok(sched::spawn_user(name, user, entry, esp, stdio))
 }
 
 /// 別のアドレス空間のユーザ空間に書く（ページは物理アドレス経由で触る）
@@ -146,33 +157,37 @@ fn write_user(space: &AddressSpace, addr: u32, data: &[u8]) -> bool {
     true
 }
 
-/// スタックに引数を積む。積んだ後の ESP（argc を指す）を返す
+/// スタックに引数と環境を積む。積んだ後の ESP（argc を指す）を返す
 ///
-/// [argc][argv[0]]...[argv[n-1]][NULL] の上に文字列を置く
-fn push_args(space: &AddressSpace, args: &[&str]) -> Option<u32> {
+/// [argc][argv[0]]...[argv[n-1]][NULL][envp[0]]...[NULL] の上に文字列を置く（Unix の _start と同じ並び）
+fn push_args(space: &AddressSpace, args: &[&str], env: &[&str]) -> Option<u32> {
     let mut sp = USER_STACK_TOP;
-    let mut ptrs = Vec::with_capacity(args.len());
-    for a in args.iter().rev() {
-        sp -= a.len() as u32 + 1;
-        let mut bytes = Vec::from(a.as_bytes());
-        bytes.push(0);
-        if !write_user(space, sp, &bytes) {
-            return None;
+    let mut push_strs = |list: &[&str]| -> Option<Vec<u32>> {
+        let mut ptrs = Vec::with_capacity(list.len());
+        for a in list.iter().rev() {
+            sp -= a.len() as u32 + 1;
+            let mut bytes = Vec::from(a.as_bytes());
+            bytes.push(0);
+            if !write_user(space, sp, &bytes) {
+                return None;
+            }
+            ptrs.push(sp);
         }
-        ptrs.push(sp);
-    }
-    ptrs.reverse();
+        ptrs.reverse();
+        Some(ptrs)
+    };
+    let env_ptrs = push_strs(env)?;
+    let arg_ptrs = push_strs(args)?;
     sp &= !15;
-    // argc と argv[] と NULL の分（入口で ESP が 16 の倍数になるように調整）
-    let words = 1 + ptrs.len() + 1;
+    // argc と argv[] と NULL と envp[] と NULL の分（入口で ESP が 16 の倍数になるように調整）
+    let words = 1 + arg_ptrs.len() + 1 + env_ptrs.len() + 1;
     sp -= (words * 4) as u32;
     sp &= !15;
-    let mut block: Vec<u8> = Vec::new();
+    let mut block: Vec<u8> = Vec::with_capacity(words * 4);
     block.extend_from_slice(&(args.len() as u32).to_le_bytes());
-    for p in &ptrs {
+    for p in arg_ptrs.iter().chain([&0]).chain(&env_ptrs).chain([&0]) {
         block.extend_from_slice(&p.to_le_bytes());
     }
-    block.extend_from_slice(&0u32.to_le_bytes());
     write_user(space, sp, &block).then_some(sp)
 }
 
@@ -192,6 +207,8 @@ pub fn exit_current(code: i32) -> ! {
     if let Some(user) = sched::current_user() {
         close_display(&mut user.lock());
     }
+    // パイプの片側などを閉じる（終了コードを待っている親より先に、読む側に終わりが届くように）
+    fs::close_all();
     let me = sched::current_id();
     if DETACHED.lock().remove(&me).is_none() {
         EXIT_CODES.lock().insert(me, code);
@@ -234,14 +251,24 @@ pub fn resolve_program(name: &str) -> String {
     path
 }
 
-/// 止めるよう頼まれたプロセス（Ctrl+C・ウィンドウの [x]）と、Ctrl+C によるものか。
-/// 割り込みの中でも使うので固定長
+/// 止める理由
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reason {
+    /// kill・ウィンドウの [x]・端末を閉じた
+    Kill,
+    /// Ctrl+C（ctrl_c(CATCH) なら止めずに印を付ける）
+    CtrlC,
+    /// 読む側のいないパイプに書いた
+    Pipe,
+}
+
+/// 止めるよう頼まれたタスク（Ctrl+C・ウィンドウの [x] など）と理由。割り込みの中でも使うので固定長
 struct KillList {
-    ids: [(TaskId, bool); 16],
+    ids: [(TaskId, Reason); 32],
     len: usize,
 }
 
-static KILL: IrqMutex<KillList> = IrqMutex::new(KillList { ids: [(0, false); 16], len: 0 });
+static KILL: IrqMutex<KillList> = IrqMutex::new(KillList { ids: [(0, Reason::Kill); 32], len: 0 });
 
 /// 誰も終わるのを待たないプロセス（シェルの "&"）。終了コードを残さない
 static DETACHED: IrqMutex<BTreeMap<TaskId, ()>> = IrqMutex::new(BTreeMap::new());
@@ -279,21 +306,46 @@ pub fn kill_tty(tty: WinId) {
 
 /// プロセスを止めるよう頼む。ユーザモードへ戻る直前に止まる（割り込みの中から呼んでよい）
 pub fn request_kill(id: TaskId) {
-    request_kill_with(id, false);
+    request_kill_with(id, Reason::Kill);
 }
 
-fn request_kill_with(id: TaskId, ctrl_c: bool) {
+/// 読む側のいないパイプに書いた: システムコールから戻るところで EXIT_PIPE で止める
+pub fn request_pipe_exit(id: TaskId) {
+    request_kill_with(id, Reason::Pipe);
+}
+
+fn request_kill_with(id: TaskId, reason: Reason) {
     {
         let mut k = KILL.lock();
         let len = k.len;
         if !k.ids[..len].iter().any(|e| e.0 == id) && len < k.ids.len() {
-            k.ids[len] = (id, ctrl_c);
+            k.ids[len] = (id, reason);
             k.len += 1;
         }
     }
-    // キーやネットワークを待っているなら起こす（戻ってきたところで止める）
+    // キーやネットワークを待っているなら起こす（戻ってきたところで止める）。ほかの待ち（パイプなど）は
+    // 直接起こす（WaitQueue で待っている側は起きて条件を見直し、止めるよう頼まれていることに気づく）
     gui::wake_readers();
     crate::net::wake_sockets();
+    sched::wake(id);
+}
+
+/// タスクが終わるとき: 残っている依頼と Ctrl+C の印を捨てる
+pub fn forget_requests(id: TaskId) {
+    {
+        let mut k = KILL.lock();
+        while let Some(p) = k.ids[..k.len].iter().position(|e| e.0 == id) {
+            let last = k.len - 1;
+            k.ids[p] = k.ids[last];
+            k.len -= 1;
+        }
+    }
+    let mut c = CATCH.lock();
+    if let Some(p) = c.ids[..c.len].iter().position(|e| e.0 == id) {
+        let last = c.len - 1;
+        c.ids[p] = c.ids[last];
+        c.len -= 1;
+    }
 }
 
 /// システムコールの kill: ユーザプロセスを止めるよう頼む
@@ -373,7 +425,7 @@ fn mark_ctrl_c(me: TaskId) -> bool {
 pub fn request_interrupt() {
     let target = SCREEN.lock().interrupt_target();
     if let Some(id) = target {
-        request_kill_with(id, true);
+        request_kill_with(id, Reason::CtrlC);
     }
 }
 
@@ -393,13 +445,15 @@ pub fn check_interrupt() {
             None => None,
         }
     };
-    if let Some(ctrl_c) = hit {
-        if ctrl_c {
+    match hit {
+        None => {}
+        Some(Reason::CtrlC) => {
             kprintln!("^C");
-            if mark_ctrl_c(me) {
-                return;
+            if !mark_ctrl_c(me) {
+                exit_current(EXIT_INTERRUPTED);
             }
         }
-        exit_current(EXIT_INTERRUPTED);
+        Some(Reason::Pipe) => exit_current(EXIT_PIPE),
+        Some(Reason::Kill) => exit_current(EXIT_INTERRUPTED),
     }
 }

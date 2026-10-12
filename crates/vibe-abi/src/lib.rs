@@ -33,7 +33,7 @@ pub const GFX_CURSOR: u32 = 1;
 pub const SCREEN_WIDTH: usize = 320;
 pub const SCREEN_HEIGHT: usize = 200;
 
-/// 標準入出力のファイル記述子（コンソール）
+/// 標準入出力のファイル記述子（何もつなぎ替えなければ端末）
 pub const STDIN: i32 = 0;
 pub const STDOUT: i32 = 1;
 pub const STDERR: i32 = 2;
@@ -41,9 +41,9 @@ pub const STDERR: i32 = 2;
 pub mod nr {
     /// exit(code) -> !
     pub const EXIT: u32 = 1;
-    /// write(fd, buf, len) -> 書いたバイト数
+    /// write(fd, buf, len) -> 書いたバイト数。読む側のいないパイプに書くとプロセスは EXIT_PIPE で止まる
     pub const WRITE: u32 = 2;
-    /// read(fd, buf, len) -> 読んだバイト数（0 = 終わり）。fd 0 はキーボードから 1 行
+    /// read(fd, buf, len) -> 読んだバイト数（0 = 終わり）。端末からはキーボードから編集付きで 1 行
     pub const READ: u32 = 3;
     /// open(path, path_len, flags) -> fd。flags は OPEN_*（0 なら読み込み専用）
     pub const OPEN: u32 = 4;
@@ -59,7 +59,8 @@ pub mod nr {
     pub const YIELD: u32 = 9;
     /// getpid() -> タスク ID
     pub const GETPID: u32 = 10;
-    /// spawn(path, path_len, args, args_len) -> タスク ID。args は空白区切り
+    /// spawn(path, path_len, args, args_len) -> タスク ID。args は空白区切り。環境は空、
+    /// 標準入出力（fd 0〜2）は親のものを受け継ぐ
     pub const SPAWN: u32 = 11;
     /// wait(pid) -> 終了コード
     pub const WAIT: u32 = 12;
@@ -135,6 +136,14 @@ pub mod nr {
     pub const CLIP_SET: u32 = 49;
     /// clip_get(buf, len) -> クリップボードの文字の長さ（buf には入るだけ写す）
     pub const CLIP_GET: u32 = 50;
+    /// pipe(&mut [i32; 2]) -> 0。[0] が読む側、[1] が書く側の fd
+    pub const PIPE: u32 = 51;
+    /// dup2(old, new) -> new。new が開いていれば閉じてから、old と同じものを指すようにする
+    pub const DUP2: u32 = 52;
+    /// fd_kind(fd) -> FD_*（開いていなければ -EBADF）
+    pub const FD_KIND: u32 = 53;
+    /// spawn_ex(&SpawnArgs) -> タスク ID。引数・環境・標準入出力を指定して起動する
+    pub const SPAWN_EX: u32 = 54;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -182,6 +191,8 @@ pub mod err {
     pub const ENOTEMPTY: i32 = 39;
     pub const ENOTTY: i32 = 25;
     pub const EPERM: i32 = 1;
+    pub const EPIPE: i32 = 32;
+    pub const E2BIG: i32 = 7;
 
     pub fn name(e: i32) -> &'static str {
         match e {
@@ -204,6 +215,8 @@ pub mod err {
             ENOTTY => "no terminal",
             EPERM => "not permitted",
             EINTR => "interrupted",
+            EPIPE => "broken pipe",
+            E2BIG => "argument list too long",
             EAGAIN => "try again",
             ENODEV => "no network card",
             ENOTSOCK => "not a socket",
@@ -225,6 +238,34 @@ pub mod err {
 pub const EXIT_KILLED: i32 = -128;
 /// Ctrl+C で止めたときの終了コード
 pub const EXIT_INTERRUPTED: i32 = -130;
+/// 読む側のいないパイプに書いて止められたときの終了コード（Unix の SIGPIPE と同じ数）
+pub const EXIT_PIPE: i32 = -141;
+
+/// fd_kind の結果
+pub const FD_CONSOLE: u32 = 1;
+pub const FD_FILE: u32 = 2;
+pub const FD_PIPE: u32 = 3;
+pub const FD_SOCKET: u32 = 4;
+
+/// spawn_ex で渡せる引数と環境の合計の上限（文字列と区切りの 0）
+pub const MAX_ARG_BYTES: usize = 16 * 1024;
+
+/// spawn_ex の引数
+///
+/// `argv` は引数を 0 で区切って並べたもの（各引数の後ろに 0。`argv[0]` はプログラムの名前）、
+/// `envp` は `名前=値` を同じように並べたもの。`fds` は子の fd 0〜2 にする親の fd（-1 なら親の同じ番号）。
+/// `path` は名前だけなら `/BIN/名前.ELF`
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SpawnArgs {
+    pub path: u32,
+    pub path_len: u32,
+    pub argv: u32,
+    pub argv_len: u32,
+    pub envp: u32,
+    pub envp_len: u32,
+    pub fds: [i32; 3],
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]

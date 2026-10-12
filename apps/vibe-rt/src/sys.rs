@@ -2,7 +2,7 @@
 
 use core::arch::asm;
 
-use vibe_abi::{DirEntry, MouseState, ProcInfo, Stat, SysInfo, nr};
+use vibe_abi::{DirEntry, MouseState, ProcInfo, SpawnArgs, Stat, SysInfo, nr};
 
 /// システムコール。引数は EBX, ECX, EDX, ESI, EDI の順。
 ///
@@ -92,8 +92,46 @@ pub fn getpid() -> i32 {
     syscall(nr::GETPID, 0, 0, 0, 0, 0)
 }
 
+/// プログラムを起動する。`args` は空白で区切る（`argv[0]` は `path`）。今の環境を渡し、
+/// 標準入出力は受け継ぐ。細かく決めるときは `process::Command`
 pub fn spawn(path: &str, args: &str) -> i32 {
-    syscall(nr::SPAWN, path.as_ptr() as u32, path.len() as u32, args.as_ptr() as u32, args.len() as u32, 0)
+    match crate::process::Command::new(path).args(args.split_whitespace()).spawn() {
+        Ok(pid) => pid,
+        Err(e) => -e,
+    }
+}
+
+/// spawn_ex（`argv`・`envp` は各要素の後ろに 0 を付けて並べたもの）
+pub fn spawn_ex(path: &str, argv: &[u8], envp: &[u8], fds: [i32; 3]) -> i32 {
+    let sa = SpawnArgs {
+        path: path.as_ptr() as u32,
+        path_len: path.len() as u32,
+        argv: argv.as_ptr() as u32,
+        argv_len: argv.len() as u32,
+        envp: envp.as_ptr() as u32,
+        envp_len: envp.len() as u32,
+        fds,
+    };
+    syscall(nr::SPAWN_EX, &sa as *const SpawnArgs as u32, 0, 0, 0, 0)
+}
+
+/// パイプを作る。(読む側, 書く側)
+pub fn pipe() -> Result<(i32, i32), i32> {
+    let mut fds = [0i32; 2];
+    match syscall(nr::PIPE, fds.as_mut_ptr() as u32, 0, 0, 0, 0) {
+        0 => Ok((fds[0], fds[1])),
+        e => Err(-e),
+    }
+}
+
+/// `new` を `old` と同じものを指すようにする
+pub fn dup2(old: i32, new: i32) -> i32 {
+    syscall(nr::DUP2, old as u32, new as u32, 0, 0, 0)
+}
+
+/// vibe_abi::FD_*（開いていなければ負）
+pub fn fd_kind(fd: i32) -> i32 {
+    syscall(nr::FD_KIND, fd as u32, 0, 0, 0, 0)
 }
 
 pub fn wait(pid: i32) -> i32 {

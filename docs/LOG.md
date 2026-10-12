@@ -428,3 +428,16 @@
 
 - アプリが増えたので、デスクトップのスクリーンショット（`tools/screenshots/desktop.scn`）を files・calc・clock・mines・blocks と端末を並べたものに書き直した（mines は端末の下に隠れるので、最後にバーのボタンで前に出す）
 - オーナーの指示で、320x200 のシェルとエディタの画像（`shell-320.png`・`editor-320.png`）とそのシナリオをやめ、README の表を消した（README の変更はオーナーの許可）
+
+## 2026-10-12 パイプ P1: fd の表・パイプ・spawn_ex（Phase 38）
+
+- オーナーの指示「計画書の pipe と user-shell を順番に実装して」で、pipe.md の P1〜P3 を Phase 38〜40、user-shell.md の S1〜S4 を Phase 41〜44 に割り当てた
+- fd の表をそろえた: `TaskFs` の番号がそのまま fd（前は 0〜2 を端末に決め打ちし、3 以降が「表の番号 + 3」）。表の 1 件は `fs::Desc`（端末・ファイル・ソケット・パイプの両側）を `Arc` で持つ。ファイルの位置は `Desc::File` の中（`Mutex`）にあるので、`dup2` や受け継ぎで同じ位置を共有する
+- 新しいタスクは fd 0〜2 だけを作ったタスクから受け継ぐ（`sched::create` で）。カーネルスレッドを fd 0〜2 を指定して作る `sched::spawn_with_stdio` を足した。タスクが終わるとき（`sched::exit`・`process::exit_current`）に表を空にする
+- 読み書きは `kernel/src/io.rs` にまとめた（syscall の read / write / poll もここを通る）。端末の 1 行入力は `io::read` に移した
+- パイプ（`kernel/src/pipe.rs`）: 4KB。読む側・書く側の `Drop` で閉じたことにする。読む側が無いときの書き込みはシステムコールの出口で -141（`EXIT_PIPE`）で止める（止める依頼に理由を持たせた: kill・Ctrl+C・パイプ）。止める依頼は待っているタスクを `sched::wake` で直接起こすようにした（パイプのような新しい待ちも、条件に `kill_pending` を入れるだけで止められる）。タスクが終わると残った依頼を捨てる（`process::forget_requests`）
+- システムコール `pipe`（51）・`dup2`（52）・`fd_kind`（53）・`spawn_ex`（54）。`spawn_ex` は `SpawnArgs`（パス・0 区切りの引数・環境・子の fd 0〜2）。スタックに `[argc][argv...][NULL][envp...][NULL]` を積む。`spawn`（11）は残し、環境は空で起動する
+- `vibe-rt`: `_start` で envp も受け取る。`env::var`・`set_var`・`remove_var`・`vars`、`process::Command`（`arg`・`env`・`env_clear`・`stdin`・`stdout`・`stderr`・`spawn`・`status`）、`sys::pipe`・`dup2`・`fd_kind`・`spawn_ex`、`isatty`。`sys::spawn` は `Command` で起動し、今の環境を渡す
+- `fault` に試験用の `pipe`・`fds`・`argv`・`spawnenv`・`checkenv` を足した
+- ktest を 7 本足した（パイプの転送と終わり・満杯で待つ・参照の数え方と EPIPE・待っている間の EINTR・子は fd 0〜2 だけ・子の標準出力をパイプへと -141・引数と環境と孫への受け継ぎ）。`fs_cwd_is_per_task` は開いたファイルの番号が 3 からになった
+- `make test`（QEMU 53 本・ホスト・LZSA・アプリの gzip）が通った

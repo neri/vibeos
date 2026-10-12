@@ -17,8 +17,10 @@
 
 extern crate alloc;
 
+pub mod env;
 pub mod gfx;
 pub mod net;
+pub mod process;
 pub mod sys;
 
 use core::fmt::{self, Write};
@@ -28,7 +30,7 @@ pub use vibe_time as time;
 pub use vibe_font as font;
 pub use vibe_gfx as gfx_lib;
 
-// 入口: カーネルはスタックに [argc][argv] を置いて ring 3 の _start に飛んでくる
+// 入口: カーネルはスタックに [argc][argv...][NULL][envp...][NULL] を置いて ring 3 の _start に飛んでくる
 core::arch::global_asm!(
     ".section .text.entry, \"ax\"",
     ".global _start",
@@ -36,8 +38,10 @@ core::arch::global_asm!(
     "    xor ebp, ebp",
     "    mov eax, [esp]",
     "    lea ebx, [esp + 4]",
+    "    lea ecx, [ebx + eax * 4 + 4]",
     "    and esp, -16",
-    "    sub esp, 8",
+    "    sub esp, 4",
+    "    push ecx",
     "    push ebx",
     "    push eax",
     "    call {start}",
@@ -51,9 +55,11 @@ unsafe extern "Rust" {
     fn __vibe_main() -> i32;
 }
 
-extern "C" fn rt_start(argc: usize, argv: *const *const u8) -> ! {
+extern "C" fn rt_start(argc: usize, argv: *const *const u8, envp: *const *const u8) -> ! {
     // SAFETY: 始まってすぐ、ほかに誰も触っていない
     unsafe { ARGS = (argc, argv) };
+    // SAFETY: カーネルが 0 で終わる文字列へのポインタの配列（NULL で終わる）を置いた
+    unsafe { env::init(envp) };
     // SAFETY: entry! マクロが定義する
     let code = unsafe { __vibe_main() };
     sys::exit(code)
@@ -74,17 +80,28 @@ macro_rules! entry {
 pub fn args() -> impl Iterator<Item = &'static str> {
     // SAFETY: rt_start で一度だけ設定し、以降は読むだけ
     let (argc, argv) = unsafe { ARGS };
-    (0..argc).map(move |i| {
-        // SAFETY: カーネルが 0 で終わる文字列へのポインタの配列を置いた
-        unsafe {
-            let p = *argv.add(i);
-            let mut len = 0;
-            while *p.add(len) != 0 {
-                len += 1;
-            }
-            core::str::from_utf8_unchecked(core::slice::from_raw_parts(p, len))
+    // SAFETY: カーネルが 0 で終わる文字列へのポインタの配列を置いた
+    (0..argc).map(move |i| unsafe { c_str(*argv.add(i)) })
+}
+
+/// 0 で終わる文字列（UTF-8 でなければ空）
+///
+/// # Safety
+/// `p` は 0 で終わる、プロセスが終わるまで変わらない文字列を指すこと
+unsafe fn c_str(p: *const u8) -> &'static str {
+    let mut len = 0;
+    // SAFETY: 呼ぶ側の約束
+    unsafe {
+        while *p.add(len) != 0 {
+            len += 1;
         }
-    })
+        core::str::from_utf8(core::slice::from_raw_parts(p, len)).unwrap_or("")
+    }
+}
+
+/// fd が端末につながっているか
+pub fn isatty(fd: i32) -> bool {
+    sys::fd_kind(fd) == abi::FD_CONSOLE as i32
 }
 
 pub struct Stdout;

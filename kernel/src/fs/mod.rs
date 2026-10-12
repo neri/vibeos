@@ -54,34 +54,70 @@ impl fmt::Display for VfsError {
 
 pub type Result<T> = core::result::Result<T, VfsError>;
 
-struct OpenFile {
+pub struct OpenFile {
     entry: DirEntry,
     pos: u32,
     flags: u32,
 }
 
-/// ファイルの表の 1 件: ファイルかソケット
-enum Open {
-    File(OpenFile),
+/// ファイルの表の 1 件（Unix の「開いたファイルの記述」）。`Arc` で持ち、複数の fd・複数のタスクで
+/// 同じものを指せる（ファイルの読み書きの位置も共有する）。最後の参照が無くなると閉じる
+pub enum Desc {
+    /// タスクの端末（読むとキーボードから編集付きで 1 行、書くと端末とシリアル）
+    Console,
+    File(Mutex<OpenFile>),
     Socket(Arc<crate::net::Socket>),
+    PipeRead(crate::pipe::Reader),
+    PipeWrite(crate::pipe::Writer),
+}
+
+pub type DescRef = Arc<Desc>;
+
+impl Desc {
+    /// vibe_abi::FD_*
+    pub fn kind(&self) -> u32 {
+        match self {
+            Desc::Console => vibe_abi::FD_CONSOLE,
+            Desc::File(_) => vibe_abi::FD_FILE,
+            Desc::Socket(_) => vibe_abi::FD_SOCKET,
+            Desc::PipeRead(_) | Desc::PipeWrite(_) => vibe_abi::FD_PIPE,
+        }
+    }
 }
 
 pub use vibe_abi::{OPEN_APPEND, OPEN_CREATE, OPEN_TRUNCATE, OPEN_WRITE};
 
+/// 標準入出力の 3 つ（fd 0〜2）。None は閉じている
+pub type Stdio = [Option<DescRef>; 3];
+
 /// タスクごとのファイルシステムの状態
 pub struct TaskFs {
     cwd: Vec<String>,
-    files: Vec<Option<Open>>,
+    /// 番号がそのままファイル記述子
+    files: Vec<Option<DescRef>>,
 }
 
 impl TaskFs {
-    /// 新しいタスク用（カレントディレクトリは親から受け継ぎ、開いているファイルは受け継がない）
-    pub fn new_child(parent_cwd: &[String]) -> Arc<Mutex<TaskFs>> {
-        Arc::new(Mutex::new(TaskFs { cwd: parent_cwd.to_vec(), files: Vec::new() }))
+    /// 最初のタスク用（fd 0〜2 は端末）
+    pub fn new_root() -> Arc<Mutex<TaskFs>> {
+        let console = Arc::new(Desc::Console);
+        let files = alloc::vec![Some(console.clone()), Some(console.clone()), Some(console)];
+        Arc::new(Mutex::new(TaskFs { cwd: Vec::new(), files }))
+    }
+
+    /// 新しいタスク用。カレントディレクトリは親から受け継ぐ。開いているファイルは fd 0〜2 だけを
+    /// `stdio` のとおりにし、3 以降は受け継がない（パイプの書く側が残って終わりが来なくなるのを防ぐ）
+    pub fn new_child(parent_cwd: &[String], stdio: Stdio) -> Arc<Mutex<TaskFs>> {
+        Arc::new(Mutex::new(TaskFs { cwd: parent_cwd.to_vec(), files: stdio.into_iter().collect() }))
     }
 
     pub fn cwd_parts(&self) -> &[String] {
         &self.cwd
+    }
+
+    /// fd 0〜2 の写し（子に受け継がせる）
+    pub fn stdio(&self) -> Stdio {
+        core::array::from_fn(|i| self.files.get(i).cloned().flatten())
     }
 }
 
@@ -190,61 +226,113 @@ pub fn open_with(path: &str, flags: u32) -> Result<Fd> {
         }
         Err(e) => return Err(e),
     };
-    add(Open::File(OpenFile { entry, pos: 0, flags }))
+    install(Arc::new(Desc::File(Mutex::new(OpenFile { entry, pos: 0, flags }))))
 }
 
-/// 表の空いている番号に入れる
-fn add(open: Open) -> Result<Fd> {
+/// 表の空いている一番小さい番号に入れる
+pub fn install(desc: DescRef) -> Result<Fd> {
     let tfs = current();
     let mut t = tfs.lock();
     if let Some(fd) = t.files.iter().position(Option::is_none) {
-        t.files[fd] = Some(open);
+        t.files[fd] = Some(desc);
         return Ok(fd);
     }
     if t.files.len() >= MAX_FILES {
         return Err(VfsError::TooManyFiles);
     }
-    t.files.push(Some(open));
+    t.files.push(Some(desc));
     Ok(t.files.len() - 1)
 }
 
 /// ソケットを表に入れる
 pub fn add_socket(sock: Arc<crate::net::Socket>) -> Result<Fd> {
-    add(Open::Socket(sock))
+    install(Arc::new(Desc::Socket(sock)))
+}
+
+/// その番号が指すもの
+pub fn get(fd: Fd) -> Result<DescRef> {
+    current().lock().files.get(fd).cloned().flatten().ok_or(VfsError::BadFd)
 }
 
 /// その番号がソケットなら、それを返す
 pub fn socket(fd: Fd) -> Option<Arc<crate::net::Socket>> {
-    let tfs = current();
-    let t = tfs.lock();
-    match t.files.get(fd)? {
-        Some(Open::Socket(s)) => Some(s.clone()),
+    match &*get(fd).ok()? {
+        Desc::Socket(s) => Some(s.clone()),
         _ => None,
     }
 }
 
-fn file_mut(t: &mut TaskFs, fd: Fd) -> Result<&mut OpenFile> {
-    match t.files.get_mut(fd) {
-        Some(Some(Open::File(f))) => Ok(f),
+/// `new` を `old` と同じものを指すようにする（`new` が開いていれば閉じる）
+pub fn dup2(old: Fd, new: Fd) -> Result<Fd> {
+    if new >= MAX_FILES {
+        return Err(VfsError::BadFd);
+    }
+    let desc = get(old)?;
+    let prev = {
+        let tfs = current();
+        let mut t = tfs.lock();
+        if t.files.len() <= new {
+            t.files.resize(new + 1, None);
+        }
+        t.files[new].replace(desc)
+    };
+    // 閉じるときにほかのロックを取ることがあるので、表のロックを手放してから捨てる
+    drop(prev);
+    Ok(new)
+}
+
+/// fd 0〜2 を入れ替えて、前のものを返す（シェルがリダイレクトの間だけつなぎ替えるのに使う）
+pub fn swap_stdio(stdio: Stdio) -> Stdio {
+    let tfs = current();
+    let mut t = tfs.lock();
+    if t.files.len() < 3 {
+        t.files.resize(3, None);
+    }
+    let mut old: Stdio = [None, None, None];
+    for (i, d) in stdio.into_iter().enumerate() {
+        old[i] = core::mem::replace(&mut t.files[i], d);
+    }
+    old
+}
+
+/// 今のタスクの fd 0〜2 の写し
+pub fn stdio() -> Stdio {
+    current().lock().stdio()
+}
+
+/// 開いているものをすべて閉じる（タスクが終わるとき）
+pub fn close_all() {
+    let files = core::mem::take(&mut current().lock().files);
+    drop(files);
+}
+
+fn with_file<R>(fd: Fd, f: impl FnOnce(&mut OpenFile) -> Result<R>) -> Result<R> {
+    let desc = get(fd)?;
+    match &*desc {
+        Desc::File(m) => f(&mut m.lock()),
         _ => Err(VfsError::BadFd),
     }
 }
 
 /// 読んだバイト数を返す（終わりなら 0）
 pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
-    let tfs = current();
-    let mut t = tfs.lock();
-    let file = file_mut(&mut t, fd)?;
+    with_file(fd, |file| read_open(file, buf))
+}
+
+/// 書いたバイト数を返す
+pub fn write(fd: Fd, data: &[u8]) -> Result<usize> {
+    with_file(fd, |file| write_open(file, data))
+}
+
+/// 開いたファイルから読む（位置を進める）
+pub fn read_open(file: &mut OpenFile, buf: &mut [u8]) -> Result<usize> {
     let n = with_root(|fs| Ok(fs.read(&file.entry, file.pos, buf)?))?;
     file.pos += n as u32;
     Ok(n)
 }
 
-/// 書いたバイト数を返す
-pub fn write(fd: Fd, data: &[u8]) -> Result<usize> {
-    let tfs = current();
-    let mut t = tfs.lock();
-    let file = file_mut(&mut t, fd)?;
+/// 開いたファイルに書く（位置を進める）
+pub fn write_open(file: &mut OpenFile, data: &[u8]) -> Result<usize> {
     if file.flags & OPEN_WRITE == 0 {
         return Err(VfsError::NotWritable);
     }
@@ -331,7 +419,7 @@ pub fn close(fd: Fd) -> Result<()> {
         let slot = t.files.get_mut(fd).ok_or(VfsError::BadFd)?;
         slot.take().ok_or(VfsError::BadFd)?
     };
-    // ソケットは閉じるときにネットワークのロックを取るので、表のロックを手放してから捨てる
+    // 最後の参照なら閉じる（ソケットはネットワークのロックを取るので、表のロックを手放してから捨てる）
     drop(open);
     Ok(())
 }
@@ -368,8 +456,8 @@ pub fn cwd() -> String {
     s
 }
 
-/// 開いているファイルの数（テスト用）
+/// 開いているファイルの数（fd 0〜2 は数えない。テスト用）
 #[allow(dead_code)]
 pub fn open_count() -> usize {
-    current().lock().files.iter().filter(|f| f.is_some()).count()
+    current().lock().files.iter().skip(3).filter(|f| f.is_some()).count()
 }

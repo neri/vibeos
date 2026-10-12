@@ -1,9 +1,16 @@
 //! テスト用: わざと不正なことをするアプリ。カーネルが落ちずにこのプロセスだけを止めることを確かめる
 //!
 //! fault null | kernel | cli | div0 | stack | badptr | spin | exit N
+//!
+//! パイプと起動の試験（カーネル内テストから使う。合っていれば 0 で終わる）:
+//! fault pipe（読む側のいないパイプに書く → EXIT_PIPE で止まるはず）| fds（0〜2 だけを受け継いだ）|
+//! argv A B（引数がちょうど A B で、環境変数 FOO がある）| spawnenv（VIBE=1 を足して checkenv を起動）|
+//! checkenv（FOO と VIBE が親から届いた）
 
 #![no_std]
 #![no_main]
+
+extern crate alloc;
 
 use core::arch::asm;
 
@@ -53,7 +60,35 @@ fn main() -> i32 {
             }
         }
         "exit" => return args.next().and_then(|s| s.parse().ok()).unwrap_or(0),
-        other => println!("usage: fault null|kernel|cli|div0|stack|badptr|spin|exit N (got {other:?})"),
+        "pipe" => {
+            let Ok((r, w)) = sys::pipe() else { return 2 };
+            sys::close(r);
+            let n = sys::write(w, b"nobody reads this");
+            println!("write to a closed pipe = {n} (should not return)");
+            return 1;
+        }
+        "fds" => {
+            let ok = (0..3).all(|fd| sys::fd_kind(fd) > 0) && (3..32).all(|fd| sys::fd_kind(fd) < 0);
+            println!("fault: fds {}", if ok { "ok" } else { "NG" });
+            return if ok { 0 } else { 1 };
+        }
+        "argv" => {
+            let got: alloc::vec::Vec<&str> = args.collect();
+            let foo = vibe_rt::env::var("FOO");
+            println!("fault: argv {got:?} FOO={foo:?}");
+            return if got == ["a b", "c"] && foo.as_deref() == Some("bar baz") { 0 } else { 1 };
+        }
+        "spawnenv" => {
+            vibe_rt::env::set_var("VIBE", "1");
+            let pid = sys::spawn("fault", "checkenv");
+            return if pid < 0 { 2 } else { sys::wait(pid) };
+        }
+        "checkenv" => {
+            let (foo, vibe) = (vibe_rt::env::var("FOO"), vibe_rt::env::var("VIBE"));
+            println!("fault: env FOO={foo:?} VIBE={vibe:?}");
+            return if foo.as_deref() == Some("bar baz") && vibe.as_deref() == Some("1") { 0 } else { 1 };
+        }
+        other => println!("usage: fault null|kernel|cli|div0|stack|badptr|spin|exit N|pipe|fds|argv|spawnenv|checkenv (got {other:?})"),
     }
     0
 }

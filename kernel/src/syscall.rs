@@ -11,24 +11,23 @@ use alloc::vec::Vec;
 
 use alloc::sync::Arc;
 
-use vibe_abi::{DirEntry, KeyEvent, MouseState, NetInfo, PollFd, ProcInfo, SockAddr, Stat, SysInfo, WinEvent, err, nr};
+use vibe_abi::{
+    DirEntry, KeyEvent, MouseState, NetInfo, PollFd, ProcInfo, SockAddr, SpawnArgs, Stat, SysInfo, WinEvent, err, nr,
+};
 use vibe_net::Ipv4;
 
 use crate::arch::trap::TrapFrame;
 use crate::gui::{self, SCREEN};
 use crate::drivers::pit;
 use crate::fs;
+use crate::io;
 use crate::net;
 use crate::process::{self, UserRef};
-use crate::shell::line::{Input, LineEditor};
 use crate::task::{self, sched};
 
 /// アプリの画面（gfx_open）の大きさ
 const APP_W: usize = 320;
 const APP_H: usize = 200;
-
-/// ファイル記述子 0〜2 はコンソール。それ以降は VFS の番号 + 3
-const FIRST_FILE_FD: u32 = 3;
 
 type SysResult = Result<u32, i32>;
 
@@ -157,7 +156,7 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
         nr::READ => sys_read(user, a, b, c),
         nr::OPEN => {
             let path = user_str(user, a, b)?;
-            fs::open_with(&path, c).map(|fd| fd as u32 + FIRST_FILE_FD).map_err(process::errno_of)
+            fs::open_with(&path, c).map(|fd| fd as u32).map_err(process::errno_of)
         }
         nr::MKDIR => fs::mkdir(&user_str(user, a, b)?).map(|_| 0).map_err(process::errno_of),
         nr::REMOVE => fs::remove(&user_str(user, a, b)?).map(|_| 0).map_err(process::errno_of),
@@ -167,12 +166,19 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             crate::drivers::speaker::play(a, b);
             Ok(0)
         }
-        nr::CLOSE => {
-            if a < FIRST_FILE_FD {
-                return Ok(0);
-            }
-            fs::close((a - FIRST_FILE_FD) as usize).map(|_| 0).map_err(process::errno_of)
+        nr::CLOSE => fs::close(a as usize).map(|_| 0).map_err(process::errno_of),
+        nr::PIPE => {
+            check_user(user, a, 8, true)?;
+            let (r, w) = io::pipe()?;
+            let fds = [r as i32, w as i32];
+            // SAFETY: fds は repr(C) と同じ並びの i32 の配列
+            let bytes = unsafe { core::slice::from_raw_parts(fds.as_ptr() as *const u8, 8) };
+            copy_to_user(user, a, bytes)?;
+            Ok(0)
         }
+        nr::DUP2 => fs::dup2(a as usize, b as usize).map(|fd| fd as u32).map_err(process::errno_of),
+        nr::FD_KIND => fs::get(a as usize).map(|d| d.kind()).map_err(process::errno_of),
+        nr::SPAWN_EX => sys_spawn_ex(user, a),
         nr::SBRK => user.lock().space.sbrk(a as i32).ok_or(err::ENOMEM),
         nr::SLEEP => {
             pit::sleep_ms(a);
@@ -359,50 +365,58 @@ fn sys_write(user: &UserRef, fd: u32, buf: u32, len: u32) -> SysResult {
     // ファイルに書く間に待つことがあるので、いったんカーネルに写す
     // SAFETY: 上で確かめた
     let bytes = unsafe { core::slice::from_raw_parts(buf as *const u8, len as usize) }.to_vec();
-    if let Some(sock) = socket_fd(fd) {
-        if sock.kind() != net::Kind::Stream {
-            return Err(err::ENOTCONN); // UDP・ICMP は sendto で宛先を付ける
+    match io::write(fd as usize, &bytes) {
+        Err(err::EPIPE) => {
+            // 読む側がいない: システムコールから戻るところで止める（Unix の SIGPIPE）
+            process::request_pipe_exit(sched::current_id());
+            Err(err::EPIPE)
         }
-        return net::send_all(&sock, &bytes).map(|n| n as u32);
-    }
-    match fd {
-        1 | 2 => {
-            kprint!("{}", String::from_utf8_lossy(&bytes));
-            Ok(len)
-        }
-        0 => Err(err::EBADF),
-        _ => fs::write((fd - FIRST_FILE_FD) as usize, &bytes).map(|n| n as u32).map_err(process::errno_of),
+        r => r.map(|n| n as u32),
     }
 }
 
 fn sys_read(user: &UserRef, fd: u32, buf: u32, len: u32) -> SysResult {
     check_user(user, buf, len, true)?;
-    if fd == 0 {
-        // キーボードから 1 行（編集付き）。Ctrl+C は入力の終わり（0 バイト）
-        let line = match LineEditor::new().read_line("") {
-            Input::Line(mut l) => {
-                l.push('\n');
-                l
-            }
-            Input::Cancelled => String::new(),
-        };
-        let n = line.len().min(len as usize);
-        // SAFETY: 上で確かめた
-        unsafe { core::ptr::copy_nonoverlapping(line.as_ptr(), buf as *mut u8, n) };
-        return Ok(n as u32);
-    }
-    if fd < FIRST_FILE_FD {
-        return Err(err::EBADF);
-    }
-    // ファイルの中身をいったんカーネルのバッファに読んでから写す（読んでいる間に待つことがあるため）
+    // いったんカーネルのバッファに読んでから写す（読んでいる間に待つことがあるため）
     let mut tmp = alloc::vec![0u8; len.min(64 * 1024) as usize];
-    let n = match socket_fd(fd) {
-        Some(sock) => net::recv_from(&sock, &mut tmp, u32::MAX)?.0,
-        None => fs::read((fd - FIRST_FILE_FD) as usize, &mut tmp).map_err(process::errno_of)?,
-    };
+    let n = io::read(fd as usize, &mut tmp)?;
     // SAFETY: 上で確かめた
     unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf as *mut u8, n) };
     Ok(n as u32)
+}
+
+/// 0 で区切った文字列の並び（各要素の後ろに 0）を分ける
+fn split_nul(text: &str) -> Vec<&str> {
+    match text.strip_suffix('\0') {
+        Some(t) => t.split('\0').collect(),
+        None if text.is_empty() => Vec::new(),
+        None => text.split('\0').collect(),
+    }
+}
+
+fn sys_spawn_ex(user: &UserRef, at: u32) -> SysResult {
+    check_user(user, at, core::mem::size_of::<SpawnArgs>() as u32, false)?;
+    // SAFETY: 上で今のプロセスが読めるページだと確かめた
+    let sa = unsafe { core::ptr::read_unaligned(at as *const SpawnArgs) };
+    if sa.argv_len as usize + sa.envp_len as usize > vibe_abi::MAX_ARG_BYTES {
+        return Err(err::E2BIG);
+    }
+    let name = user_str(user, sa.path, sa.path_len)?;
+    let argv_text = user_bytes_str(user, sa.argv, sa.argv_len)?;
+    let envp_text = user_bytes_str(user, sa.envp, sa.envp_len)?;
+    let argv = split_nul(&argv_text);
+    let envp = split_nul(&envp_text);
+    if argv.is_empty() {
+        return Err(err::EINVAL);
+    }
+    let mut stdio = fs::stdio();
+    for (i, &fd) in sa.fds.iter().enumerate() {
+        if fd >= 0 {
+            stdio[i] = Some(fs::get(fd as usize).map_err(process::errno_of)?);
+        }
+    }
+    let path = process::resolve_program(&name);
+    process::spawn_ex(&path, &argv, &envp, Some(stdio))
 }
 
 /// 今のプロセスが win_open で作ったウィンドウか
@@ -432,6 +446,11 @@ fn user_str(user: &UserRef, addr: u32, len: u32) -> Result<String, i32> {
     if len > 4096 {
         return Err(err::EINVAL);
     }
+    user_bytes_str(user, addr, len)
+}
+
+/// ユーザの文字列を長さの上限を見ずに写す（呼ぶ側で上限を確かめる）
+fn user_bytes_str(user: &UserRef, addr: u32, len: u32) -> Result<String, i32> {
     check_user(user, addr, len, false)?;
     // SAFETY: 上で確かめた
     let bytes = unsafe { core::slice::from_raw_parts(addr as *const u8, len as usize) };
@@ -447,10 +466,7 @@ fn as_bytes<T: Copy>(v: &T) -> &[u8] {
 
 /// その番号がソケットなら返す
 fn socket_fd(fd: u32) -> Option<Arc<net::Socket>> {
-    if fd < FIRST_FILE_FD {
-        return None;
-    }
-    fs::socket((fd - FIRST_FILE_FD) as usize)
+    fs::socket(fd as usize)
 }
 
 fn sock_of(fd: u32) -> Result<Arc<net::Socket>, i32> {
@@ -458,7 +474,7 @@ fn sock_of(fd: u32) -> Result<Arc<net::Socket>, i32> {
 }
 
 fn add_socket(sock: Arc<net::Socket>) -> SysResult {
-    fs::add_socket(sock).map(|fd| fd as u32 + FIRST_FILE_FD).map_err(process::errno_of)
+    fs::add_socket(sock).map(|fd| fd as u32).map_err(process::errno_of)
 }
 
 fn read_sockaddr(user: &UserRef, addr: u32) -> Result<SockAddr, i32> {
@@ -557,16 +573,13 @@ fn net_call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> S
             // SAFETY: 上で確かめた
             let mut fds: Vec<PollFd> =
                 (0..b as usize).map(|i| unsafe { core::ptr::read_unaligned((a as *const PollFd).add(i)) }).collect();
-            let socks: Vec<Option<Arc<net::Socket>>> = fds.iter().map(|p| socket_fd(p.fd as u32)).collect();
+            let descs: Vec<Option<fs::DescRef>> =
+                fds.iter().map(|p| if p.fd >= 0 { fs::get(p.fd as usize).ok() } else { None }).collect();
+            // ソケットとパイプは読める・書けるが変わると net::wake_sockets で起こしてくれる
             let ready = net::wait_any(c, || {
                 let mut count = 0;
-                for (p, s) in fds.iter_mut().zip(&socks) {
-                    let (r, w) = match s {
-                        Some(sock) => net::readiness(sock),
-                        // ファイルはいつでも読み書きできる。コンソールは書けるだけ
-                        None if p.fd >= FIRST_FILE_FD as i32 => (true, true),
-                        None => (false, p.fd == 1 || p.fd == 2),
-                    };
+                for (p, d) in fds.iter_mut().zip(&descs) {
+                    let (r, w) = d.as_deref().map_or((false, false), io::readiness);
                     p.revents = (if r { vibe_abi::POLL_IN } else { 0 } | if w { vibe_abi::POLL_OUT } else { 0 }) & p.events;
                     if p.revents != 0 {
                         count += 1;

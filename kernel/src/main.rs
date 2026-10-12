@@ -21,11 +21,13 @@ mod fs;
 mod gfx;
 mod gui;
 mod input;
+mod io;
 #[cfg(feature = "qemu-test")]
 mod ktest;
 mod mm;
 mod net;
 mod panic;
+mod pipe;
 mod process;
 mod shell;
 mod sync;
