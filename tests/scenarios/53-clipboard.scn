@@ -38,9 +38,9 @@ expect-screen clip-edit 8 216 512 24
 key ctrl+q
 key ctrl+q
 # 切り取った行を端末に貼り付ける
-type echo <
+type echo "<
 key ctrl+v
-type >
+type >"
 key ret
 wait-serial <edited line>
 wait-serial <edited line>

@@ -295,7 +295,7 @@ fn mem(_: &mut Shell, _: &[&str]) {
 
 fn ps(_: &mut Shell, _: &[&str]) {
     kprintln!("  ID NAME       STATE    TICKS");
-    for t in sched::tasks() {
+    for t in sched::tasks().into_iter().filter(|t| t.state != sched::State::Dead) {
         kprintln!("{:4} {:10} {:8} {}", t.id, t.name, format!("{:?}", t.state), t.ticks);
     }
 }

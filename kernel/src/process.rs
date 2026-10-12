@@ -256,8 +256,9 @@ pub fn resolve_program(name: &str) -> String {
 enum Reason {
     /// kill・ウィンドウの [x]・端末を閉じた
     Kill,
-    /// Ctrl+C（ctrl_c(CATCH) なら止めずに印を付ける）
-    CtrlC,
+    /// Ctrl+C（ctrl_c(CATCH) なら止めずに印を付ける）。true なら止めるときに "^C" を出す
+    /// （パイプでつないだ集まりでは 1 つだけが出す）
+    CtrlC(bool),
     /// 読む側のいないパイプに書いた
     Pipe,
 }
@@ -289,9 +290,10 @@ pub fn detach_child(id: TaskId) -> Result<(), i32> {
     Ok(())
 }
 
-/// 今の端末でシェルが終わるのを待っている（端末のキーボードを使っている）プロセスを設定する
-pub fn set_foreground(id: Option<TaskId>) {
-    SCREEN.lock().set_terminal_foreground(sched::current_tty(), id);
+/// 今の端末でシェルが終わるのを待っている（端末のキーボードを使っている）プロセスの集まりを設定する
+/// （空なら無し）
+pub fn set_foreground(ids: &[TaskId]) {
+    SCREEN.lock().set_terminal_foreground(sched::current_tty(), ids);
 }
 
 /// 端末が閉じられた: その端末につながっているプロセスをすべて止める（シェルは自分で終わる）
@@ -421,11 +423,12 @@ fn mark_ctrl_c(me: TaskId) -> bool {
 }
 
 /// キーボードの割り込みから: Ctrl+C が押された。フォーカスのあるウィンドウがアプリのものなら
-/// その持ち主、端末ならシェルが待っているプロセスを止める
+/// その持ち主、端末ならシェルが待っているプロセスの集まりを止める
 pub fn request_interrupt() {
-    let target = SCREEN.lock().interrupt_target();
-    if let Some(id) = target {
-        request_kill_with(id, Reason::CtrlC);
+    let targets = SCREEN.lock().interrupt_targets();
+    let ids = targets.ids();
+    for (i, &id) in ids.iter().enumerate() {
+        request_kill_with(id, Reason::CtrlC(i + 1 == ids.len()));
     }
 }
 
@@ -447,8 +450,10 @@ pub fn check_interrupt() {
     };
     match hit {
         None => {}
-        Some(Reason::CtrlC) => {
-            kprintln!("^C");
+        Some(Reason::CtrlC(echo)) => {
+            if echo {
+                kprintln!("^C");
+            }
             if !mark_ctrl_c(me) {
                 exit_current(EXIT_INTERRUPTED);
             }

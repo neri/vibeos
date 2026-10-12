@@ -23,6 +23,7 @@ vibe-gfx = { path = "../crates/vibe-gfx" }
 vibe-keyboard = { path = "../crates/vibe-keyboard" }
 vibe-term = { path = "../crates/vibe-term" }
 vibe-net = { path = "../crates/vibe-net" }
+vibe-shell = { path = "../crates/vibe-shell" }
 vibe-time = { path = "../crates/vibe-time" }
 # アプリ（gzip）の展開。ktest は KERNEL.SYS（LZSA2）の展開にも使う
 vibe-pack = { path = "../crates/vibe-pack", default-features = false, features = ["gzip"] }

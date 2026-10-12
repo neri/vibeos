@@ -1,0 +1,76 @@
+# パイプとリダイレクト（docs/plans/pipe.md P2）: > と >> でファイルへ、| でつなぐ、2> と 2>&1、
+# & で裏で動かす、Ctrl+C でパイプの全部が止まる
+timeout 30
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+# > の出力はファイルに入り、画面（シリアル）には出ない
+type hello one > A.TXT
+key ret
+type echo done1
+key ret
+wait-serial done1
+serial-absent Hello from user space
+type cat A.TXT
+key ret
+wait-serial Hello from user space!
+wait-serial argv[1] = one
+# >> で書き足す
+type hello two >> a.txt
+key ret
+type cat A.TXT
+key ret
+wait-serial argv[1] = one
+wait-serial argv[1] = two
+# 3 本のパイプ（4 つのプロセス）
+type hello pipe | fault upper | fault upper | fault upper > B.TXT
+key ret
+type cat B.TXT
+key ret
+wait-serial HELLO FROM USER SPACE!
+wait-serial ARGV[1] = PIPE
+# 標準エラー: 2> で標準エラーだけ、2>&1 で同じファイルへ
+type fault stderr 2> D.TXT
+key ret
+wait-serial fault: to stdout
+type echo done2
+key ret
+wait-serial done2
+serial-absent fault: to stderr
+type fault stderr > C.TXT 2>&1
+key ret
+type cat C.TXT
+key ret
+wait-serial fault: to stdout
+wait-serial fault: to stderr
+type cat D.TXT
+key ret
+wait-serial fault: to stderr
+# 引用符の中の記号はただの文字。閉じていない引用符は文法の誤り
+type echo "a | b > c"
+key ret
+wait-serial a | b > c
+type echo "abc
+key ret
+wait-serial syntax error: missing closing "
+# & でパイプ全体を裏で動かす
+type hello bg | fault upper > E.TXT &
+key ret
+wait-serial ] hello
+sleep 1000
+type cat E.TXT
+key ret
+wait-serial ARGV[1] = BG
+# Ctrl+C でパイプの全部が止まる（ps に残らない）
+type fault spin | fault spin | fault spin
+key ret
+wait-serial spinning (Ctrl+C to stop)...
+sleep 300
+key ctrl+c
+wait-serial ^C
+wait-serial [fault exited with -130]
+type ps
+key ret
+wait-serial ID NAME
+sleep 500
+serial-absent FAULT.ELF
+serial-absent PANIC

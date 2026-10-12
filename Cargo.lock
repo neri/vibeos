@@ -157,6 +157,7 @@ dependencies = [
  "vibe-lzsa",
  "vibe-net",
  "vibe-pack",
+ "vibe-shell",
  "vibe-term",
  "vibe-time",
  "xmas-elf",
@@ -442,6 +443,10 @@ dependencies = [
  "png",
  "serde_json",
 ]
+
+[[package]]
+name = "vibe-shell"
+version = "0.1.0"
 
 [[package]]
 name = "vibe-term"

@@ -6,6 +6,9 @@
 //! fault pipe（読む側のいないパイプに書く → EXIT_PIPE で止まるはず）| fds（0〜2 だけを受け継いだ）|
 //! argv A B（引数がちょうど A B で、環境変数 FOO がある）| spawnenv（VIBE=1 を足して checkenv を起動）|
 //! checkenv（FOO と VIBE が親から届いた）
+//!
+//! シェルのパイプとリダイレクトの試験: upper（標準入力を大文字にして標準出力へ）|
+//! stderr（標準出力と標準エラーに 1 行ずつ）
 
 #![no_std]
 #![no_main]
@@ -14,7 +17,7 @@ extern crate alloc;
 
 use core::arch::asm;
 
-use vibe_rt::{println, sys};
+use vibe_rt::{abi, println, sys};
 
 vibe_rt::entry!(main);
 
@@ -88,7 +91,23 @@ fn main() -> i32 {
             println!("fault: env FOO={foo:?} VIBE={vibe:?}");
             return if foo.as_deref() == Some("bar baz") && vibe.as_deref() == Some("1") { 0 } else { 1 };
         }
-        other => println!("usage: fault null|kernel|cli|div0|stack|badptr|spin|exit N|pipe|fds|argv|spawnenv|checkenv (got {other:?})"),
+        "upper" => {
+            let mut buf = [0u8; 256];
+            loop {
+                let n = sys::read(abi::STDIN, &mut buf);
+                if n <= 0 {
+                    return if n == 0 { 0 } else { 1 };
+                }
+                let chunk = &mut buf[..n as usize];
+                chunk.make_ascii_uppercase();
+                sys::write(abi::STDOUT, chunk);
+            }
+        }
+        "stderr" => {
+            sys::write(abi::STDOUT, b"fault: to stdout\n");
+            sys::write(abi::STDERR, b"fault: to stderr\n");
+        }
+        other => println!("usage: fault null|kernel|cli|div0|stack|badptr|spin|exit N|pipe|fds|argv|spawnenv|checkenv|upper|stderr (got {other:?})"),
     }
     0
 }

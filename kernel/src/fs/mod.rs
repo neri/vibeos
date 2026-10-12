@@ -207,6 +207,11 @@ pub fn open(path: &str) -> Result<Fd> {
 
 /// ファイルを開く。`flags` は OPEN_*（0 なら読み込み専用）
 pub fn open_with(path: &str, flags: u32) -> Result<Fd> {
+    install(open_desc(path, flags)?)
+}
+
+/// ファイルを開くが、表には入れない（子の fd 0〜2 にするなど）
+pub fn open_desc(path: &str, flags: u32) -> Result<DescRef> {
     let entry = match lookup(path) {
         Ok(mut e) => {
             if e.is_dir() {
@@ -226,7 +231,7 @@ pub fn open_with(path: &str, flags: u32) -> Result<Fd> {
         }
         Err(e) => return Err(e),
     };
-    install(Arc::new(Desc::File(Mutex::new(OpenFile { entry, pos: 0, flags }))))
+    Ok(Arc::new(Desc::File(Mutex::new(OpenFile { entry, pos: 0, flags }))))
 }
 
 /// 表の空いている一番小さい番号に入れる

@@ -111,10 +111,35 @@ struct Window {
     terminal: bool,
     /// 属する端末（端末のウィンドウなら自分）
     tty: Option<WinId>,
-    /// 端末のとき: シェルが終わるのを待っているプロセス（Ctrl+C で止める相手）
-    fg_proc: Option<TaskId>,
+    /// 端末のとき: シェルが終わるのを待っているプロセスの集まり（Ctrl+C で止める相手）
+    fg_procs: Foreground,
     /// 最小化している（バーのボタンだけになる）
     minimized: bool,
+}
+
+/// 端末の前面のプロセスの集まり（パイプでつないだもの）。割り込みの中でも読むので固定長
+#[derive(Clone, Copy)]
+pub struct Foreground {
+    ids: [TaskId; MAX_FOREGROUND],
+    len: usize,
+}
+
+/// 前面にできるプロセスの数（パイプでつなげる数の上限）
+pub const MAX_FOREGROUND: usize = 16;
+
+impl Foreground {
+    pub const EMPTY: Foreground = Foreground { ids: [0; MAX_FOREGROUND], len: 0 };
+
+    fn from(ids: &[TaskId]) -> Foreground {
+        let mut f = Foreground::EMPTY;
+        f.len = ids.len().min(MAX_FOREGROUND);
+        f.ids[..f.len].copy_from_slice(&ids[..f.len]);
+        f
+    }
+
+    pub fn ids(&self) -> &[TaskId] {
+        &self.ids[..self.len]
+    }
 }
 
 /// マウスの操作の結果、ロックの外で行うこと
@@ -294,7 +319,7 @@ fn new_window(
         close_requested: false,
         terminal: false,
         tty: None,
-        fg_proc: None,
+        fg_procs: Foreground::EMPTY,
         minimized: false,
     }
 }
@@ -457,10 +482,11 @@ impl Screen {
         }
     }
 
-    /// 端末 `tty` でシェルが終わるのを待っているプロセス（Ctrl+C で止める相手）を設定する
-    pub fn set_terminal_foreground(&mut self, tty: WinId, proc: Option<TaskId>) {
+    /// 端末 `tty` でシェルが終わるのを待っているプロセスの集まり（Ctrl+C で止める相手）を設定する。
+    /// 空なら前面のプロセスは無い（Ctrl+C はシェルへの入力になる）
+    pub fn set_terminal_foreground(&mut self, tty: WinId, procs: &[TaskId]) {
         if let Some(w) = self.windows.get_mut(&tty) {
-            w.fg_proc = proc;
+            w.fg_procs = Foreground::from(procs);
         }
     }
 
@@ -780,7 +806,7 @@ impl Screen {
         if let Some(w) = self.windows.get_mut(&target) {
             // 端末の Ctrl+C は、シェルが待っている前面のプロセスを止めるのに使った（キーボードの割り込みで）。
             // 入力としては渡さない（後でシェルが ^C として読んでしまわないように）
-            if w.terminal && ev.ch == Some('\x03') && w.fg_proc.is_some() {
+            if w.terminal && ev.ch == Some('\x03') && w.fg_procs.len > 0 {
                 return;
             }
             if !w.keys.push(ev) {
@@ -789,11 +815,15 @@ impl Screen {
         }
     }
 
-    /// Ctrl+C で止める相手: フォーカスのあるウィンドウが端末ならシェルが待っているプロセス、
-    /// アプリのものならその持ち主
-    pub fn interrupt_target(&self) -> Option<TaskId> {
-        let w = self.windows.get(&self.focused()?)?;
-        if w.terminal { w.fg_proc } else { w.owner }
+    /// Ctrl+C で止める相手: フォーカスのあるウィンドウが端末ならシェルが待っているプロセスの集まり、
+    /// アプリのものならその持ち主（割り込みの中から呼ぶのでメモリを確保しない）
+    pub fn interrupt_targets(&self) -> Foreground {
+        let Some(w) = self.focused().and_then(|id| self.windows.get(&id)) else { return Foreground::EMPTY };
+        match (w.terminal, w.owner) {
+            (true, _) => w.fg_procs,
+            (false, Some(owner)) => Foreground::from(&[owner]),
+            (false, None) => Foreground::EMPTY,
+        }
     }
 
     /// パニックのとき: 全画面のコンソールに戻す
