@@ -54,6 +54,7 @@ const TESTS: &[(&str, fn())] = &[
     ("shell_kill_closes_only_its_terminal", shell_kill_closes_only_its_terminal),
     ("fdc_read_matches_ramdisk", fdc_read_matches_ramdisk),
     ("fs_write_and_sync", fs_write_and_sync),
+    ("gfx_compose_speed", gfx_compose_speed),
 ];
 
 pub fn run_all() -> ! {
@@ -707,4 +708,35 @@ fn fs_write_and_sync() {
     assert!(disk.windows(16).any(|w| w == b"written by ktest"), "data not on the floppy");
     fs::remove("/KTEST.TXT").unwrap();
     fs::sync().unwrap();
+}
+
+/// 1024x768 の 32 ビットのデスクトップを 1 枚重ね合わせる時間（M2。遅くなったことに気づくため。
+/// QEMU の速さで見るので実機の保証ではない）: グラデーションの背景、影と角の丸い枠の付いたウィンドウ 4 つ
+/// （中身は 8 ビットを表で直す）
+fn gfx_compose_speed() {
+    use vibe_gfx::canvas::{Canvas, Corner, Shadow, rgb};
+    const W: usize = 1024;
+    const H: usize = 768;
+    const FRAMES: u32 = 10;
+    let mut screen = vec![0u32; W * H];
+    let client = vec![7u8; 400 * 300];
+    let lut = vibe_gfx::palette::lut32(&vibe_gfx::palette::standard());
+    let corner = Corner::new(8);
+    let shadow = Shadow::new(10);
+    let start = pit::ticks();
+    for f in 0..FRAMES as i32 {
+        let mut c = Canvas::new(&mut screen, W, H);
+        c.gradient_v(0, 0, W as i32, H as i32, rgb(70, 110, 190), rgb(150, 90, 170));
+        for i in 0..4 {
+            let (x, y) = (60 + i * 150 + f, 60 + i * 100);
+            c.shadow(x, y, 400, 330, 4, &shadow, 0, 110);
+            c.fill_round_rect(x, y, 400, 330, &corner, rgb(246, 246, 248), 255);
+            c.round_rect(x, y, 400, 330, &corner, rgb(200, 200, 205));
+            c.blit8(x, y + 30, &client, 400, &lut);
+        }
+    }
+    let ms = pit::ticks().wrapping_sub(start) * 1000 / pit::TICK_HZ / FRAMES;
+    klog!("bench: compose 1024x768 with 4 windows: {} ms per frame", ms);
+    assert!(screen[W * H / 2] != 0);
+    assert!(ms <= 100, "composing one frame took {ms} ms");
 }

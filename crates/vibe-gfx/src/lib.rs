@@ -1,4 +1,4 @@
-//! 8bit パレット画像への描画。
+//! 8bit パレット画像への描画（32 ビットの画像は `canvas`）。
 //!
 //! ハードウェアには触らず、バイト列（1 ピクセル = 1 バイト = パレット番号）に描くだけ。
 //! はみ出した部分は切り捨てる（座標は負でもよい）。
@@ -8,6 +8,7 @@
 extern crate alloc;
 
 pub mod bmp;
+pub mod canvas;
 pub mod palette;
 pub mod wallpaper;
 
