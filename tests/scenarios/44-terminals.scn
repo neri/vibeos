@@ -1,6 +1,6 @@
 # Phase 32（デスクトップ D1）: 端末を何個でも開ける。出力はそれぞれの端末に出る。edit は端末の大きさ（80x25）を使う。
 # 端末を閉じると、その端末のプロセスも止まる
-# 端末 1 は中身 8,360 から 640x400。端末 2 は中身 120,73 から 640x400（タイトルバー y=49〜72、[x] は 738〜757）
+# 端末 1 は中身 8,294 から 640x400（ドックの上）。端末 2 は中身 120,73 から 640x400（タイトルバー y=49〜72、[x] は 738〜757）
 timeout 30
 wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
@@ -29,7 +29,7 @@ type edit /new.txt
 key ret
 wait-serial /new.txt (new)
 sleep 300
-expect-screen terminals-edit 8 360 640 400
+expect-screen terminals-edit 8 294 640 400
 key ctrl+q
 # 端末 2 をクリックして前に出し（→ 400,100）、裏で clock、前面で life を動かす
 mouse-move 340 -500

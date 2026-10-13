@@ -1,0 +1,10 @@
+# A4: ドック用の 32x32 のアイコン（/SYSTEM/ICONS32.VIA）が無ければ、16x16 のアイコンをタイルの真ん中に出す
+disk-delete /SYSTEM/ICONS32.VIA
+timeout 30
+wait-serial icons: /SYSTEM/ICONS32.VIA is not available
+wait-serial dock: 11 items
+wait-serial gui: desktop 1024x768
+wait-serial VibeOS shell
+sleep 300
+expect-screen dock-icons16 220 680 584 88
+serial-absent PANIC

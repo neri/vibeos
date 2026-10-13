@@ -25,6 +25,7 @@
 
 mod bar;
 mod deco;
+mod dock;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -164,6 +165,8 @@ struct Window {
     x: i32,
     y: i32,
     title: String,
+    /// 作ったプロセスのプログラムの名前（小文字、拡張子なし。ドックの項目と結び付ける。端末は "terminal"）
+    app: String,
     owner: Option<TaskId>,
     /// [x] で持ち主のプロセスを止める（gfx_open の画面）
     kill_on_close: bool,
@@ -290,6 +293,8 @@ pub struct Screen {
     deco: Option<Box<deco::Deco>>,
     /// マウスが乗っているタイトルバーのボタン
     hover: Option<(WinId, Part)>,
+    /// ドック（デスクトップで DOCK.CFG があるとき）
+    dock: Option<Box<dock::Dock>>,
     /// 最後にマウスの動きを届けたウィンドウ（出たときに知らせる）
     mouse_in: Option<WinId>,
 }
@@ -323,6 +328,7 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     bar: Vec::new(),
     deco: None,
     hover: None,
+    dock: None,
     mouse_in: None,
 });
 
@@ -363,15 +369,20 @@ pub fn init_windows() {
 
 /// 32 ビットの画面ならデスクトップにする（スケジューラが動いた後に呼ぶ）。したら true
 pub fn start_desktop() -> bool {
-    let mut s = SCREEN.lock();
-    if vga::bpp() != 32 || s.width < 640 || s.height < 400 {
+    if vga::bpp() != 32 || vga::width() < 640 || vga::height() < 400 {
         return false;
     }
+    // ドックの項目（ファイルを読むのでロックの外で）
+    let dock_items = dock::load();
+    let mut s = SCREEN.lock();
     s.mode = Mode::Desktop;
+    let (w, h) = (s.width, s.height);
+    s.dock = dock::Dock::new(dock_items, w, h).map(Box::new);
+    // 端末は作業領域（ドックの上）の左下
     let (cw, ch) = s.desktop_terminal_size();
     s.console_w = cw;
     s.console_h = ch;
-    let y = (s.height - ch - 8) as i32;
+    let y = (s.work_bottom() - ch - 8) as i32;
     s.console_y = y as usize;
     let bg = s.term_lut[palette::BLACK as usize];
     let width = s.width;
@@ -379,6 +390,7 @@ pub fn start_desktop() -> bool {
     s.deco = Some(Box::new(deco::Deco::new()));
     if let Some(c) = s.windows.get_mut(&CONSOLE) {
         c.icon = crate::gfx::icons::get("terminal");
+        c.app = String::from("terminal");
         c.w = cw;
         c.h = ch;
         c.x = 8;
@@ -388,6 +400,8 @@ pub fn start_desktop() -> bool {
         c.pixels = Pixels::P32(vec![bg; cw * ch].into_boxed_slice());
     }
     s.refresh_titlebars();
+    s.render_dock();
+    s.refresh_dock();
     s.cursor_visible = true;
     s.bar_dirty = true;
     let h = s.height;
@@ -417,6 +431,7 @@ fn new_window(
         x: 0,
         y: 0,
         title: String::from(title),
+        app: String::new(),
         owner,
         kill_on_close,
         closable,
@@ -483,8 +498,11 @@ impl Screen {
         if let Some(win) = self.windows.get_mut(&id) {
             win.tty = tty;
             win.icon = crate::gfx::icons::for_app(app);
+            win.app = String::from(app);
         }
         self.refresh_titlebars();
+        // アプリの名前を付けた後でドックの点を直す
+        self.refresh_dock();
         id
     }
 
@@ -498,12 +516,14 @@ impl Screen {
         let id = self.add_window_with(w, h, title, None, false, self.mode == Mode::Desktop);
         if let Some(win) = self.windows.get_mut(&id) {
             win.icon = crate::gfx::icons::get("terminal");
+            win.app = String::from("terminal");
             win.terminal = true;
             win.tty = Some(id);
             if self.mode == Mode::Fullscreen {
                 win.y = FS_BAR_H as i32;
             }
         }
+        self.refresh_dock();
         id
     }
 
@@ -514,7 +534,7 @@ impl Screen {
             None => (FONT_8X8.width, FONT_8X8.height),
         };
         let (cw, ch) = (TERMINAL_COLS * fw, TERMINAL_ROWS * fh);
-        (cw.min(self.width - 2), ch.min(self.height - BAR_H - TITLE_H - 2 - 8))
+        (cw.min(self.width - 2), ch.min(self.work_bottom() - BAR_H - TITLE_H - 2 - 8))
     }
 
     /// `rgb` なら中身は 32 ビット、そうでなければ 8 ビット
@@ -541,7 +561,7 @@ impl Screen {
             self.placed += 1;
             let max_x = (self.width as i32 - w as i32 - 1).max(1);
             win.x = (120 + n * 24).min(max_x);
-            win.y = ((BAR_H + TITLE_H + 1) as i32 + 24 + n * 20).min((self.height as i32 - h as i32 - 1).max(30));
+            win.y = ((BAR_H + TITLE_H + 1) as i32 + 24 + n * 20).min((self.work_bottom() as i32 - h as i32 - 1).max(30));
         }
         self.windows.insert(id, Box::new(win));
         self.order.push(id);
@@ -781,6 +801,7 @@ impl Screen {
     /// 重なりの順やフォーカスが変わった: タイトルバー・パレット・バーを直して全体を描き直す
     fn focus_changed(&mut self) {
         self.refresh_titlebars();
+        self.refresh_dock();
         self.apply_palette();
         self.bar_dirty = true;
         let h = self.height;
@@ -812,6 +833,10 @@ impl Screen {
 
     /// (x, y) にある一番手前のウィンドウとその部分
     fn hit(&self, x: i32, y: i32) -> Option<(WinId, Part)> {
+        // ドックはウィンドウより手前
+        if self.dock_contains(x, y) {
+            return None;
+        }
         for &id in self.order.iter().rev() {
             let w = &self.windows[&id];
             if w.minimized {
@@ -857,6 +882,8 @@ impl Screen {
         self.set_cursor(x, y);
         if self.mode == Mode::Desktop {
             self.update_hover(x, y, buttons);
+            let free = self.drag.is_none() && self.menu.is_none() && self.capture.is_none();
+            self.dock_hover(free.then_some((x, y)));
         }
         let left = buttons & 1 != 0;
         let was_left = self.buttons & 1 != 0;
@@ -898,6 +925,8 @@ impl Screen {
                 None => {}
             }
             return None;
+        } else if left && !was_left && self.capture.is_none() && self.dock_contains(x, y) {
+            return self.dock_click(x, y);
         } else if left && !was_left {
             match self.hit(x, y) {
                 Some((id, Part::Title)) => {
@@ -1156,6 +1185,7 @@ impl Screen {
         for &id in &self.order {
             self.draw_window_row(id, y as i32, row, focused == Some(id));
         }
+        self.draw_dock_row(y, row);
         self.draw_menu_row(y, row);
     }
 

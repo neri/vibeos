@@ -621,3 +621,17 @@
 - シナリオ: 背景の色を見ていた所（10・25・28・29・44・46・49・52・60〜63）を紫の地か右上の円の色に。60〜63 には「右の真ん中が右上の円の中」（円が画面の大きさに対する割合で置かれる）を足した。52 は真ん中に置いた画像の位置（240,190）と、画像の上のバーの期待画像 `wallpaper-bar` を足した
 - ホストのテスト: 円の中は塗り・縁はなめらか・上下左右で対称・面積がおよそ π r²、画面の大きさを変えても割合で置かれる、後ろの円が手前・画面の外は切る、`isqrt32`、真ん中に置いたときに画像の無い所は書かない
 - 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, calc-46, desktop-moved, desktop-terminal, files-images, fonts-fallback, net-statusbar-ip, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-center, wallpaper-tile。新しく wallpaper-bar
+
+## 2026-10-13 Aster に近づける A4: ドックと README のスクリーンショット（ブランチ `aster-look`）
+
+- オーナーの質問「レトロモードの存在は重荷になってる？」に答え、レトロの扱いを決めた（D-063）。オーナーが「A4 に進んで」（D-064）
+- `vibe_gfx::dock`（新）: `parse_config`（コメント・空行・同じ名前・大文字）、`Layout`（項目の数と画面の大きさから真ん中の下に置く。入りきらない分は出さない。タイル・パネルの当たり判定）、`work_bottom`（作業領域）。ホストのテスト 5 本
+- `gui/dock.rs`（新）: 起動時に `DOCK.CFG` と `/BIN` を読み（ロックの外で）、パネルとツールチップをバッファに描いて `panel_row` で重ねる。ウィンドウより手前・メニューより奥。`Window::app`（作ったプロセスのプログラムの名前。端末は "terminal"）で開いているアプリを決め、重なりの順・フォーカスが変わるたびに点を直す。押すと一番手前のウィンドウを前に出すか起動する。ドックのパネルの中はウィンドウに当たらない
+- 詰まったこと: 起動したアプリの点が付かなかった。ウィンドウを足したとき（`focus_changed`）にはまだ `app` を入れていなかった。`create_window`・`create_terminal` で名前を入れた後にも点を直すようにした
+- 作業領域: 新しいウィンドウの置き場所と端末の大きさの上限・最初の端末の位置を、ドックの分（66）を除いて決める
+- アイコン: `vibe-icongen --size N`。`make icons` で `DOCK_APPS` の分の 32x32 を `assets/icons/ICONS32.VIA`（45,196 バイト、gzip で 2,745 バイト）に。カーネルの `gfx::icons` は `ICONS32.VIA` も読む（`get32`）
+- Makefile: `DOCK_APPS`、`tools/dock-cfg.sh`（`DOCK.CFG` を作る。SVG の無い名前があれば止まる）、`make test-dock-cfg`（止まることを確かめる。`make test` に入れた）
+- シナリオ: 新しく `68-dock`（押すと起動・乗せると名前・開いている点・もう一度押すと前に出すだけ・最小化した電卓が戻る）、`69-dock-missing`（DOCK.CFG が無ければドック無しで、端末は下まで）、`70-dock-icons16`（ICONS32.VIA が無ければ 16x16）。端末の位置が変わったシナリオ（25・28・44・46・52・53・65）の座標を直した（D-064）。ほかのシナリオのクリックがドックに当たっていないことは、全部のシナリオが通ることで確かめた
+- ktest `gfx_compose_speed`: 1 枚 16ms（ドックは測っていない）
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, desktop-moved, desktop-terminal, files-images, fonts-fallback, terminals-edit, terminals-two, view-window-plasma, wallpaper-tile（大きさも変えた）。新しく dock-start, dock-hover, dock-open, dock-icons16
+- README のスクリーンショット: `tools/screenshots/desktop.scn` の並びを直し（ウィンドウの間を 16 ピクセル以上、ドックが見えるように）、`make screenshots` で撮り直した。D-055 のとおり、オーナーが確認するまでコミットしない

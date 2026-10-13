@@ -22,7 +22,7 @@ wait-serial menu: started clock
 wait-serial clock: started
 sleep 300
 # 時計の文字盤（白）とフォーカスのある [x] の記号の真ん中（濃い灰色。フォーカスが無いと薄い灰色）。
-# 端末のフォーカスは [_] の線（635,348）の色で見る（明るい灰色 / 薄い灰色）
+# 端末のフォーカスは [_] の線（635,282）の色で見る（明るい灰色 / 薄い灰色）
 expect-pixel 125 86 255 255 255
 expect-pixel 243 60 44 44 42
 # [_] で最小化する（→ 222,60）。ウィンドウは消えてバーのボタンだけになる
@@ -43,12 +43,12 @@ expect-pixel 243 60 44 44 42
 # Alt+Tab で端末が前に出る。もう一度で clock に戻る
 key alt+tab
 sleep 300
-expect-pixel 635 348 222 221 214
+expect-pixel 635 282 222 221 214
 expect-pixel 243 60 136 135 128
 key alt+tab
 sleep 300
 expect-pixel 243 60 44 44 42
-expect-pixel 635 348 128 128 122
+expect-pixel 635 282 128 128 122
 # フォーカスのあるウィンドウのボタンを押すと最小化する
 mouse-button left down
 mouse-button left up

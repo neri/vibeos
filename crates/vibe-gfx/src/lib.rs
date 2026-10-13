@@ -10,6 +10,7 @@ extern crate alloc;
 pub mod backdrop;
 pub mod bmp;
 pub mod canvas;
+pub mod dock;
 pub mod icons;
 pub mod palette;
 pub mod panel;

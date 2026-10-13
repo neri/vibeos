@@ -38,6 +38,8 @@ pub const BAR_TEXT_DIM: Color = rgb(168, 162, 216);
 pub const BAR_PILL_ALPHA: u8 = 51;
 /// 背景の画像の上のバーに重ねる黒の濃さ（明るい画像でも白い文字が読めるように。35%）
 pub const BAR_SHADE_ALPHA: u8 = 89;
+/// ドックのパネルの地（濃い紫）
+pub const DOCK: Color = rgb(38, 33, 92);
 /// 既定の背景: 紫の地に、同じ系統の色の大きな円（右上に明るい紫、左下に濃い紫）
 pub const DESKTOP: Color = rgb(60, 52, 137);
 pub const DESKTOP_CIRCLES: [Circle; 2] = [

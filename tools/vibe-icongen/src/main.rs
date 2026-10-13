@@ -1,7 +1,7 @@
-//! vibe-icongen: 手で書いた SVG のアイコンを 16x16 にラスタライズし、1 つのファイル（`.VIA`。
-//! crates/vibe-gfx の icons）にまとめる。
+//! vibe-icongen: 手で書いた SVG のアイコンを 16x16（`--size` で変える。ドックは 32x32）にラスタライズし、
+//! 1 つのファイル（`.VIA`。crates/vibe-gfx の icons）にまとめる。
 //!
-//! 使い方: vibe-icongen OUT SVG...（アイコンの名前はファイル名から拡張子を除いたもの、最大 12 文字）
+//! 使い方: vibe-icongen [--size N] OUT SVG...（アイコンの名前はファイル名から拡張子を除いたもの、最大 12 文字）
 //!
 //! SVG は自分で読む（外部のクレートを使わない）。対応するのはアイコンに使う一部だけ:
 //! - `<svg viewBox="0 0 W H">`（正方形）
@@ -14,24 +14,29 @@
 
 use std::path::Path;
 
-const SIZE: usize = 16;
+const DEFAULT_SIZE: usize = 16;
 const SS: usize = 8;
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() < 2 {
-        eprintln!("usage: vibe-icongen OUT SVG...");
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut size = DEFAULT_SIZE;
+    if args.first().is_some_and(|a| a == "--size") && args.len() > 1 {
+        size = args[1].parse().unwrap_or(0);
+        args.drain(..2);
+    }
+    if args.len() < 2 || !(8..=64).contains(&size) {
+        eprintln!("usage: vibe-icongen [--size N] OUT SVG...");
         std::process::exit(2);
     }
     let mut icons = Vec::new();
     for path in &args[1..] {
         let name = Path::new(path).file_stem().unwrap().to_string_lossy().to_string();
         let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        let pixels = render(&text).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let pixels = render(&text, size).unwrap_or_else(|e| panic!("{path}: {e}"));
         icons.push((name, pixels));
     }
     icons.sort_by(|a, b| a.0.cmp(&b.0));
-    let out = vibe_gfx::icons::encode(SIZE as u16, &icons);
+    let out = vibe_gfx::icons::encode(size as u16, &icons);
     std::fs::write(&args[0], &out).unwrap_or_else(|e| panic!("{}: {e}", args[0]));
     eprintln!("{}: {} icons, {} bytes", args[0], icons.len(), out.len());
 }
@@ -70,7 +75,7 @@ struct Item {
     style: Style,
 }
 
-fn render(text: &str) -> Result<Vec<u32>, String> {
+fn render(text: &str, size: usize) -> Result<Vec<u32>, String> {
     let mut items = Vec::new();
     let mut view = 32.0;
     let mut stack: Vec<Style> = vec![Style::default()];
@@ -128,8 +133,8 @@ fn render(text: &str) -> Result<Vec<u32>, String> {
         };
         items.push(Item { shape, style });
     }
-    let scale = view / (SIZE * SS) as f64;
-    let n = SIZE * SS;
+    let scale = view / (size * SS) as f64;
+    let n = size * SS;
     // 細かい点の色（事前に掛けたアルファ）
     let mut fine = vec![[0.0f64; 4]; n * n];
     for (i, px) in fine.iter_mut().enumerate() {
@@ -148,9 +153,9 @@ fn render(text: &str) -> Result<Vec<u32>, String> {
             }
         }
     }
-    let mut out = vec![0u32; SIZE * SIZE];
+    let mut out = vec![0u32; size * size];
     for (i, o) in out.iter_mut().enumerate() {
-        let (ox, oy) = (i % SIZE, i / SIZE);
+        let (ox, oy) = (i % size, i / size);
         let mut acc = [0.0f64; 4];
         for sy in 0..SS {
             for sx in 0..SS {

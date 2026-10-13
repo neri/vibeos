@@ -20,6 +20,10 @@ pub(super) struct Deco {
     pub(super) corner_small: Corner,
     /// タイトルバーのボタンの丸（直径 BUTTON_W）
     pub(super) button: Corner,
+    /// ドックのパネル・タイル・開いているアプリの点
+    pub(super) dock: Corner,
+    pub(super) tile: Corner,
+    pub(super) dot: Corner,
     /// 影の近い層と遠い層
     pub(super) near: Shadow,
     pub(super) far: Shadow,
@@ -33,6 +37,9 @@ impl Deco {
             corner: Corner::new(theme::RADIUS),
             corner_small: Corner::new(theme::RADIUS_SMALL),
             button: Corner::new(super::BUTTON_W / 2),
+            dock: Corner::new(vibe_gfx::dock::RADIUS),
+            tile: Corner::new(vibe_gfx::dock::TILE_RADIUS),
+            dot: Corner::new(2),
             near: Shadow::new(theme::SHADOW_NEAR_BLUR),
             far: Shadow::new(theme::SHADOW_FAR_BLUR),
             cursor: build_cursor(),
