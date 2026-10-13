@@ -515,7 +515,7 @@ pub trait BlockDevice {
 3. **フォント**: 8×8 ビットマップフォント（ASCII 0x20–0x7E）→ 40 桁 × 25 行。データは `font8x8` クレートを使い、描画は自作
    - 1 文字の幅を固定値にせず、フォント側から取る（将来の 6×8 や全角対応のため）
    - **なめらかなフォント**（`.VFN`、`vibe_font::vfn`）: ホストのツール `tools/vibe-fontgen`（`ab_glyph`）が TrueType を決まった大きさでラスタライズし、1 ピクセル 4 ビットの濃さ（覆う割合の 0.8 乗で少し濃く）で持つ。字ごとに位置・大きさ・送り幅（1/16 ピクセル）。文字コードの表は疎で、後から全角を足せる。描くのは `Canvas::draw_vtext`（濃さをアルファにして合成。ペンは 1/16 ピクセルで進め、字は丸めた位置に置く）
-   - 入れているもの（`assets/fonts`、`make fonts` で作り直す）: `UI.VFN`（Noto Sans 13px）、`UIBOLD.VFN`（Noto Sans Bold 13px）、`MONO.VFN`（Noto Sans Mono 13px を 8x16 の枠、ベースライン 12）。ASCII だけ。フロッピーの `/SYSTEM/FONTS/` に gzip で置き、カーネルが起動時に読み込んでずっと持つ（`gfx::fonts`）。無ければ 8x8 で動く
+   - 入れているもの（`assets/fonts`、`make fonts` で作り直す。元の TrueType は `make fonts-fetch` が GitHub の公式の置き場所から版を決めて取ってきて SHA-256 を確かめる。D-052）: `UI.VFN`（Noto Sans 13px）、`UIBOLD.VFN`（Noto Sans Bold 13px）、`MONO.VFN`（Noto Sans Mono 13px を 8x16 の枠、ベースライン 12）。ASCII だけ。フロッピーの `/SYSTEM/FONTS/` に gzip で置き、カーネルが起動時に読み込んでずっと持つ（`gfx::fonts`）。無ければ 8x8 で動く
 4. **テキストの端末**: 端末のウィンドウの中身（320x200 では画面の 2 行目以降の 40 桁 × 24 行、デスクトップでは 80 桁 × 25 行。デスクトップの端末は 32 ビットのバッファに `MONO.VFN` の 8x16 の文字、全画面とフォントが無いときは 8x8）。いくつでも開ける（§8.8）。カーソル（下線）とスクロール。`kprintln!` マクロは今のタスクの端末に出す（シリアルにはいつも出す）。制御文字と ANSI エスケープシーケンスの一部（カーソル移動・位置指定・行/画面の消去・色）を解釈する（`crates/vibe-term`）。左右の移動は行をまたいで回り込む（行をまたぐ入力行を相対移動だけで編集できるように）
 
 ### 8.3 パレット

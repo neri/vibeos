@@ -553,3 +553,9 @@
 - シナリオの色を直した: 背景はグラデーションの値（y から計算）、タイトルバーは文字の無い下の方の行で明るい地・灰色の地、上端のバーは明るい灰色。カーソルが大きくなり、確かめる点が重なった 28 の 1 か所をずらした。52 の真ん中に置いた画像の周りは `sh` の 8 ビットの背景の色のまま
 - 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, calc-46, clip-edit, clip-selected, desktop-moved, desktop-terminal, files-images, fonts-fallback, mines-flag, mines-lost, mines-open（カーソルが写る）, net-statusbar-ip, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-tile
 - シナリオ `66-title-hover`（[x] に乗せると赤、[_] に移ると灰色、離れると戻る）
+
+## 2026-10-13 フォントを取ってくる手段（ブランチ `modern-look`）
+
+- オーナーの指示で、ほかのマシンでも `.VFN` を作り直せるように `tools/fetch-fonts.sh`（`make fonts-fetch`）を作った（D-052）。GitHub へのアクセスはオーナーが許可した
+- リリースの zip は大きすぎた（Noto Sans 117MB）ので、`notofonts.github.io` の決まったコミットの TrueType を 1 つずつ取る（合わせて 1.2MB）。SHA-256 を確かめ、正しいファイルがあれば取り直さない。空の場所からと 2 回目とで試した
+- `make fonts` でその版から作り直した。`UIBOLD.VFN` と `MONO.VFN`（`]`）が少し変わり、太字の題名が写る期待画像（bar-menu, bar-minimized, bar-three, calc-46, desktop-moved, desktop-terminal, files-images, paint-window, terminals-two, view-window-gradient, view-window-plasma）を作り直した（目で確かめた）

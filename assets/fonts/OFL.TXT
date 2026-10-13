@@ -1,10 +1,10 @@
 VibeOS fonts (UI.VFN, UIBOLD.VFN, MONO.VFN)
 
 These bitmap fonts were made by VibeOS's tools/vibe-fontgen from
-Noto Sans (Regular, Bold) and Noto Sans Mono (Regular).
+Noto Sans (Regular, Bold) and Noto Sans Mono (Regular)
+(https://github.com/notofonts/notofonts.github.io, commit 28b15b4b43b7).
 
-Copyright 2010, 2012-2020 Google Inc.
-Copyright 2015-2020 Google LLC.
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

@@ -14,7 +14,7 @@
 #   make lzsa-bench  自作の LZSA と本家の圧縮後の大きさの表
 #   make lzsa-ref    本家の lzsa を GitHub から取ってきてビルドする（build/ext/lzsa。DECISIONS.md D-033）
 #   make size-report KERNEL.SYS の圧縮前後の大きさとフロッピーの空き
-#   make fonts    assets/fonts の .VFN をホストの Noto のフォントから作り直す（tools/vibe-fontgen）
+#   make fonts    assets/fonts の .VFN を Noto のフォントから作り直す（make fonts-fetch で GitHub から取ってくる。tools/vibe-fontgen）
 #   make icons    assets/icons/ICONS.VIA を手で書いた SVG から作り直す（tools/vibe-icongen）
 #   make COMPRESS=0  カーネルとアプリを圧縮しないイメージを作る（ローダは印の無い KERNEL.SYS を
 #                    そのまま写し、カーネルは gzip でない ELF をそのまま読む）。アプリは RAW_APPS だけ
@@ -61,7 +61,7 @@ SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 0x8000 に読み込む。中継バッファ（0x10000）の手前まで
 
-.PHONY: all fonts icons run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref test-apps-gz lzsa-bench lzsa-ref size-report screenshots clean FORCE
+.PHONY: all fonts fonts-fetch icons run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref test-apps-gz lzsa-bench lzsa-ref size-report screenshots clean FORCE
 
 all: $(IMG)
 
@@ -215,9 +215,13 @@ icons:
 	$(CARGO) build -q --release -p vibe-icongen
 	target/release/vibe-icongen assets/icons/ICONS.VIA assets/icons/*.svg
 
-# assets/fonts の .VFN を作り直す（ホストの Noto のフォントから。ふだんのビルドでは使わない）
-NOTO_DIR ?= /usr/share/fonts/truetype/noto
-fonts:
+# assets/fonts の .VFN を作り直す（ふだんのビルドでは使わない）。Noto のフォントは GitHub の公式の置き場所から
+# 版を決めて取ってくる（tools/fetch-fonts.sh。SHA-256 を確かめる。DECISIONS.md D-052）
+NOTO_DIR ?= $(BUILD)/ext/noto
+fonts-fetch:
+	tools/fetch-fonts.sh $(NOTO_DIR)
+
+fonts: fonts-fetch
 	$(CARGO) build -q --release -p vibe-fontgen
 	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Regular.ttf 13 assets/fonts/UI.VFN
 	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Bold.ttf 13 assets/fonts/UIBOLD.VFN
