@@ -581,3 +581,7 @@
 - `vibe-rt`: `gfx::draw_text`・`draw_text_centered`・`text_width`・`text_height`（フォントが無ければ 8x8）
 - シナリオ: 28 の端末の地の色、52 の真ん中に置いたときの周り（グラデーション）、51 に 24 ビットの画像の画素の確認（mkassets の式から計算した色と同じ）
 - 期待画像を作り直したもの（目で確かめた）: blocks-bottom, blocks-paused, clip-edit, clip-selected, desktop-moved, desktop-terminal, fonts-fallback, mines-counter, mines-flag, mines-lost, mines-open, mines-sad, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-center, wallpaper-tile, bar-menu
+
+## 2026-10-13 README のスクリーンショットを今風の見た目に（ブランチ `modern-look`）
+
+- オーナーの指示で、README のスクリーンショット（`docs/images/desktop.png`）をこのブランチの見た目で撮り直した。`tools/screenshots/desktop.scn` を 1024x768 の配置に書き直した（上の段にファイルマネージャ・電卓・時計・マインスイーパ・落ち物パズル、左下に端末、右下にタスクマネージャ。時計は 10 時 10 分）。README の画像の説明を「1024×768 のデスクトップ」にした
