@@ -1,5 +1,5 @@
 # Phase 36（デスクトップ D5）: タスクマネージャ。タスクの一覧を出し、裏で動いているプロセス（life）を止められる
-# life のウィンドウは中身 120,73 に 192x144、tasks は 144,93 に 320x192（End task のボタンは 148〜227, 265〜280）
+# life のウィンドウは中身 120,73 に 192x144、tasks は 144,93 に 320x300（End task のボタンは 152〜241, 363〜386）
 timeout 30
 wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
@@ -15,12 +15,12 @@ key ret
 wait-serial tasks: started
 sleep 1500
 # 見出しの行（毎回同じ）
-expect-screen tasks-header 148 97 312 10
+expect-screen tasks-header 148 97 312 20
 # 一覧は番号の順。最後が tasks 自身、その 1 つ前が life
 key end
 key up
-# End task（→ 188,273）→ 確かめるダイアログで Enter（Yes）
-mouse-move -324 -111
+# End task（→ 197,375）→ 確かめるダイアログで Enter（Yes）
+mouse-move -315 -9
 mouse-button left down
 mouse-button left up
 sleep 300

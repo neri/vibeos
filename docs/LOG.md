@@ -559,3 +559,13 @@
 - オーナーの指示で、ほかのマシンでも `.VFN` を作り直せるように `tools/fetch-fonts.sh`（`make fonts-fetch`）を作った（D-052）。GitHub へのアクセスはオーナーが許可した
 - リリースの zip は大きすぎた（Noto Sans 117MB）ので、`notofonts.github.io` の決まったコミットの TrueType を 1 つずつ取る（合わせて 1.2MB）。SHA-256 を確かめ、正しいファイルがあれば取り直さない。空の場所からと 2 回目とで試した
 - `make fonts` でその版から作り直した。`UIBOLD.VFN` と `MONO.VFN`（`]`）が少し変わり、太字の題名が写る期待画像（bar-menu, bar-minimized, bar-three, calc-46, desktop-moved, desktop-terminal, files-images, paint-window, terminals-two, view-window-gradient, view-window-plasma）を作り直した（目で確かめた）
+
+## 2026-10-13 見た目を今風に M5: アプリの部品（ブランチ `modern-look`）
+
+- ABI: `win_open` のフラグ `WIN_RGB32`、`font_data`（71）・`icon_data`（72）、マウスが出たときの (-1, -1)。カーネルの `fonts` は展開したバイト列も持つ。`win_blit` は 32 ビットのウィンドウなら幅 × 高さ × 4 バイトを読む（4 バイトにそろっていなければ EINVAL）
+- `vibe-rt`: `Window32`（`Canvas` で描いて `present`）、`gfx::font`（最初に使うときにカーネルから写して `Box::leak`）、`gfx::icon`
+- `vibe-ui` を 32 ビットの描画に: `draw.rs`（`Text`: 幅・何文字入るか・x に近い文字の境目・寄せて描く。`Corners`・`frame`・`focus_ring`。フォントは `set_fonts` でプロセスに 1 つ）。ボタンのホバー（`Ui::draw` がマウスの位置から決める）。一覧は 1 行 20 ピクセル・アイコン・タブで分けた列。テキスト欄のスクロールとクリックは文字の幅で。ダイアログは幅を測って折り返す（`wrap_by`）。ホストのテストの座標を新しい大きさに直した（18 本が通る）
+- `Canvas::line_aa`（なめらかな太い線。整数の平方根 `isqrt`）
+- アプリ: `calc`（大きさはそのまま）、`files`（アイコン・名前と大きさの 2 列。`vibe_files::icon_name`・`list_line` を「名前・タブ・大きさ」に）、`tasks`（見出しと 5 列。高さ 300）、`clock`（白地に薄い灰色の円の文字盤、なめらかな目盛りと針、太字の時刻。高さ 170）
+- シナリオ: 48（一覧の行が 20 ピクセル、ボタンの位置）と 49（tasks の大きさ）の座標を直した。新しく `67-calc-retro`（320x200 で calc が動き、近い色で出る）
+- 期待画像を作り直したもの（目で確かめた）: calc-46, calc-cleared, files-images, tasks-header。新しく calc-retro

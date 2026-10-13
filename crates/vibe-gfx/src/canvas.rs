@@ -294,6 +294,34 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// なめらかな太い線（端は丸い）。座標と太さは 1/16 ピクセル単位（ピクセルの真ん中は 8）。
+    /// 各ピクセルの真ん中から線分までの距離で濃さを決める（整数だけ）
+    pub fn line_aa(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, width: i32, c: Color) {
+        let half = width / 2;
+        let m = half + 16;
+        let Some((bx0, by0, bx1, by1)) =
+            self.clip((x0.min(x1) - m) >> 4, (y0.min(y1) - m) >> 4, ((x0 - x1).abs() + 2 * m >> 4) + 2, ((y0 - y1).abs() + 2 * m >> 4) + 2)
+        else {
+            return;
+        };
+        let (dx, dy) = ((x1 - x0) as i64, (y1 - y0) as i64);
+        let len2 = dx * dx + dy * dy;
+        for py in by0..by1 {
+            for px in bx0..bx1 {
+                let (qx, qy) = ((px as i64) * 16 + 8 - x0 as i64, (py as i64) * 16 + 8 - y0 as i64);
+                // 線分の上の一番近い点（t は 0〜len2）
+                let t = if len2 == 0 { 0 } else { (qx * dx + qy * dy).clamp(0, len2) };
+                let (ex, ey) = if len2 == 0 { (qx, qy) } else { (qx - dx * t / len2, qy - dy * t / len2) };
+                let dist = isqrt((ex * ex + ey * ey) as u64) as i32;
+                // 線の縁から外へ 1 ピクセル（16）で 255 → 0
+                let cov = ((half + 8 - dist) * 16).clamp(0, 255);
+                if cov > 0 {
+                    self.blend_pixel(px as i32, py as i32, c, cov as u8);
+                }
+            }
+        }
+    }
+
     /// 縦のグラデーション（上端 `top` → 下端 `bottom`）
     pub fn gradient_v(&mut self, x: i32, y: i32, w: i32, h: i32, top: Color, bottom: Color) {
         let Some((x0, y0, x1, y1)) = self.clip(x, y, w, h) else { return };
@@ -549,6 +577,20 @@ impl<'a> Canvas<'a> {
     }
 }
 
+/// 整数の平方根（切り捨て）
+fn isqrt(n: u64) -> u64 {
+    if n < 2 {
+        return n;
+    }
+    let mut x = n;
+    let mut y = x.div_ceil(2);
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    x
+}
+
 /// 色を事前に掛けたアルファの 0xAARRGGBB にする（アイコン・カーソルを作るとき）
 pub fn premultiply(c: Color, a: u8) -> u32 {
     (a as u32) << 24 | scale(c, a as u32)
@@ -735,6 +777,29 @@ mod tests {
         assert_eq!(c.get(1, 2), Some(K));
         assert_eq!(c.get(3, 1), Some(K)); // 2 文字目は 3 ピクセル目から
         assert_eq!(c.get(0, 0), Some(W));
+    }
+
+    #[test]
+    fn isqrt_is_exact() {
+        for n in [0u64, 1, 2, 3, 4, 15, 16, 17, 99, 100, 101, 1 << 40] {
+            let r = isqrt(n);
+            assert!(r * r <= n && (r + 1) * (r + 1) > n, "{n} -> {r}");
+        }
+    }
+
+    #[test]
+    fn line_aa_is_solid_in_the_middle_and_soft_at_the_edge() {
+        let mut buf = [W; 20 * 10];
+        let mut c = Canvas::new(&mut buf, 20, 10);
+        // (2.5, 5.5) → (17.5, 5.5)、太さ 2.5 ピクセル: 真ん中の行は塗りつぶし、上下の行は半分ほど
+        c.line_aa(2 * 16 + 8, 5 * 16 + 8, 17 * 16 + 8, 5 * 16 + 8, 40, K);
+        assert_eq!(c.get(10, 5), Some(K));
+        let edge = c.get(10, 6).unwrap() & 0xFF;
+        assert!(edge > 0 && edge < 255, "{edge}");
+        // 上下対称、その外は描かない
+        assert_eq!(c.get(10, 4), c.get(10, 6));
+        assert_eq!(c.get(10, 7), Some(W));
+        assert_eq!(c.get(10, 3), Some(W));
     }
 
     #[test]

@@ -29,6 +29,17 @@ pub const OPEN_APPEND: u32 = 8;
 /// gfx_open のフラグ: マウスカーソルを表示する
 pub const GFX_CURSOR: u32 = 1;
 
+/// win_open のフラグ: 中身は 32 ビット（0x00RRGGBB）。win_blit は幅 × 高さ × 4 バイトを読む。
+/// 320x200 の全画面では標準のパレットの近い色で出る
+pub const WIN_RGB32: u32 = 1;
+
+/// font_data の種類: UI の文字・太字・固定幅（`.VFN`。vibe_font::vfn）
+pub const FONT_UI: u32 = 0;
+pub const FONT_BOLD: u32 = 1;
+pub const FONT_MONO: u32 = 2;
+/// icon_data のアイコンの 1 辺
+pub const ICON_SIZE: usize = 16;
+
 /// 画面の大きさ（モード 13h）
 pub const SCREEN_WIDTH: usize = 320;
 pub const SCREEN_HEIGHT: usize = 200;
@@ -78,10 +89,10 @@ pub mod nr {
     pub const SOUND: u32 = 24;
     /// time() -> 1970 年からの秒（現地時刻）。時計が無ければ 0
     pub const TIME: u32 = 25;
-    /// win_open(w, h, title, title_len) -> ウィンドウ番号。デスクトップでは枠付きのウィンドウ、
-    /// 全画面のときは前面に出る
+    /// win_open(w, h, title, title_len, flags) -> ウィンドウ番号。デスクトップでは枠付きのウィンドウ、
+    /// 全画面のときは前面に出る。flags は WIN_*（WIN_RGB32 なら中身は 32 ビット）
     pub const WIN_OPEN: u32 = 26;
-    /// win_blit(win, buf: *const [u8; w*h]) -> 0。中身全体を書き換える
+    /// win_blit(win, buf) -> 0。中身全体を書き換える（8 ビットなら w*h バイト、WIN_RGB32 なら w*h*4 バイト）
     pub const WIN_BLIT: u32 = 27;
     /// win_event(win, &mut WinEvent, timeout_ms) -> 1 ならイベントあり, 0 なら時間切れ。
     /// timeout_ms = 0 なら待たない、u32::MAX ならいつまでも待つ
@@ -178,6 +189,13 @@ pub mod nr {
     /// fault_test(kind) -> 戻らない。カーネルの中でわざと例外を起こす（FAULT_* 。テスト用のカーネルだけ。
     /// ほかは -ENOSYS）
     pub const FAULT_TEST: u32 = 70;
+    /// font_data(kind, buf, len) -> フォントの大きさ（バイト）。kind は FONT_*。len がそれ以上なら buf に
+    /// 写す（足りなければ写さずに大きさだけ返す）。カーネルが起動時に読んだ `/SYSTEM/FONTS` の `.VFN`
+    /// （展開したもの）。無ければ -ENOENT
+    pub const FONT_DATA: u32 = 71;
+    /// icon_data(name, name_len, buf: *mut [u32; 256]) -> 0。16x16 のアイコン（事前に掛けたアルファの
+    /// 0xAARRGGBB）。無ければ -ENOENT
+    pub const ICON_DATA: u32 = 72;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;
@@ -354,6 +372,7 @@ pub struct WinEvent {
 }
 
 pub const WIN_EVENT_KEY: u32 = 1;
+/// マウスが動いた・ボタンが変わった。マウスがウィンドウから出たときは x = y = -1（ボタンなし）
 pub const WIN_EVENT_MOUSE: u32 = 2;
 /// [x] が押された（閉じるかどうかはアプリが決める）
 pub const WIN_EVENT_CLOSE: u32 = 3;

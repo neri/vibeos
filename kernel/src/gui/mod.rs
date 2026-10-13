@@ -281,6 +281,8 @@ pub struct Screen {
     deco: Option<Box<deco::Deco>>,
     /// マウスが乗っているタイトルバーのボタン
     hover: Option<(WinId, Part)>,
+    /// 最後にマウスの動きを届けたウィンドウ（出たときに知らせる）
+    mouse_in: Option<WinId>,
 }
 
 /// 画面。コンソール（gfx::console の CONSOLE）と両方取るときはコンソールを先に取ること
@@ -311,6 +313,7 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     bar: Vec::new(),
     deco: None,
     hover: None,
+    mouse_in: None,
 });
 
 /// キー・マウス・閉じる要求が届いたら起こされる
@@ -450,7 +453,8 @@ impl Screen {
     }
 
     /// ウィンドウを作って前に出す。`kill_on_close` なら [x] で持ち主を止め、そうでなければ閉じる要求のイベントを届ける。
-    /// `tty` は属する端末（作ったプロセスの端末）、`app` はアイコンを選ぶアプリの名前（小文字、拡張子なし）
+    /// `tty` は属する端末（作ったプロセスの端末）、`app` はアイコンを選ぶアプリの名前（小文字、拡張子なし）。
+    /// `rgb` なら中身は 32 ビット
     #[allow(clippy::too_many_arguments)]
     pub fn create_window(
         &mut self,
@@ -461,8 +465,9 @@ impl Screen {
         kill_on_close: bool,
         tty: Option<WinId>,
         app: &str,
+        rgb: bool,
     ) -> WinId {
-        let id = self.add_window(w, h, title, owner, kill_on_close);
+        let id = self.add_window_with(w, h, title, owner, kill_on_close, rgb);
         if let Some(win) = self.windows.get_mut(&id) {
             win.tty = tty;
             win.icon = crate::gfx::icons::for_app(app);
@@ -498,10 +503,6 @@ impl Screen {
         };
         let (cw, ch) = (TERMINAL_COLS * fw, TERMINAL_ROWS * fh);
         (cw.min(self.width - 2), ch.min(self.height - BAR_H - TITLE_H - 2 - 8))
-    }
-
-    fn add_window(&mut self, w: usize, h: usize, title: &str, owner: Option<TaskId>, kill_on_close: bool) -> WinId {
-        self.add_window_with(w, h, title, owner, kill_on_close, false)
     }
 
     /// `rgb` なら中身は 32 ビット、そうでなければ 8 ビット
@@ -899,6 +900,15 @@ impl Screen {
             Some((id, Part::Client)) if self.focused() == Some(id) => Some(id),
             _ => None,
         });
+        // マウスがウィンドウから出たら、前のウィンドウに (-1, -1) を届ける（部品の「乗っている」を消すため）
+        if self.mouse_in != target {
+            if let Some(w) = self.mouse_in.and_then(|old| self.windows.get_mut(&old)) {
+                if !w.terminal {
+                    push_mouse(w, MouseEvent { x: -1, y: -1, buttons: 0 });
+                }
+            }
+            self.mouse_in = target;
+        }
         let mut action = None;
         if let Some(id) = target {
             if let Some(w) = self.windows.get_mut(&id) {

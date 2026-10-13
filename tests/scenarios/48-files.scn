@@ -1,7 +1,7 @@
 # Phase 35（デスクトップ D4）: ファイルマネージャ。フォルダを移り、BMP をダブルクリックで view が開く。
 # コピー・名前の変更（移動）・削除・フォルダ作りがフロッピー（ホスト側の mtools）にも反映される。テキストは新しい端末の edit で開く
-# ウィンドウは中身 120,73 に 320x224。一覧の i 行目は y = 95 + 10i から 10 ピクセル。
-# ボタン（y = 259〜274）の中心の x: Open 153, Copy 216, Rename 279, Delete 342, Folder 406
+# ウィンドウは中身 120,73 に 320x224。一覧の i 行目は y = 101 + 20i から 20 ピクセル。
+# ボタン（y = 249〜272）の中心の x: Open 156, Copy 218, Rename 280, Delete 342, Folder 404
 writable
 timeout 40
 wait-serial gui: desktop 1024x768
@@ -10,8 +10,8 @@ type files &
 key ret
 wait-serial files: started
 sleep 300
-# ルート: BIN, DOCS, IMAGES（フォルダが先）。IMAGES（2 行目）をダブルクリック（カーソル 512,384 → 200,120）
-mouse-move -312 -264
+# ルート: BIN, DOCS, IMAGES（フォルダが先）。IMAGES（2 行目）をダブルクリック（カーソル 512,384 → 200,150）
+mouse-move -312 -234
 mouse-button left down
 mouse-button left up
 mouse-button left down
@@ -37,8 +37,8 @@ key up
 key ret
 wait-serial files: dir /DOCS
 key down
-# コピー（→ 216,267）。ダイアログに名前を打って Enter
-mouse-move 16 147
+# コピー（→ 218,260）。ダイアログに名前を打って Enter
+mouse-move 18 110
 mouse-button left down
 mouse-button left up
 sleep 300
@@ -46,8 +46,8 @@ type COPY.TXT
 key ret
 wait-serial files: copied /DOCS/GUIDE.TXT to /DOCS/COPY.TXT
 expect-disk-file DOCS/COPY.TXT VibeOS GUIDE
-# 名前の変更（→ 279,267）で別のフォルダ（ルート）へ移す。最初は今の名前を選んだ状態なので、打てば置き換わる
-mouse-move 63 0
+# 名前の変更（→ 280,260）で別のフォルダ（ルート）へ移す。最初は今の名前を選んだ状態なので、打てば置き換わる
+mouse-move 62 0
 mouse-button left down
 mouse-button left up
 sleep 300
@@ -74,8 +74,8 @@ sleep 300
 key ctrl+q
 wait-serial term: closed terminal 2
 sleep 300
-# フォルダを作る（→ 406,267）
-mouse-move 127 0
+# フォルダを作る（→ 404,260）
+mouse-move 124 0
 mouse-button left down
 mouse-button left up
 sleep 300
@@ -83,7 +83,7 @@ type NEWDIR
 key ret
 wait-serial files: made folder /DOCS/NEWDIR
 # [x]（418〜437, 49〜72）で閉じる（→ 428,60）
-mouse-move 22 -207
+mouse-move 24 -200
 mouse-button left down
 mouse-button left up
 wait-serial files: closed

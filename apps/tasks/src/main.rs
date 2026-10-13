@@ -15,15 +15,25 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use vibe_rt::abi::{self, ProcInfo, err, key};
-use vibe_rt::gfx::{Event, Window};
+use vibe_rt::gfx::{Event, Window32 as Window};
 use vibe_rt::{println, sys};
 use vibe_ui::dialog::Dialog;
-use vibe_ui::{Action, Button, Id, Input, Label, List, Rect, Ui};
+use vibe_ui::{Action, Align, Button, Id, Input, Label, List, Rect, Ui};
 
 vibe_rt::entry!(main);
 
 const W: usize = 320;
-const H: usize = 192;
+const H: usize = 300;
+/// 一覧の列（文字の場所の左端からの (左端, 右端, 寄せ方)）と見出し
+const COLUMNS: [(i32, i32, Align, &str); 5] = [
+    (0, 28, Align::Right, "ID"),
+    (32, 126, Align::Left, "NAME"),
+    (130, 164, Align::Right, "CPU"),
+    (168, 224, Align::Right, "MEM"),
+    (228, 276, Align::Left, "STATE"),
+];
+/// 一覧の文字の場所の左端（一覧の左端 8 + 部品の余白 6）
+const TEXT_X: i32 = 14;
 const MAX_TASKS: usize = 64;
 const REFRESH_MS: u32 = 1000;
 
@@ -39,6 +49,7 @@ struct App {
 }
 
 fn main() -> i32 {
+    vibe_ui::set_fonts(vibe_rt::gfx::font(vibe_rt::abi::FONT_UI), vibe_rt::gfx::font(vibe_rt::abi::FONT_BOLD));
     let Some(mut win) = Window::open(W, H, "Tasks") else {
         println!("tasks: cannot open a window");
         return 1;
@@ -83,18 +94,24 @@ fn state_name(p: &ProcInfo) -> &'static str {
 impl App {
     fn new() -> App {
         let mut ui = Ui::new();
-        ui.add(Rect::new(4, 4, W as i32 - 8, 10), Label::new("  ID NAME           CPU    MEM STATE"));
-        let list = ui.add(Rect::new(4, 16, W as i32 - 8, 150), List::new(Vec::new()));
-        let end = ui.add(Rect::new(4, 172, 80, 16), Button::new("End task"));
-        let status = ui.add(Rect::new(90, 172, W as i32 - 94, 16), Label::new(""));
+        // 見出し（一覧の列と同じ位置。ラベルは中で 6 ピクセル空けて描く）
+        for (x0, x1, align, name) in COLUMNS {
+            let mut l = Label::new(name).align(align);
+            l.color = vibe_rt::gfx_lib::theme::TEXT_DIM;
+            ui.add(Rect::new(TEXT_X + x0 - 6, 4, x1 - x0 + 12, 20), l);
+        }
+        let list = ui.add(Rect::new(8, 26, W as i32 - 16, H as i32 - 62), List::new(Vec::new()));
+        ui.list_mut(list).set_columns(COLUMNS.iter().map(|c| (c.0, c.2)).collect());
+        let end = ui.add(Rect::new(8, H as i32 - 30, 90, 24), Button::new("End task"));
+        let status = ui.add(Rect::new(104, H as i32 - 30, W as i32 - 112, 24), Label::new(""));
         ui.set_focus(list);
         App { ui, list, end, status, procs: Vec::new(), last: Vec::new(), last_total: 0 }
     }
 
     fn draw(&mut self, win: &mut Window) {
-        let mut s = win.surface();
-        s.clear(vibe_rt::gfx_lib::palette::LIGHT_GRAY);
-        self.ui.draw(&mut s);
+        let mut c = win.canvas();
+        c.clear(vibe_rt::gfx_lib::theme::FACE);
+        self.ui.draw(&mut c);
         win.present();
     }
 
@@ -111,7 +128,7 @@ impl App {
                 let before = self.last.iter().find(|l| l.0 == p.id).map_or(p.ticks, |l| l.1);
                 let cpu = p.ticks.wrapping_sub(before) * 100 / total;
                 let kind = if p.flags & abi::PROC_USER != 0 { ' ' } else { '*' };
-                format!("{:4} {:13}{kind}{:3}% {:5}K {}", p.id, p.name(), cpu.min(100), p.mem_kb, state_name(p))
+                format!("{}\t{}{kind}\t{}%\t{}K\t{}", p.id, p.name(), cpu.min(100), p.mem_kb, state_name(p))
             })
             .collect();
         let idle = 100 - (info.idle_ticks.wrapping_sub(self.idle_before()) * 100 / total).min(100);
@@ -165,7 +182,7 @@ fn run_dialog(d: &mut Dialog) -> Option<usize> {
     let (w, h) = d.size();
     let mut win = Window::open(w, h, "Tasks")?;
     loop {
-        d.draw(&mut win.surface());
+        d.draw(&mut win.canvas());
         win.present();
         let input = match win.event(None)? {
             Event::Close => return None,

@@ -187,13 +187,28 @@ pub fn time() -> u32 {
 }
 
 /// ウィンドウを開く（デスクトップでは枠付き、全画面のときは前面に出る）。負ならエラー
-pub fn win_open(w: u32, h: u32, title: &str) -> i32 {
-    syscall(nr::WIN_OPEN, w, h, title.as_ptr() as u32, title.len() as u32, 0)
+pub fn win_open(w: u32, h: u32, title: &str, flags: u32) -> i32 {
+    syscall(nr::WIN_OPEN, w, h, title.as_ptr() as u32, title.len() as u32, flags)
 }
 
 /// ウィンドウの中身全体を `buf`（w*h バイト）で書き換える
 pub fn win_blit(win: i32, buf: &[u8]) -> i32 {
     syscall(nr::WIN_BLIT, win as u32, buf.as_ptr() as u32, 0, 0, 0)
+}
+
+/// 32 ビットのウィンドウ（WIN_RGB32）の中身全体を `buf`（w*h 個の 0x00RRGGBB）で書き換える
+pub fn win_blit32(win: i32, buf: &[u32]) -> i32 {
+    syscall(nr::WIN_BLIT, win as u32, buf.as_ptr() as u32, 0, 0, 0)
+}
+
+/// フォント（kind は FONT_*）のバイト列を `buf` に写す。大きさを返す（buf が足りなければ写さない）
+pub fn font_data(kind: u32, buf: &mut [u8]) -> i32 {
+    syscall(nr::FONT_DATA, kind, buf.as_mut_ptr() as u32, buf.len() as u32, 0, 0)
+}
+
+/// 16x16 のアイコン（事前に掛けたアルファの 0xAARRGGBB）
+pub fn icon_data(name: &str, buf: &mut [u32; vibe_abi::ICON_SIZE * vibe_abi::ICON_SIZE]) -> i32 {
+    syscall(nr::ICON_DATA, name.as_ptr() as u32, name.len() as u32, buf.as_mut_ptr() as u32, 0, 0)
 }
 
 /// イベントを待つ。timeout_ms = 0 なら待たない、u32::MAX ならいつまでも
