@@ -2,7 +2,7 @@
 //!
 //! 明るい地に強調色 1 色（紫）。文字は黒ではなく濃い灰色（DECISIONS.md D-047）。
 //! ウィンドウ・メニュー・部品は縁を描かず、ウィンドウは 2 層の影で背景と、部品は薄い灰色の塗りで地と分ける。
-//! 灰色は少し温かい色（D-057、Aster のモックアップ）
+//! 灰色は少し温かい色（オーナーが用意したデザインのモックアップ「Aster」に合わせた。docs/plans/aster-look.md・D-057）
 
 use crate::backdrop::Circle;
 use crate::canvas::{Color, rgb};
