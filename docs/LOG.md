@@ -637,3 +637,10 @@
 - ktest `gfx_compose_speed`: 1 枚 16ms（ドックは測っていない）
 - 期待画像を作り直したもの（目で確かめた）: bar-menu, desktop-moved, desktop-terminal, files-images, fonts-fallback, terminals-edit, terminals-two, view-window-plasma, wallpaper-tile（大きさも変えた）。新しく dock-start, dock-hover, dock-open, dock-icons16
 - README のスクリーンショット: `tools/screenshots/desktop.scn` の並びを直し（ウィンドウの間を 16 ピクセル以上、ドックが見えるように）、`make screenshots` で撮り直した。D-055 のとおり、オーナーが確認するまでコミットしない
+
+## 2026-10-13 残っていた確認事項の整理
+
+- modern-look（M1〜M6）はこの日の朝に GitHub の PR #1 で main に合流していた（マージのコミット `85188d2`）が、文書に残っていなかったので反映した（D-067）
+- オーナーの答え（D-067）: aster-look の AI の判断（D-060〜D-062・D-064）は推奨のまま、D-043〜D-045 は確認済み、実機のネットワークカードは近い将来は決めない、見つけていた見た目の問題 6 つは今のまま
+- PLAN.md の現在地を「計画書はすべて完了」にし、古い数を今の値にした（アプリ 41 本、フロッピーの空き 552,960 バイト）
+- 合流した main で `make test` を流し直した
