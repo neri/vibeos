@@ -14,8 +14,10 @@
 #   make lzsa-bench  自作の LZSA と本家の圧縮後の大きさの表
 #   make lzsa-ref    本家の lzsa を GitHub から取ってきてビルドする（build/ext/lzsa。DECISIONS.md D-033）
 #   make size-report KERNEL.SYS の圧縮前後の大きさとフロッピーの空き
+#   make fonts    assets/fonts の .VFN を Noto のフォントから作り直す（make fonts-fetch で GitHub から取ってくる。tools/vibe-fontgen）
+#   make icons    assets/icons/ICONS.VIA を手で書いた SVG から作り直す（tools/vibe-icongen）
 #   make COMPRESS=0  カーネルとアプリを圧縮しないイメージを作る（ローダは印の無い KERNEL.SYS を
-#                    そのまま写し、カーネルは gzip でない ELF をそのまま読む）
+#                    そのまま写し、カーネルは gzip でない ELF をそのまま読む）。アプリは RAW_APPS だけ
 #   make clean
 
 BUILD   := build
@@ -59,7 +61,7 @@ SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 0x8000 に読み込む。中継バッファ（0x10000）の手前まで
 
-.PHONY: all run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref test-apps-gz lzsa-bench lzsa-ref size-report screenshots clean FORCE
+.PHONY: all fonts fonts-fetch icons run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref test-apps-gz lzsa-bench lzsa-ref size-report screenshots clean FORCE
 
 all: $(IMG)
 
@@ -173,22 +175,57 @@ $(APPS_GZ_STAMP): $(APPS_STAMP)
 	for f in $(APPS_DIR)/BIN/*.ELF; do gzip -9 -n -c $$f > $(APPS_GZ_DIR)/BIN/$$(basename $$f) || exit 1; done
 	touch $@
 
+# 圧縮しないイメージ（COMPRESS=0・vibeos-raw.img）に入れるアプリ。圧縮していないカーネルとアプリが動くかを
+# 確かめるだけなので、全部は入れない（フロッピーに入りきらないため。DECISIONS.md D-050）
+RAW_APPS := sh hello more edit calc mandel
+RAW_APPS_DIR := $(BUILD)/rootfs-apps-raw
+RAW_APPS_STAMP := $(RAW_APPS_DIR)/.stamp
+
+$(RAW_APPS_STAMP): $(APPS_STAMP)
+	rm -rf $(RAW_APPS_DIR)
+	mkdir -p $(RAW_APPS_DIR)/BIN
+	for a in $(RAW_APPS); do name=$$(echo $$a | tr a-z A-Z); cp $(APPS_DIR)/BIN/$$name.ELF $(RAW_APPS_DIR)/BIN/ || exit 1; done
+	touch $@
+
 ifeq ($(COMPRESS),1)
 APPS_IMG_DIR := $(APPS_GZ_DIR)
 APPS_IMG_STAMP := $(APPS_GZ_STAMP)
 else
-APPS_IMG_DIR := $(APPS_DIR)
-APPS_IMG_STAMP := $(APPS_STAMP)
+APPS_IMG_DIR := $(RAW_APPS_DIR)
+APPS_IMG_STAMP := $(RAW_APPS_STAMP)
 endif
 
-# ビルド時に生成してディスクに入れるもの（tools/mkassets）
+# ビルド時に生成してディスクに入れるもの（tools/mkassets）と、/SYSTEM/FONTS のフォント（assets/fonts。
+# フォントは COMPRESS に関係なくいつも gzip で入れる。DECISIONS.md D-047。許諾の OFL.TXT はそのまま）
 GEN_ROOTFS := $(BUILD)/rootfs-gen
 GEN_STAMP := $(GEN_ROOTFS)/.stamp
+FONT_FILES := $(wildcard assets/fonts/*.VFN)
 
-$(GEN_STAMP): $(shell find tools/mkassets -type f) | $(BUILD)
+$(GEN_STAMP): $(shell find tools/mkassets -type f) $(FONT_FILES) assets/fonts/OFL.TXT assets/icons/ICONS.VIA | $(BUILD)
 	rm -rf $(GEN_ROOTFS)
 	$(CARGO) run -q --release -p mkassets -- $(GEN_ROOTFS)
+	mkdir -p $(GEN_ROOTFS)/SYSTEM/FONTS
+	for f in $(FONT_FILES); do gzip -9 -n -c $$f > $(GEN_ROOTFS)/SYSTEM/FONTS/$$(basename $$f) || exit 1; done
+	cp assets/fonts/OFL.TXT $(GEN_ROOTFS)/SYSTEM/FONTS/
+	gzip -9 -n -c assets/icons/ICONS.VIA > $(GEN_ROOTFS)/SYSTEM/ICONS.VIA
 	touch $@
+
+# assets/icons/ICONS.VIA を手で書いた SVG（assets/icons/*.svg）から作り直す（tools/vibe-icongen）
+icons:
+	$(CARGO) build -q --release -p vibe-icongen
+	target/release/vibe-icongen assets/icons/ICONS.VIA assets/icons/*.svg
+
+# assets/fonts の .VFN を作り直す（ふだんのビルドでは使わない）。Noto のフォントは GitHub の公式の置き場所から
+# 版を決めて取ってくる（tools/fetch-fonts.sh。SHA-256 を確かめる。DECISIONS.md D-052）
+NOTO_DIR ?= $(BUILD)/ext/noto
+fonts-fetch:
+	tools/fetch-fonts.sh $(NOTO_DIR)
+
+fonts: fonts-fetch
+	$(CARGO) build -q --release -p vibe-fontgen
+	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Regular.ttf 13 assets/fonts/UI.VFN
+	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Bold.ttf 13 assets/fonts/UIBOLD.VFN
+	target/release/vibe-fontgen $(NOTO_DIR)/NotoSansMono-Regular.ttf 13 assets/fonts/MONO.VFN 8x16 12
 
 $(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(KERNEL_FILE) $(COMPRESS_STAMP) $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
 	$(call make-image,$@,$(KERNEL_FILE),$(APPS_IMG_DIR))
@@ -199,9 +236,9 @@ $(TEST_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(TEST_KERNEL_FILE) $(COMPRES
 $(FAULT_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(FAULT_KERNEL_FILE) $(COMPRESS_STAMP) $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
 	$(call make-image,$@,$(FAULT_KERNEL_FILE),$(APPS_IMG_DIR))
 
-# カーネルもアプリも圧縮しない（COMPRESS=0 と同じ中身）
-$(RAW_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(ROOTFS) $(GEN_STAMP) $(APPS_STAMP)
-	$(call make-image,$@,$(BUILD)/kernel.sys,$(APPS_DIR))
+# カーネルもアプリも圧縮しない（COMPRESS=0 と同じ中身。アプリは RAW_APPS だけ）
+$(RAW_IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(BUILD)/kernel.sys $(ROOTFS) $(GEN_STAMP) $(RAW_APPS_STAMP)
+	$(call make-image,$@,$(BUILD)/kernel.sys,$(RAW_APPS_DIR))
 
 # 圧縮したデータの途中（先頭から 40000 バイト目）を書き換える。元と変わったことも確かめる
 $(BUILD)/kernel-broken.vpk: $(BUILD)/kernel.vpk

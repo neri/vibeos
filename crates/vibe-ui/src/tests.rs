@@ -2,9 +2,10 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use vibe_gfx::Surface;
+use vibe_gfx::canvas::Canvas;
 
 use crate::dialog::{Dialog, wrap};
+use crate::dialog::{BUTTON_H, FIELD_H, MARGIN, line_h};
 use crate::draw::{FACE, FIELD, SELECT, TEXT};
 use crate::widget::ROW_H;
 use crate::*;
@@ -170,8 +171,8 @@ fn text_field_editing() {
 fn text_field_click_moves_cursor_and_respects_max_len() {
     let mut ui = Ui::new();
     let t = ui.add(Rect::new(10, 0, 100, 14), TextField::new("abcdef"));
-    // 文字は x = 10 + 3 から 8 ピクセルずつ。'c' と 'd' の間（13 + 16 + 8 = 37 付近）を押す
-    click(&mut ui, 13 + 3 * 8 - 2, 5, 0);
+    // 文字は x = 10 + 6 から 8 ピクセルずつ（フォントを渡していないので 8x8）。'c' と 'd' の間（16 + 24 = 40 付近）を押す
+    click(&mut ui, 16 + 3 * 8 - 2, 5, 0);
     if let Widget::TextField(f) = ui.widget_mut(t) {
         assert_eq!(f.cursor(), 3);
         f.max_len = 7;
@@ -184,8 +185,8 @@ fn text_field_click_moves_cursor_and_respects_max_len() {
 #[test]
 fn list_keyboard_selection_and_scrolling() {
     let mut ui = Ui::new();
-    // 高さ 54 → 5 行見える
-    let l = ui.add(Rect::new(0, 0, 100, 54), List::new(items(20)));
+    // 高さ 104 → 5 行見える（1 行 20）
+    let l = ui.add(Rect::new(0, 0, 100, 104), List::new(items(20)));
     assert_eq!(List::rows_in(ui.rect(l)), 5);
     assert_eq!(ui.handle(press(None, DOWN), 0), Some(Action::Selected(l, 0)));
     assert_eq!(ui.handle(press(None, DOWN), 0), Some(Action::Selected(l, 1)));
@@ -205,35 +206,35 @@ fn list_keyboard_selection_and_scrolling() {
 #[test]
 fn list_click_and_double_click() {
     let mut ui = Ui::new();
-    let l = ui.add(Rect::new(0, 0, 100, 54), List::new(items(3)));
-    // 2 行目（y = 2 + 10 .. 22）
-    assert_eq!(click(&mut ui, 20, 15, 100), vec![Action::Selected(l, 1)]);
-    assert_eq!(click(&mut ui, 20, 15, 120), vec![Action::Activated(l, 1)]);
+    let l = ui.add(Rect::new(0, 0, 100, 104), List::new(items(3)));
+    // 2 行目（y = 2 + 20 .. 42）
+    assert_eq!(click(&mut ui, 20, 30, 100), vec![Action::Selected(l, 1)]);
+    assert_eq!(click(&mut ui, 20, 30, 120), vec![Action::Activated(l, 1)]);
     // 間が空いたら 2 回のクリック
-    assert_eq!(click(&mut ui, 20, 15, 200), vec![Action::Selected(l, 1)]);
-    assert_eq!(click(&mut ui, 20, 15, 200 + DOUBLE_CLICK_TICKS + 1), vec![Action::Selected(l, 1)]);
+    assert_eq!(click(&mut ui, 20, 30, 200), vec![Action::Selected(l, 1)]);
+    assert_eq!(click(&mut ui, 20, 30, 200 + DOUBLE_CLICK_TICKS + 1), vec![Action::Selected(l, 1)]);
     // 違う項目なら 2 回目もただの選択
-    assert_eq!(click(&mut ui, 20, 5, 400), vec![Action::Selected(l, 0)]);
-    assert_eq!(click(&mut ui, 20, 25, 410), vec![Action::Selected(l, 2)]);
+    assert_eq!(click(&mut ui, 20, 10, 400), vec![Action::Selected(l, 0)]);
+    assert_eq!(click(&mut ui, 20, 50, 410), vec![Action::Selected(l, 2)]);
     // 項目の無い行
-    assert!(click(&mut ui, 20, 45, 500).is_empty());
+    assert!(click(&mut ui, 20, 90, 500).is_empty());
 }
 
 #[test]
 fn list_scrollbar() {
     let mut ui = Ui::new();
-    let l = ui.add(Rect::new(0, 0, 100, 54), List::new(items(20)));
-    // 溝は x = 88..98, y = 2..52。つまみは先頭で高さ 50 * 5 / 20 = 12
+    let l = ui.add(Rect::new(0, 0, 100, 104), List::new(items(20)));
+    // 溝は x = 88..98, y = 2..102。つまみは先頭で高さ 100 * 5 / 20 = 25
     // つまみより下の溝を押すと 1 画面進む
-    assert!(click(&mut ui, 92, 40, 0).is_empty());
+    assert!(click(&mut ui, 92, 80, 0).is_empty());
     assert_eq!(ui.list(l).top(), 5);
     // つまみより上を押すと戻る
     click(&mut ui, 92, 3, 0);
     assert_eq!(ui.list(l).top(), 0);
     // つまみをいちばん下までドラッグする
     ui.handle(mouse(92, 5, 1), 0);
-    ui.handle(mouse(92, 60, 1), 0);
-    ui.handle(mouse(92, 60, 0), 0);
+    ui.handle(mouse(92, 120, 1), 0);
+    ui.handle(mouse(92, 120, 0), 0);
     assert_eq!(ui.list(l).top(), 15);
     // 項目の上のクリックはスクロールバーの左側だけ
     assert_eq!(click(&mut ui, 20, 5, 0), vec![Action::Selected(l, 15)]);
@@ -242,7 +243,7 @@ fn list_scrollbar() {
 #[test]
 fn list_set_items_resets_selection() {
     let mut ui = Ui::new();
-    let l = ui.add(Rect::new(0, 0, 100, 54), List::new(items(20)));
+    let l = ui.add(Rect::new(0, 0, 100, 104), List::new(items(20)));
     ui.list_mut(l).select(12);
     assert_eq!(ui.list(l).top(), 8);
     ui.list_mut(l).set_items(items(2));
@@ -265,11 +266,11 @@ fn checkbox_toggles() {
 
 #[test]
 fn dialog_buttons_and_keys() {
-    let mut d = Dialog::yes_no(160, "Delete this file?");
+    let mut d = Dialog::yes_no(200, "Delete this file?");
     let (w, h) = d.size();
-    assert_eq!(w, 160);
+    assert_eq!(w, 200);
     // 文 1 行 + ボタン
-    assert_eq!(h, 8 + 10 + 8 + 16 + 8);
+    assert_eq!(h as i32, MARGIN + line_h() + MARGIN + BUTTON_H + MARGIN);
     assert_eq!(d.handle(press(Some('\n'), ENTER), 0), Some(0));
     assert_eq!(d.handle(press(None, ESCAPE), 0), Some(1));
     // "No" のボタンを押す
@@ -283,7 +284,7 @@ fn dialog_buttons_and_keys() {
 fn prompt_dialog_edits_text() {
     let mut d = Dialog::prompt(200, "Copy to:", "A.TXT", &["OK", "Cancel"]);
     // 文 1 行 + テキスト欄 + ボタン
-    assert_eq!(d.size().1, 8 + 10 + 8 + 14 + 8 + 16 + 8);
+    assert_eq!(d.size().1 as i32, MARGIN + line_h() + MARGIN + FIELD_H + MARGIN + BUTTON_H + MARGIN);
     assert_eq!(d.input(), "A.TXT");
     // テキスト欄にフォーカスがあり、最初の中身は選んだ状態。← で選択をやめて末尾を直す
     d.handle(press(None, LEFT), 0);
@@ -379,27 +380,29 @@ fn wrap_text() {
 
 #[test]
 fn draws_widgets() {
-    let mut buf = vec![FACE; 200 * 100];
-    let mut s = Surface::new(&mut buf, 200, 100);
+    let mut buf = vec![FACE; 200 * 160];
+    let mut c = Canvas::new(&mut buf, 200, 160);
     let mut ui = Ui::new();
-    let b = ui.add(Rect::new(2, 2, 40, 16), Button::new("OK"));
-    let t = ui.add(Rect::new(50, 2, 60, 14), TextField::new("hi"));
-    let l = ui.add(Rect::new(2, 30, 100, 54), List::new(items(20)));
-    let d = ui.add(Rect::new(120, 2, 70, 16), Label::new("123").align(Align::Right).display());
+    let b = ui.add(Rect::new(2, 2, 40, 20), Button::new("OK"));
+    let t = ui.add(Rect::new(50, 2, 60, 20), TextField::new("hi"));
+    let l = ui.add(Rect::new(2, 30, 100, 104), List::new(items(20)));
+    let d = ui.add(Rect::new(120, 2, 70, 20), Label::new("123").align(Align::Right).display());
     ui.list_mut(l).select(0);
     ui.set_focus(l);
-    ui.draw(&mut s);
-    let px = |s: &Surface, x, y| s.get(x, y).unwrap();
-    // ボタンの地・テキスト欄の地・選んだ行（フォーカスがあるので青）・表示欄の地
-    assert_eq!(px(&s, 5, 15), FACE);
-    assert_eq!(px(&s, 52, 4), FIELD);
-    assert_eq!(px(&s, 60, 33), SELECT);
-    assert_eq!(px(&s, 122, 4), FIELD);
+    ui.draw(&mut c);
+    let px = |c: &Canvas, x, y| c.get(x, y).unwrap();
+    // ボタンの地（白）・テキスト欄の地・選んだ行（フォーカスがあるので強調色）・表示欄の地
+    assert_eq!(px(&c, 6, 18), FIELD);
+    assert_eq!(px(&c, 54, 18), FIELD);
+    assert_eq!(px(&c, 60, 40), SELECT);
+    assert_eq!(px(&c, 124, 18), FIELD);
+    // 角の外は地のまま（角が丸い）
+    assert_eq!(px(&c, 2, 2), FACE);
     // 文字がどこかに描かれている
     let r = ui.rect(d);
-    let dark = (r.x..r.x + r.w).flat_map(|x| (r.y..r.y + r.h).map(move |y| (x, y))).any(|(x, y)| px(&s, x, y) == TEXT);
+    let dark = (r.x..r.x + r.w).flat_map(|x| (r.y..r.y + r.h).map(move |y| (x, y))).any(|(x, y)| px(&c, x, y) == TEXT);
     assert!(dark, "label text");
     // 一覧の 2 行目は選んでいないので白地
-    assert_eq!(px(&s, 60, 32 + ROW_H + 1), FIELD);
+    assert_eq!(px(&c, 60, 32 + ROW_H + 10), FIELD);
     let _ = (b, t);
 }

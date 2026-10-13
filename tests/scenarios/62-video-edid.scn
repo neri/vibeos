@@ -1,0 +1,18 @@
+# M1: video=auto ではモニタの本来の解像度（EDID）まで。QEMU の EDID を 1600x1200 にする
+qemu-arg -m
+qemu-arg 128M
+qemu-arg -global
+qemu-arg VGA.xres=1600
+qemu-arg -global
+qemu-arg VGA.yres=1200
+boot-config video=auto
+timeout 30
+wait-serial video limit: 1600x1200 (EDID)
+wait-serial video: 1600x1200x32
+wait-serial gui: desktop 1600x1200
+wait-serial VibeOS shell
+type hello
+key ret
+wait-serial primes below 20000: 2262
+expect-pixel 1590 1190 145 104 184
+serial-absent PANIC

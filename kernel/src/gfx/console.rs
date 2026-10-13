@@ -6,6 +6,9 @@
 //!
 //! 最初の端末（0 番のウィンドウ）は起動直後から使うので静的な領域に置く。ほかの端末はヒープに置く。
 //!
+//! 文字: デスクトップの端末（32 ビットのウィンドウ）は固定幅のなめらかなフォント（gfx::fonts::mono、
+//! 1 文字 8x16）、全画面（8 ビット）とフォントが無いときは 8x8 のビットマップのフォント。
+//!
 //! カーソルの左右移動（`\x08`, `ESC [ n D` / `C`）は行をまたいで前後の行へ回り込む。
 //! 行をまたいだ入力行の編集（シェル）を相対移動だけで書けるようにするため。
 //!
@@ -21,11 +24,11 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::{self, Write};
 
-use vibe_font::{FONT_8X8, Font};
+use vibe_font::{FONT_8X8, Font, VFont};
 use vibe_gfx::palette;
 use vibe_term::{Action, Parser, Sgr};
 
-use crate::gui::{self, SCREEN, Screen, WinId};
+use crate::gui::{self, SCREEN, Screen, WinId, WinPixels};
 use crate::sync::IrqMutex;
 use crate::task::sched;
 
@@ -38,12 +41,36 @@ const ANSI_TO_CGA: [u8; 8] = [0, 4, 2, 6, 1, 5, 3, 7];
 const DEFAULT_FG: u8 = palette::LIGHT_GRAY;
 const DEFAULT_BG: u8 = palette::BLACK;
 
+/// 端末の文字
+#[derive(Clone, Copy)]
+enum TermFont {
+    Bitmap(&'static Font),
+    /// 固定幅のなめらかなフォント（32 ビットのウィンドウだけ）
+    Smooth(&'static VFont<'static>),
+}
+
+impl TermFont {
+    fn width(&self) -> usize {
+        match self {
+            TermFont::Bitmap(f) => f.width,
+            TermFont::Smooth(f) => f.cell_width as usize,
+        }
+    }
+
+    fn height(&self) -> usize {
+        match self {
+            TermFont::Bitmap(f) => f.height,
+            TermFont::Smooth(f) => f.line_height as usize,
+        }
+    }
+}
+
 pub struct Terminal {
     /// 端末のウィンドウ（端末の番号としても使う）
     win: WinId,
     /// 人に見せる番号（1〜）。Alt+F1〜F4 で選ぶ
     number: usize,
-    font: &'static Font,
+    font: TermFont,
     cols: usize,
     rows: usize,
     /// 0..=cols。cols は「行末まで書いた（次の文字で改行する）」状態
@@ -74,7 +101,7 @@ impl Terminal {
         Terminal {
             win,
             number,
-            font: &FONT_8X8,
+            font: TermFont::Bitmap(&FONT_8X8),
             cols: 0,
             rows: 0,
             col: 0,
@@ -92,9 +119,13 @@ impl Terminal {
 
     /// 大きさをウィンドウに合わせ、先頭から書き始める（画面は消さない）
     fn fit(&mut self, screen: &Screen) {
+        self.font = match crate::gfx::fonts::mono() {
+            Some(f) if screen.window_is_rgb(self.win) => TermFont::Smooth(f),
+            _ => TermFont::Bitmap(&FONT_8X8),
+        };
         let (w, h) = screen.window_size(self.win).unwrap_or((0, 0));
-        self.cols = w / self.font.width;
-        self.rows = h / self.font.height;
+        self.cols = w / self.font.width();
+        self.rows = h / self.font.height();
         self.col = 0;
         self.row = 0;
         self.cursor_drawn = false;
@@ -292,7 +323,7 @@ impl Write for Writer<'_> {
 
 impl Terminal {
     fn cell_y(&self, row: usize) -> usize {
-        row * self.font.height
+        row * self.font.height()
     }
 
     fn apply(&mut self, screen: &mut Screen, a: Action) {
@@ -411,22 +442,38 @@ impl Terminal {
         if let Some(c) = self.grid.get_mut(row * self.cols + col) {
             *c = Cell { ch, fg: self.fg, bg: self.bg };
         }
-        let (x, y) = (col * self.font.width, self.cell_y(row));
-        if let Some(mut surf) = screen.window_surface(self.win) {
-            surf.draw_char(self.font, x as i32, y as i32, ch, self.fg, Some(self.bg));
+        let (x, y) = (col * self.font.width(), self.cell_y(row));
+        self.paint_char(screen, x, y, ch, self.fg, self.bg);
+        screen.mark_window_dirty(self.win, y, y + self.font.height());
+    }
+
+    /// 文字の枠 (x, y) に 1 文字描く（背景も塗る）
+    fn paint_char(&self, screen: &mut Screen, x: usize, y: usize, ch: char, fg: u8, bg: u8) {
+        let (x, y) = (x as i32, y as i32);
+        let (w, h) = (self.font.width() as i32, self.font.height() as i32);
+        let Some(px) = screen.window_pixels(self.win) else { return };
+        match (px, self.font) {
+            (WinPixels::P8(mut s), TermFont::Bitmap(f)) => s.draw_char(f, x, y, ch, fg, Some(bg)),
+            (WinPixels::P8(mut s), TermFont::Smooth(_)) => s.draw_char(&FONT_8X8, x, y, ch, fg, Some(bg)),
+            (WinPixels::P32(mut c, lut), TermFont::Bitmap(f)) => {
+                c.draw_char(f, x, y, ch, lut[fg as usize], Some(lut[bg as usize]))
+            }
+            (WinPixels::P32(mut c, lut), TermFont::Smooth(f)) => {
+                c.fill_rect(x, y, w, h, lut[bg as usize]);
+                c.draw_glyph(f, x, y, ch, lut[fg as usize]);
+            }
         }
-        screen.mark_window_dirty(self.win, y, y + self.font.height);
     }
 
     fn erase_cells(&mut self, screen: &mut Screen, row: usize, from: usize, to: usize) {
         if from >= to {
             return;
         }
-        let (w, h) = (self.font.width, self.font.height);
+        let (w, h) = (self.font.width(), self.font.height());
         let y = self.cell_y(row);
         self.blank_grid(row * self.cols + from, row * self.cols + to);
-        if let Some(mut surf) = screen.window_surface(self.win) {
-            surf.fill_rect((from * w) as i32, y as i32, ((to - from) * w) as i32, h as i32, self.bg);
+        if let Some(mut px) = screen.window_pixels(self.win) {
+            px.fill_rect((from * w) as i32, y as i32, ((to - from) * w) as i32, h as i32, self.bg);
         }
         screen.mark_window_dirty(self.win, y, y + h);
     }
@@ -437,8 +484,8 @@ impl Terminal {
         }
         let (y0, y1) = (self.cell_y(from), self.cell_y(to));
         self.blank_grid(from * self.cols, to * self.cols);
-        if let Some(mut surf) = screen.window_surface(self.win) {
-            surf.fill_rect(0, y0 as i32, (self.cols * self.font.width) as i32, (y1 - y0) as i32, self.bg);
+        if let Some(mut px) = screen.window_pixels(self.win) {
+            px.fill_rect(0, y0 as i32, (self.cols * self.font.width()) as i32, (y1 - y0) as i32, self.bg);
         }
         screen.mark_window_dirty(self.win, y0, y1);
     }
@@ -448,15 +495,15 @@ impl Terminal {
             self.row += 1;
             return;
         }
-        let h = self.font.height as i32;
+        let h = self.font.height() as i32;
         if !self.grid.is_empty() {
             self.grid.copy_within(self.cols.., 0);
             let n = self.grid.len();
             self.blank_grid(n - self.cols, n);
         }
         let (y0, y1) = (self.cell_y(0), self.cell_y(self.rows));
-        if let Some(mut surf) = screen.window_surface(self.win) {
-            surf.scroll_up(0, y0 as i32, (self.cols * self.font.width) as i32, (y1 - y0) as i32, h, self.bg);
+        if let Some(mut px) = screen.window_pixels(self.win) {
+            px.scroll_up(0, y0 as i32, (self.cols * self.font.width()) as i32, (y1 - y0) as i32, h, self.bg);
         }
         screen.mark_window_dirty(self.win, y0, y1);
     }
@@ -464,15 +511,15 @@ impl Terminal {
     /// カーソル（文字の下の 1 ピクセルの線）
     fn cursor_line(&self) -> (i32, i32, i32) {
         let col = self.col.min(self.cols - 1);
-        let x = (col * self.font.width) as i32;
-        let y = (self.cell_y(self.row) + self.font.height - 1) as i32;
-        (x, y, self.font.width as i32)
+        let x = (col * self.font.width()) as i32;
+        let y = (self.cell_y(self.row) + self.font.height() - 1) as i32;
+        (x, y, self.font.width() as i32)
     }
 
     fn show_cursor(&mut self, screen: &mut Screen) {
         let (x, y, w) = self.cursor_line();
-        if let Some(mut surf) = screen.window_surface(self.win) {
-            surf.hline(x, y, w, self.fg);
+        if let Some(mut px) = screen.window_pixels(self.win) {
+            px.hline(x, y, w, self.fg);
         }
         screen.mark_window_dirty(self.win, y as usize, y as usize + 1);
         self.cursor_drawn = true;
@@ -483,8 +530,8 @@ impl Terminal {
             return;
         }
         let (x, y, w) = self.cursor_line();
-        if let Some(mut surf) = screen.window_surface(self.win) {
-            surf.hline(x, y, w, self.bg);
+        if let Some(mut px) = screen.window_pixels(self.win) {
+            px.hline(x, y, w, self.bg);
         }
         screen.mark_window_dirty(self.win, y as usize, y as usize + 1);
         self.cursor_drawn = false;
@@ -503,11 +550,9 @@ impl Terminal {
     fn repaint_cell(&self, screen: &mut Screen, i: usize, inverted: bool) {
         let Some(c) = self.grid.get(i) else { return };
         let (fg, bg) = if inverted { (c.bg, c.fg) } else { (c.fg, c.bg) };
-        let (x, y) = ((i % self.cols) * self.font.width, self.cell_y(i / self.cols));
-        if let Some(mut surf) = screen.window_surface(self.win) {
-            surf.draw_char(self.font, x as i32, y as i32, c.ch, fg, Some(bg));
-        }
-        screen.mark_window_dirty(self.win, y, y + self.font.height);
+        let (x, y) = ((i % self.cols) * self.font.width(), self.cell_y(i / self.cols));
+        self.paint_char(screen, x, y, c.ch, fg, bg);
+        screen.mark_window_dirty(self.win, y, y + self.font.height());
     }
 
     fn paint_selection(&self, screen: &mut Screen, inverted: bool) {
@@ -555,8 +600,8 @@ impl Terminal {
         if self.grid.is_empty() {
             return;
         }
-        let col = (x.max(0) as usize / self.font.width).min(self.cols - 1);
-        let row = (y.max(0) as usize / self.font.height).min(self.rows - 1);
+        let col = (x.max(0) as usize / self.font.width()).min(self.cols - 1);
+        let row = (y.max(0) as usize / self.font.height()).min(self.rows - 1);
         let cell = row * self.cols + col;
         let left = buttons & 1 != 0;
         match (left, self.selecting) {

@@ -64,6 +64,20 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             fs::rename(&from, &to).map(|_| 0).map_err(process::errno_of)
         }
         nr::DETACH => process::detach_child(a).map(|_| 0),
+        nr::FONT_DATA => {
+            let data = crate::gfx::fonts::data(a).ok_or(err::ENOENT)?;
+            if c as usize >= data.len() {
+                copy_to_user(user, b, data)?;
+            }
+            Ok(data.len() as u32)
+        }
+        nr::ICON_DATA => {
+            let name = user_str(user, a, b)?;
+            let icon = crate::gfx::icons::get(&name).ok_or(err::ENOENT)?;
+            let bytes: alloc::vec::Vec<u8> = icon.iter().flat_map(|p| p.to_le_bytes()).collect();
+            copy_to_user(user, c, &bytes)?;
+            Ok(0)
+        }
         nr::TERM_OPEN => {
             let cmd = user_str(user, a, b)?;
             let cmd = (!cmd.trim().is_empty()).then_some(cmd);
@@ -234,21 +248,19 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
                 crate::gfx::wallpaper::clear();
                 return Ok(0);
             }
-            let (w, h) = {
-                let s = SCREEN.lock();
-                if s.mode() != gui::Mode::Desktop {
-                    return Err(err::EPERM);
-                }
-                s.wallpaper_size()
-            };
-            if b as usize != w * h {
+            if SCREEN.lock().mode() != gui::Mode::Desktop {
+                return Err(err::EPERM);
+            }
+            let fit = vibe_gfx::wallpaper::fit_from_code(d).ok_or(err::EINVAL)?;
+            let n = b.checked_mul(c).filter(|&n| n > 0 && n <= vibe_abi::WALLPAPER_MAX_PIXELS).ok_or(err::EINVAL)?;
+            if a % 4 != 0 {
                 return Err(err::EINVAL);
             }
-            check_user(user, a, b, false)?;
-            // SAFETY: 上で今のプロセスが読めるページだと確かめた
-            let pixels = unsafe { core::slice::from_raw_parts(a as *const u8, b as usize) }.to_vec();
+            check_user(user, a, n * 4, false)?;
+            // SAFETY: 上で今のプロセスが読めるページだと確かめた（4 バイトにそろっている）
+            let pixels = unsafe { core::slice::from_raw_parts(a as *const u32, n as usize) }.to_vec().into_boxed_slice();
             let mut s = SCREEN.lock();
-            s.set_wallpaper(Some(pixels.into_boxed_slice()));
+            s.set_wallpaper(Some(gui::Wallpaper { w: b as usize, h: c as usize, fit, pixels }));
             s.present();
             Ok(0)
         }
@@ -348,7 +360,17 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
                 // タイトルはプログラムの名前（拡張子を除く）
                 let name = sched::current_name();
                 let title = name.rsplit_once('.').map_or(name.as_str(), |(base, _)| base);
-                let id = s.create_window(APP_W, APP_H, title, Some(sched::current_id()), true, Some(sched::current_tty()));
+                let app = title.to_ascii_lowercase();
+                let id = s.create_window(
+                    APP_W,
+                    APP_H,
+                    title,
+                    Some(sched::current_id()),
+                    true,
+                    Some(sched::current_tty()),
+                    &app,
+                    false,
+                );
                 u.display = Some(id);
             }
             s.set_cursor_visible(a & vibe_abi::GFX_CURSOR != 0);
@@ -399,7 +421,11 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             }
             let title = user_str(user, c, d)?;
             let tty = Some(sched::current_tty());
-            let id = SCREEN.lock().create_window(w, h, &title, Some(sched::current_id()), false, tty);
+            // アイコンはプログラムの名前（小文字、拡張子を除く）から
+            let name = sched::current_name().to_ascii_lowercase();
+            let app = name.rsplit_once('.').map_or(name.as_str(), |(base, _)| base);
+            let rgb = e & vibe_abi::WIN_RGB32 != 0;
+            let id = SCREEN.lock().create_window(w, h, &title, Some(sched::current_id()), false, tty, app, rgb);
             user.lock().windows.push(id);
             SCREEN.lock().present();
             Ok(id)
@@ -407,12 +433,24 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
         nr::WIN_BLIT => {
             let id = own_window(user, a)?;
             let (w, h) = window_size(id).ok_or(err::EINVAL)?;
-            check_user(user, b, (w * h) as u32, false)?;
-            // SAFETY: 上で今のプロセスが読めるページだと確かめた
-            let src = unsafe { core::slice::from_raw_parts(b as *const u8, w * h) };
+            let rgb = SCREEN.lock().window_is_rgb(id);
+            check_user(user, b, (w * h * if rgb { 4 } else { 1 }) as u32, false)?;
             let mut s = SCREEN.lock();
-            if let Some(mut surf) = s.window_surface(id) {
-                surf.blit(0, 0, src, w, None);
+            match s.window_pixels(id) {
+                Some(gui::WinPixels::P8(mut surf)) if !rgb => {
+                    // SAFETY: 上で今のプロセスが読めるページだと確かめた
+                    let src = unsafe { core::slice::from_raw_parts(b as *const u8, w * h) };
+                    surf.blit(0, 0, src, w, None);
+                }
+                Some(gui::WinPixels::P32(mut c, _)) if rgb => {
+                    if b % 4 != 0 {
+                        return Err(err::EINVAL);
+                    }
+                    // SAFETY: 上で今のプロセスが読めるページだと確かめた（4 バイトにそろっている）
+                    let src = unsafe { core::slice::from_raw_parts(b as *const u32, w * h) };
+                    c.blit(0, 0, src, w);
+                }
+                _ => return Err(err::EINVAL),
             }
             s.mark_window_dirty(id, 0, h);
             s.present();
@@ -580,9 +618,7 @@ fn own_window(user: &UserRef, id: u32) -> Result<gui::WinId, i32> {
 }
 
 fn window_size(id: gui::WinId) -> Option<(usize, usize)> {
-    let mut s = SCREEN.lock();
-    let surf = s.window_surface(id)?;
-    Some((surf.width(), surf.height()))
+    SCREEN.lock().window_size(id)
 }
 
 fn check_user(user: &UserRef, addr: u32, len: u32, write: bool) -> Result<(), i32> {

@@ -1,15 +1,15 @@
 # Phase 34（デスクトップ D3）: 電卓。ボタンをマウスで押して計算し、結果が合う（画面とシリアル）。キーボードでも打てる
-# ウィンドウは中身 120,47 に 156x172。ボタンは 4 列 x 5 行で、列 c の左端は 128 + 36c（幅 32）、
-# 行 r の上端は 85 + 26r（高さ 22）
+# ウィンドウは中身 120,73 に 156x172。ボタンは 4 列 x 5 行で、列 c の左端は 128 + 36c（幅 32）、
+# 行 r の上端は 111 + 26r（高さ 22）
 timeout 30
-wait-serial gui: desktop 640x480
+wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
 type calc &
 key ret
 wait-serial calc: started
 sleep 300
-# 1 2 + 3 4 =（カーソル 320,240 → 144,174 → 180,174 → 252,174 → 216,174 → 144,148 → 252,202）
-mouse-move -176 -66
+# 1 2 + 3 4 =（カーソル 512,384 → 144,200 → 180,200 → 252,200 → 216,200 → 144,174 → 252,228）
+mouse-move -368 -184
 mouse-button left down
 mouse-button left up
 mouse-move 36 0
@@ -29,7 +29,7 @@ mouse-button left down
 mouse-button left up
 wait-serial calc: = 46
 sleep 300
-expect-screen calc-46 119 34 158 186
+expect-screen calc-46 119 48 158 198
 # キーボード: 7 / 2 Enter → 3.5、続けて * 4 = → 14
 type 7/2
 key ret
@@ -42,9 +42,9 @@ key ret
 wait-serial calc: = Error
 key esc
 sleep 300
-expect-screen calc-cleared 127 55 142 26
-# [x]（265〜273, 36〜44）で終わる（→ 269,40）
-mouse-move 17 -162
+expect-screen calc-cleared 127 81 142 26
+# [x]（254〜273, 49〜72）で終わる（→ 264,60）
+mouse-move 12 -168
 mouse-button left down
 mouse-button left up
 wait-serial calc: closed

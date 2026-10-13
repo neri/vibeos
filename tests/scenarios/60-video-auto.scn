@@ -1,0 +1,18 @@
+# M1: video=auto でモニタの EDID が無ければ 1024x768 まで（QEMU は EDID を返すので VGA.edid=off で消す）。
+# 32 ビットの画面でデスクトップが動く
+qemu-arg -global
+qemu-arg VGA.edid=off
+boot-config video=auto
+timeout 30
+wait-serial video limit: 1024x768 (no EDID)
+wait-serial video: 1024x768x32
+wait-serial paging: framebuffer
+wait-serial gui: desktop 1024x768
+wait-serial VibeOS shell
+type hello
+key ret
+wait-serial primes below 20000: 2262
+# 背景（右下）・上端のバー（右上）の色
+expect-pixel 1000 700 139 105 185
+expect-pixel 1020 9 244 245 248
+serial-absent PANIC

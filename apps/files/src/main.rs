@@ -18,7 +18,7 @@ use alloc::vec::Vec;
 
 use vibe_files::{Entry, Opener};
 use vibe_rt::abi::{self, DirEntry, KeyEvent, err, key};
-use vibe_rt::gfx::{Event, Window};
+use vibe_rt::gfx::{Event, Window32 as Window};
 use vibe_rt::{println, sys};
 use vibe_ui::dialog::Dialog;
 use vibe_ui::{Action, Button, Id, Input, Label, List, Rect, Ui};
@@ -42,10 +42,16 @@ struct App {
     folder: Id,
     dir: String,
     entries: Vec<Entry>,
+    /// 一覧のアイコン（名前 → 16x16）。起動時にカーネルから 1 回取る
+    icons: Vec<(&'static str, Option<&'static [u32]>)>,
 }
+
+/// 一覧に出すアイコン（vibe_files::icon_name が返す名前）
+const ICON_NAMES: [&str; 5] = ["folder", "file", "image", "script", "app"];
 
 fn main() -> i32 {
     let start = vibe_rt::args().nth(1).map(|p| vibe_files::resolve("/", p)).unwrap_or_else(|| String::from("/"));
+    vibe_ui::set_fonts(vibe_rt::gfx::font(vibe_rt::abi::FONT_UI), vibe_rt::gfx::font(vibe_rt::abi::FONT_BOLD));
     let Some(mut win) = Window::open(W, H, "Files") else {
         println!("files: cannot open a window");
         return 1;
@@ -74,23 +80,42 @@ fn main() -> i32 {
 impl App {
     fn new() -> App {
         let mut ui = Ui::new();
-        let path_label = ui.add(Rect::new(4, 4, W as i32 - 8, 12), Label::new("/"));
-        let list = ui.add(Rect::new(4, 20, W as i32 - 8, 160), List::new(Vec::new()));
-        let cells = Rect::new(4, 186, W as i32 - 8, 16).grid(5, 1, 4);
+        let path_label = ui.add(Rect::new(8, 4, W as i32 - 16, 20), Label::new("/"));
+        let list = ui.add(Rect::new(8, 26, W as i32 - 16, 144), List::new(Vec::new()));
+        // 名前と大きさ（右寄せ）の 2 列
+        ui.list_mut(list).set_columns(vec![(0, vibe_ui::Align::Left), (180, vibe_ui::Align::Right)]);
+        let cells = Rect::new(8, 176, W as i32 - 16, 24).grid(5, 1, 6);
         let open = ui.add(cells[0], Button::new("Open"));
         let copy = ui.add(cells[1], Button::new("Copy"));
         let rename = ui.add(cells[2], Button::new("Rename"));
         let delete = ui.add(cells[3], Button::new("Delete"));
         let folder = ui.add(cells[4], Button::new("Folder"));
-        let status = ui.add(Rect::new(4, 206, W as i32 - 8, 14), Label::new(""));
+        let status = ui.add(Rect::new(8, 202, W as i32 - 16, 20), Label::new(""));
         ui.set_focus(list);
-        App { ui, path_label, list, status, open, copy, rename, delete, folder, dir: String::from("/"), entries: Vec::new() }
+        let icons = ICON_NAMES
+            .iter()
+            .map(|&n| (n, vibe_rt::gfx::icon(n).map(|px| &*alloc::boxed::Box::leak(px.into_boxed_slice()))))
+            .collect();
+        App {
+            ui,
+            path_label,
+            list,
+            status,
+            open,
+            copy,
+            rename,
+            delete,
+            folder,
+            dir: String::from("/"),
+            entries: Vec::new(),
+            icons,
+        }
     }
 
     fn draw(&mut self, win: &mut Window) {
-        let mut s = win.surface();
-        s.clear(vibe_rt::gfx_lib::palette::LIGHT_GRAY);
-        self.ui.draw(&mut s);
+        let mut c = win.canvas();
+        c.clear(vibe_rt::gfx_lib::theme::FACE);
+        self.ui.draw(&mut c);
         win.present();
     }
 
@@ -108,7 +133,14 @@ impl App {
         self.entries = entries;
         self.ui.set_text(self.path_label, &self.dir.clone());
         let items = vibe_files::list_items(&self.dir, &self.entries);
+        let icon = |name: &str| self.icons.iter().find(|i| i.0 == name).and_then(|i| i.1);
+        let mut icons: Vec<Option<&'static [u32]>> = Vec::new();
+        if items.len() > self.entries.len() {
+            icons.push(icon("folder")); // ".."
+        }
+        icons.extend(self.entries.iter().map(|e| icon(vibe_files::icon_name(e))));
         self.ui.list_mut(self.list).set_items(items);
+        self.ui.list_mut(self.list).set_icons(icons);
         println!("files: dir {}", self.dir);
         true
     }
@@ -316,7 +348,7 @@ fn run_dialog(d: &mut Dialog) -> Option<usize> {
     let (w, h) = d.size();
     let mut win = Window::open(w, h, "Files")?;
     loop {
-        d.draw(&mut win.surface());
+        d.draw(&mut win.canvas());
         win.present();
         let input = match win.event(None)? {
             Event::Close => return None,

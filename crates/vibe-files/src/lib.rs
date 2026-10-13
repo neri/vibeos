@@ -106,9 +106,22 @@ pub fn sort_entries(entries: &mut [Entry]) {
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
 }
 
-/// 一覧に出す 1 行（名前は 12 文字の幅、フォルダは "<DIR>"、ファイルは大きさ）
+/// 一覧に出す 1 行（名前とタブと、ファイルなら大きさ。部品の一覧が列に分けて描く）
 pub fn list_line(e: &Entry) -> String {
-    if e.is_dir { format!("{:12}  <DIR>", e.name) } else { format!("{:12} {:>7}", e.name, e.size) }
+    if e.is_dir { format!("{}\t", e.name) } else { format!("{}\t{}", e.name, e.size) }
+}
+
+/// 一覧に出すアイコンの名前（/SYSTEM/ICONS.VIA の中の名前）
+pub fn icon_name(e: &Entry) -> &'static str {
+    if e.is_dir {
+        return "folder";
+    }
+    match e.name.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("BMP") => "image",
+        Some("SH") => "script",
+        Some("ELF") => "app",
+        _ => "file",
+    }
 }
 
 /// 一覧の項目: ルートでなければ先頭に ".."（親へ）を置く
@@ -179,8 +192,13 @@ mod tests {
         sort_entries(&mut v);
         let names: Vec<&str> = v.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["BIN", "DOCS", "ALPHA.BMP", "ZED.TXT"]);
-        assert_eq!(list_line(&v[0]), "BIN           <DIR>");
-        assert_eq!(list_line(&v[2]), "ALPHA.BMP      12345");
+        assert_eq!(list_line(&v[0]), "BIN\t");
+        assert_eq!(list_line(&v[2]), "ALPHA.BMP\t12345");
+        assert_eq!(icon_name(&v[0]), "folder");
+        assert_eq!(icon_name(&v[2]), "image");
+        assert_eq!(icon_name(&e("RUN.SH", false, 1)), "script");
+        assert_eq!(icon_name(&e("SH.ELF", false, 1)), "app");
+        assert_eq!(icon_name(&e("README.TXT", false, 1)), "file");
     }
 
     #[test]

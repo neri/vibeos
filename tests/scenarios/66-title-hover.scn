@@ -1,0 +1,28 @@
+# M4: タイトルバーのボタンにマウスを乗せると地の色が変わる（[x] は赤、[_] は灰色）。離れると戻る
+# clock のウィンドウは中身 120,73 に 136x156。[_] は 212〜231、[x] は 234〜253（タイトルバー y=49〜72、
+# ボタンの地は y=51〜68）。カーソルは 512,384 から
+timeout 30
+wait-serial gui: desktop 1024x768
+wait-serial VibeOS shell
+type clock &
+key ret
+wait-serial clock: started
+sleep 300
+# 乗せる前はタイトルバーの地
+expect-pixel 236 54 250 250 251
+expect-pixel 214 54 250 250 251
+# [x] に乗せる（→ 243,60）
+mouse-move -269 -324
+sleep 300
+expect-pixel 236 54 226 67 72
+expect-pixel 214 54 250 250 251
+# [_] に移る（→ 222,60）
+mouse-move -21 0
+sleep 300
+expect-pixel 236 54 250 250 251
+expect-pixel 214 54 222 224 230
+# 離れる（→ 222,200: 時計の中身）
+mouse-move 0 140
+sleep 300
+expect-pixel 214 54 250 250 251
+serial-absent PANIC

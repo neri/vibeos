@@ -126,6 +126,10 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     klog!("interrupts enabled");
     // フロッピーの初期化は割り込みを待つので、割り込みを許可してから
     drivers::fdc::init();
+    // なめらかなフォントとアイコン（デスクトップの飾り。ファイルシステムの後、デスクトップにする前。
+    // ネットワークより先に読む: DHCP の知らせが VIBEOS READY より前に出ないように）
+    gfx::fonts::load();
+    gfx::icons::load();
     // ネットワーク（BOOT.CFG を読むのでファイルシステムの後。アドレスは裏で DHCP がもらう）
     net::init();
 

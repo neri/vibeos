@@ -14,9 +14,10 @@
 ;   7. RAM ディスク上の FAT12 から KERNEL.SYS を探して KERNEL_ADDR にコピー。
 ;      先頭が "VPK1" なら圧縮したカーネル（crates/vibe-pack）: RAM ディスクの後ろの作業用の場所へ
 ;      写してから LZSA2 で KERNEL_ADDR へ展開し、BCJ を戻して CRC32 を確かめる
-;   8. 画面モードを決める: BOOT.CFG の video=640x480 / video=320x200（無ければ 640x480）。
-;      Shift キーを押していれば 320x200。640x480 は VESA（VBE 2.0 以上・リニアフレームバッファ・
-;      8 ビット）で探し、無ければ 320x200 のまま
+;   8. 画面モードを決める: VESA（VBE 2.0 以上・リニアフレームバッファ・32 ビット）のモードのうち、
+;      上限（BOOT.CFG の video=WxH、無ければモニタの EDID、読めなければ 1024x768）とメモリ（画面 1 枚が
+;      使用可能なメモリの 1/8 以下）に収まる一番大きいもの。無いとき・video=320x200・Shift キーを
+;      押していれば 320x200（モード 13h）
 ;   9. ブート情報構造体（BI）を埋め、プロテクトモードへ移ってカーネルへジャンプ
 ;      （EAX = BOOT_MAGIC, EBX = BI のアドレス）
 
@@ -43,6 +44,9 @@ VPK_CRC         equ 16                  ; u32
 VPK_MIN_HEADER  equ 20
 CRC_TABLE_SIZE  equ 1024
 COM1            equ 0x3F8
+; カーネルが扱える一番大きな画面（kernel/src/drivers/vga.rs の MAX_WIDTH / MAX_HEIGHT と同じ）
+MAX_SCREEN_W    equ 2560
+MAX_SCREEN_H    equ 1600
 
 ; 進み具合のバー（モード 13h の座標）
 BAR_X           equ 60
@@ -91,6 +95,7 @@ start:
     mov word [BI + BI_SCREEN_W], 320
     mov word [BI + BI_SCREEN_H], 200
     mov dword [BI + BI_PITCH], 320
+    mov dword [BI + BI_BPP], 8
     call choose_video
 
     mov si, msg_jump
@@ -1011,19 +1016,21 @@ crc32:
 ; 画面モード
 
 choose_video:
-    mov byte [want_640], 1              ; 既定は 640x480
+    mov byte [want_vbe], 1              ; 既定は VESA の 32 ビット（モダン）
+    mov word [cap_w], 0                 ; 0 = 上限はメモリとモニタで決める
     call read_boot_config
     mov ah, 0x02                        ; Shift キー（bit0 = 右, bit1 = 左）
     int 0x16
     test al, 0x03
     jz .no_shift
-    mov byte [want_640], 0
+    mov byte [want_vbe], 0
     mov si, msg_shift
     call print
 .no_shift:
-    cmp byte [want_640], 0
+    cmp byte [want_vbe], 0
     je .vga
-    call vbe_set_640x480
+    call video_limits
+    call vbe_set_best
     jnc .done
     mov si, msg_no_vbe
     call print
@@ -1032,11 +1039,160 @@ choose_video:
     call print
     ret
 .done:
-    mov si, msg_mode_640
+    mov si, msg_mode
+    call print
+    movzx eax, word [BI + BI_SCREEN_W]
+    call print_dec
+    mov al, 'x'
+    call putc
+    movzx eax, word [BI + BI_SCREEN_H]
+    call print_dec
+    mov si, msg_x32
     call print
     ret
 
-; BOOT.CFG の先頭（最大 511 バイト）に "video=320x200" があれば want_640 = 0、"video=640x480" なら 1
+; 画面の大きさの上限を決める（DESIGN.md §8.0）:
+;   cap_w x cap_h: BOOT.CFG の video=WxH。無ければモニタの本来の解像度（EDID）、読めなければ 1024x768
+;   mem_budget: 画面 1 枚（幅 x 高さ x 4）に使ってよいバイト数 = 使用可能なメモリの 1/8（640x480 はいつも可）
+video_limits:
+    cmp word [cap_w], 0
+    je .auto
+    mov si, msg_cap_config
+    jmp .cap_known
+.auto:
+    call read_edid
+    jc .no_edid
+    mov si, msg_cap_edid
+    jmp .cap_known
+.no_edid:
+    mov word [cap_w], 1024
+    mov word [cap_h], 768
+    mov si, msg_cap_default
+.cap_known:
+    ; ドライバが扱える一番大きな画面（kernel の vga::MAX_WIDTH / MAX_HEIGHT）を超えない
+    cmp word [cap_w], MAX_SCREEN_W
+    jbe .w_ok
+    mov word [cap_w], MAX_SCREEN_W
+.w_ok:
+    cmp word [cap_h], MAX_SCREEN_H
+    jbe .h_ok
+    mov word [cap_h], MAX_SCREEN_H
+.h_ok:
+    push si
+    mov si, msg_cap
+    call print
+    movzx eax, word [cap_w]
+    call print_dec
+    mov al, 'x'
+    call putc
+    movzx eax, word [cap_h]
+    call print_dec
+    pop si
+    call print
+
+    ; 使用可能なメモリ（E820 の種類 1 のうち 4GB より下）の合計
+    xor edx, edx
+    mov si, BI + BI_MMAP
+    mov cx, [BI + BI_MMAP_COUNT]
+.mem_loop:
+    jcxz .mem_done
+    cmp dword [si + 16], 1
+    jne .mem_next
+    cmp dword [si + 4], 0               ; 4GB より上は数えない
+    jne .mem_next
+    mov eax, [si + 8]
+    cmp dword [si + 12], 0
+    je .mem_len_ok
+    mov eax, 0xFFFFFFFF
+.mem_len_ok:
+    add edx, eax
+    jnc .mem_next
+    mov edx, 0xFFFFFFFF
+.mem_next:
+    add si, E820_ENTRY_SIZE
+    dec cx
+    jmp .mem_loop
+.mem_done:
+    shr edx, 3
+    cmp edx, 640 * 480 * 4
+    jae .budget_ok
+    mov edx, 640 * 480 * 4
+.budget_ok:
+    mov [mem_budget], edx
+    mov si, msg_budget
+    call print
+    mov eax, edx
+    shr eax, 10
+    call print_dec
+    mov si, msg_kb
+    call print
+    ret
+
+; VBE の DDC でモニタの EDID を読み、本来の解像度（詳細タイミングの 1 つ目）を cap_w x cap_h に入れる。
+; 読めない・形が正しくなければ CF = 1
+read_edid:
+    push es
+    xor ax, ax
+    mov es, ax
+    mov ax, 0x4F15                      ; DDC に対応しているか
+    xor bx, bx
+    xor cx, cx
+    xor di, di
+    int 0x10
+    cmp ax, 0x004F
+    jne .fail
+    mov ax, 0x4F15                      ; EDID の 0 番目のブロックを読む
+    mov bx, 1
+    xor cx, cx
+    xor dx, dx
+    mov di, edid_buf
+    int 0x10
+    cmp ax, 0x004F
+    jne .fail
+    cmp dword [edid_buf], 0xFFFFFF00    ; 見出し 00 FF FF FF FF FF FF 00
+    jne .fail
+    cmp dword [edid_buf + 4], 0x00FFFFFF
+    jne .fail
+    xor al, al                          ; 128 バイトの和が 0
+    mov si, edid_buf
+    mov cx, 128
+.sum:
+    add al, [si]
+    inc si
+    loop .sum
+    test al, al
+    jnz .fail
+    cmp word [edid_buf + 54], 0         ; ピクセルクロックが 0 なら詳細タイミングではない
+    je .fail
+    movzx ax, byte [edid_buf + 58]      ; 横: 56 の 8 ビット + 58 の上位 4 ビット
+    shr ax, 4
+    shl ax, 8
+    mov al, [edid_buf + 56]
+    mov [cap_w], ax
+    movzx ax, byte [edid_buf + 61]      ; 縦: 59 の 8 ビット + 61 の上位 4 ビット
+    shr ax, 4
+    shl ax, 8
+    mov al, [edid_buf + 59]
+    mov [cap_h], ax
+    cmp word [cap_w], 640               ; 640x480 はいつも使ってよい
+    jae .w_ok
+    mov word [cap_w], 640
+.w_ok:
+    cmp word [cap_h], 480
+    jae .ok
+    mov word [cap_h], 480
+.ok:
+    pop es
+    clc
+    ret
+.fail:
+    mov word [cap_w], 0
+    pop es
+    stc
+    ret
+
+; BOOT.CFG の先頭（最大 511 バイト）の "video=" を読む:
+;   video=320x200 → want_vbe = 0（レトロ）, video=WxH → cap_w x cap_h, video=auto や無ければそのまま
 read_boot_config:
     mov edi, config_name
     call find_root_file
@@ -1060,33 +1216,95 @@ read_boot_config:
     a32 rep movsb
     pop ecx
     mov byte [config_buf + ecx], 0
-    ; "video=" を探す
+    ; 行の頭の "video=" を探す（コメントの中のものは見ない）
     mov si, config_buf
+    mov bl, 10                          ; 前の文字（最初は行の頭とみなす）
 .scan:
     cmp byte [si], 0
     je .none
+    cmp bl, 10
+    jne .next
     push si
     mov di, key_video
     mov cx, 6
     repe cmpsb
     pop si
     je .match
+.next:
+    mov bl, [si]
     inc si
     jmp .scan
 .match:
     add si, 6
     cmp dword [si], '320x'
     jne .not320
-    mov byte [want_640], 0
+    mov byte [want_vbe], 0
+    ret
 .not320:
-    cmp dword [si], '640x'
+    call parse_dec
+    jc .none
+    cmp byte [si], 'x'
     jne .none
-    mov byte [want_640], 1
+    inc si
+    mov bx, ax
+    call parse_dec
+    jc .none
+    cmp bx, 640                         ; 640x480 より小さい上限は 640x480 にする
+    jae .cw
+    mov bx, 640
+.cw:
+    cmp ax, 480
+    jae .ch
+    mov ax, 480
+.ch:
+    mov [cap_w], bx
+    mov [cap_h], ax
 .none:
     ret
 
-; VESA で 640x480・8 ビット・リニアフレームバッファのモードを探して切り替える。だめなら CF = 1
-vbe_set_640x480:
+; SI の 10 進数を読んで AX に（SI は数字の後ろへ進む）。数字が無ければ CF = 1
+parse_dec:
+    xor ax, ax
+    xor cx, cx                          ; 読んだ桁数
+.loop:
+    movzx dx, byte [si]
+    sub dl, '0'
+    jb .end
+    cmp dl, 9
+    ja .end
+    imul ax, ax, 10
+    add ax, dx
+    inc si
+    inc cx
+    jmp .loop
+.end:
+    cmp cx, 1                           ; 桁が無ければ CF = 1
+    ret
+
+; EAX を 10 進で出力
+print_dec:
+    pushad
+    xor cx, cx
+    mov ebx, 10
+.div:
+    xor edx, edx
+    div ebx
+    push dx
+    inc cx
+    test eax, eax
+    jnz .div
+.out:
+    pop ax
+    add al, '0'
+    call putc
+    loop .out
+    popad
+    ret
+
+; VESA のモード一覧から「32 ビット・直接色（XRGB8888）・リニアフレームバッファ」で、cap_w x cap_h 以下・
+; 画面 1 枚が mem_budget 以下・フレームバッファが 16MB 以下（カーネルの装置のメモリの窓）のうち一番大きい
+; （幅 x 高さが最大の）ものに切り替える。無ければ CF = 1
+vbe_set_best:
     push es
     push fs
     xor ax, ax
@@ -1101,38 +1319,69 @@ vbe_set_640x480:
     jne .fail
     cmp word [vbe_info + 4], 0x0200
     jb .fail
+    mov word [best_mode], 0xFFFF
+    mov dword [best_area], 0
     mov si, [vbe_info + 14]             ; モード番号の一覧（far ポインタ）
+    mov [mode_list], si
     mov ax, [vbe_info + 16]
-    mov fs, ax
+    mov [mode_list + 2], ax
 .next_mode:
+    lfs si, [mode_list]
     mov cx, [fs:si]
     cmp cx, 0xFFFF
-    je .fail
-    add si, 2
-    push si
-    push fs
-    push cx
+    je .chosen
+    add word [mode_list], 2
+    mov [cur_mode], cx
     mov ax, 0x4F01
     mov di, mode_info
     int 0x10
-    pop cx
-    pop fs
-    pop si
     cmp ax, 0x004F
     jne .next_mode
     mov ax, [mode_info + 0]             ; 属性: 対応・カラー・グラフィックス・リニアフレームバッファ
     and ax, 0x0099
     cmp ax, 0x0099
     jne .next_mode
-    cmp word [mode_info + 18], 640
+    cmp byte [mode_info + 25], 32       ; 1 画素 32 ビット
     jne .next_mode
-    cmp word [mode_info + 20], 480
+    cmp byte [mode_info + 27], 6        ; 直接色
     jne .next_mode
-    cmp byte [mode_info + 25], 8        ; 1 画素 8 ビット
+    cmp dword [mode_info + 31], 0x08081008  ; R: 8 ビット・16 から, G: 8 ビット・8 から
     jne .next_mode
-    cmp byte [mode_info + 27], 4        ; パックドピクセル
+    cmp word [mode_info + 35], 0x0008   ; B: 8 ビット・0 から
     jne .next_mode
-    mov bx, cx
+    mov ax, [mode_info + 18]            ; 幅・高さが上限以下
+    cmp ax, [cap_w]
+    ja .next_mode
+    mov ax, [mode_info + 20]
+    cmp ax, [cap_h]
+    ja .next_mode
+    movzx eax, word [mode_info + 16]    ; フレームバッファ（1 行のバイト数 x 高さ）が 16MB 以下
+    movzx edx, word [mode_info + 20]
+    imul eax, edx
+    cmp eax, 0x1000000
+    ja .next_mode
+    movzx eax, word [mode_info + 18]    ; 画面 1 枚（幅 x 高さ x 4）がメモリの上限以下
+    imul eax, edx
+    mov ebx, eax
+    shl eax, 2
+    cmp eax, [mem_budget]
+    ja .next_mode
+    cmp ebx, [best_area]
+    jbe .next_mode
+    mov [best_area], ebx
+    mov ax, [cur_mode]
+    mov [best_mode], ax
+    jmp .next_mode
+.chosen:
+    mov cx, [best_mode]
+    cmp cx, 0xFFFF
+    je .fail
+    mov ax, 0x4F01                      ; 選んだモードの情報を読み直す
+    mov di, mode_info
+    int 0x10
+    cmp ax, 0x004F
+    jne .fail
+    mov bx, [best_mode]
     or bx, 0x4000                       ; リニアフレームバッファで
     mov ax, 0x4F02
     int 0x10
@@ -1142,8 +1391,11 @@ vbe_set_640x480:
     mov [BI + BI_VRAM_ADDR], eax
     movzx eax, word [mode_info + 16]    ; 1 行のバイト数
     mov [BI + BI_PITCH], eax
-    mov word [BI + BI_SCREEN_W], 640
-    mov word [BI + BI_SCREEN_H], 480
+    mov ax, [mode_info + 18]
+    mov [BI + BI_SCREEN_W], ax
+    mov ax, [mode_info + 20]
+    mov [BI + BI_SCREEN_H], ax
+    mov dword [BI + BI_BPP], 32
     mov byte [vbe_active], 1
     pop fs
     pop es
@@ -1215,9 +1467,16 @@ msg_kernel      db "kernel loaded, bytes: ", 0
 msg_kernel_packed db "kernel compressed, bytes: ", 0
 msg_jump        db "jumping to kernel", 13, 10, 0
 msg_shift       db "Shift is held: using 320x200", 13, 10, 0
-msg_no_vbe      db "VESA 640x480x8 is not available", 13, 10, 0
+msg_no_vbe      db "no 32-bit VESA mode", 13, 10, 0
 msg_mode_320    db "video: 320x200", 13, 10, 0
-msg_mode_640    db "video: 640x480", 13, 10, 0
+msg_mode        db "video: ", 0
+msg_x32         db "x32", 13, 10, 0
+msg_cap         db "video limit: ", 0
+msg_cap_config  db " (BOOT.CFG)", 13, 10, 0
+msg_cap_edid    db " (EDID)", 13, 10, 0
+msg_cap_default db " (no EDID)", 13, 10, 0
+msg_budget      db "video memory limit: ", 0
+msg_kb          db " KB", 13, 10, 0
 msg_crlf        db 13, 10, 0
 msg_error       db 13, 10, "LOADER ERROR: ", 0
 msg_a20_fail    db "cannot enable A20", 13, 10, 0
@@ -1231,7 +1490,7 @@ msg_bad_kernel  db "KERNEL.SYS is broken", 13, 10, 0
 
 boot_drive      db 0
 retries         db 0
-want_640        db 0
+want_vbe        db 0
 vbe_active      db 0
 chunk_sector    db 0
 chunk_head      db 0
@@ -1257,9 +1516,18 @@ unl_in_end      dd 0
 unl_out_start   dd 0
 unl_out_limit   dd 0
 unl_nibble      db 0
+; 画面モードを選ぶときの作業用
+cap_w           dw 0
+cap_h           dw 0
+cur_mode        dw 0
+best_mode       dw 0
+mode_list       dd 0
+best_area       dd 0
+mem_budget      dd 0
 
 ; VESA の情報・設定ファイルの読み込み先
 align 16
 vbe_info        times 512 db 0
 mode_info       times 256 db 0
+edid_buf        times 128 db 0
 config_buf      times 512 db 0

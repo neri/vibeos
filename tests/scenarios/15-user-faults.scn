@@ -29,7 +29,7 @@ wait-serial syscall 999 = -38
 type fault spin
 key ret
 wait-serial spinning
-expect-change 400 0 240 16 1500
+expect-change 760 0 264 24 1500
 key ctrl+c
 wait-serial [fault exited with -130]
 # それでもシェルは動いている

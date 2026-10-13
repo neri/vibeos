@@ -7,4 +7,4 @@ AI「はい」
 
 ----
 
-![640×480 のデスクトップ](docs/images/desktop.png)
+![1024×768 のデスクトップ](docs/images/desktop.png)

@@ -1,28 +1,29 @@
 # Phase 14/15: 640x480（VESA）ではデスクトップになり、320x200 のアプリはウィンドウ（1 倍）で動く。
 # マウスはウィンドウの中身の座標で届く
+boot-config video=640x480
 timeout 30
 wait-serial video: 640x480
 wait-serial paging: framebuffer
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
 sleep 200
-# お絵かきのウィンドウは最初の位置（中身の左上 120,47）に開く
+# お絵かきのウィンドウは最初の位置（中身の左上 120,73）に開く
 type paint
 key ret
 wait-serial paint: started
 sleep 300
-# カーソル（320,240）を (300,197) へ動かし、右へ 40 ドラッグ → 中身の (180,150)〜(220,150) に線
-mouse-move -20 -43
+# カーソル（320,240）を (300,223) へ動かし、右へ 40 ドラッグ → 中身の (180,150)〜(220,150) に線
+mouse-move -20 -17
 mouse-button left down
 mouse-move 20 0
 mouse-move 20 0
 mouse-button left up
 sleep 300
-expect-pixel 310 197 0 0 0
-expect-pixel 330 197 0 0 0
-expect-pixel 310 210 255 255 255
+expect-pixel 310 223 0 0 0
+expect-pixel 330 223 0 0 0
+expect-pixel 310 236 255 255 255
 # ウィンドウの外（背景）には描かれない
-expect-pixel 600 450 0 103 55
+expect-pixel 600 30 65 112 196
 key esc
 wait-serial paint: closed
 serial-absent PANIC

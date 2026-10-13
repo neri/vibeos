@@ -318,10 +318,10 @@ fn term(_: &mut AppHost, _: &[&str]) -> i32 {
 /// デスクトップの背景の画像: BMP を読んで標準のパレットに直し、背景の大きさに並べてカーネルに渡す
 fn wallpaper(_: &mut AppHost, args: &[&str]) -> i32 {
     use vibe_rt::gfx_lib::bmp::Bmp;
-    use vibe_rt::gfx_lib::{palette, wallpaper};
+    use vibe_rt::gfx_lib::wallpaper;
     const USAGE: &str = "usage: wallpaper file.bmp [tile|center] | none";
     if args[1..] == ["none"] {
-        sys::wallpaper_set(&[]);
+        sys::wallpaper_set(&[], 0, 0, 0);
         return 0;
     }
     let setting = args[1..].join(" ");
@@ -330,12 +330,11 @@ fn wallpaper(_: &mut AppHost, args: &[&str]) -> i32 {
         return 2;
     };
     let set = || -> Result<(), String> {
-        let (sw, sh) = sys::wallpaper_size().map_err(|_| String::from("only on the desktop"))?;
+        sys::wallpaper_size().map_err(|_| String::from("only on the desktop"))?;
         let data = vibe_rt::read_file(path).map_err(|e| String::from(err::name(e)))?;
         let bmp = Bmp::parse(&data).map_err(|e| format!("{e}"))?;
-        let pixels = bmp.to_standard_palette();
-        let out = wallpaper::compose(&pixels, bmp.width as usize, bmp.height as usize, sw, sh, fit, palette::DESKTOP_BG);
-        match sys::wallpaper_set(&out) {
+        let pixels = bmp.to_rgb32();
+        match sys::wallpaper_set(&pixels, bmp.width, bmp.height, wallpaper::fit_code(fit)) {
             0 => Ok(()),
             e => Err(String::from(err::name(-e))),
         }

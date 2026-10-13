@@ -4,16 +4,21 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use vibe_abi::key;
-use vibe_gfx::Surface;
+use vibe_gfx::canvas::{Canvas, Color};
 
-use crate::draw::{self, CHAR_W, FACE, FIELD, SELECT, SELECT_TEXT, SHADOW, TEXT, TEXT_DISABLED};
+use crate::draw::{
+    self, BUTTON_HOVER, BUTTON_PRESSED, Corners, FIELD, LINE, SELECT, SELECT_INACTIVE, SELECT_TEXT, TEXT, TEXT_DISABLED,
+    THUMB, Text,
+};
 use crate::{Action, Id, KeyEvent, Rect};
 
 /// 一覧の 1 行の高さ・スクロールバーの幅
-pub const ROW_H: i32 = 10;
+pub const ROW_H: i32 = 20;
 pub const SCROLLBAR_W: i32 = 10;
 /// テキスト欄・一覧の枠の内側の余白
-const PAD: i32 = 3;
+const PAD: i32 = 6;
+/// 一覧の項目のアイコンの大きさ
+const ICON: i32 = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Align {
@@ -35,10 +40,10 @@ pub enum Widget {
 pub struct Label {
     pub text: String,
     pub align: Align,
-    pub color: u8,
+    pub color: Color,
     /// 背景の色（None なら塗らない）
-    pub bg: Option<u8>,
-    /// へこんだ枠を付ける（電卓の表示など）
+    pub bg: Option<Color>,
+    /// 角の丸い枠を付ける（電卓の表示など）
     pub sunken: bool,
 }
 
@@ -52,7 +57,7 @@ impl Label {
         self
     }
 
-    /// 白地のへこんだ枠（表示欄）
+    /// 白地の角の丸い枠（表示欄）
     pub fn display(mut self) -> Label {
         self.bg = Some(FIELD);
         self.sunken = true;
@@ -133,19 +138,21 @@ impl TextField {
     }
 
     /// 幅 `w` の欄で、カーソルが見えるように左端を動かす
-    fn fit_scroll(&mut self, w: i32) {
-        let visible = visible_chars(w);
+    fn fit_scroll(&mut self, w: i32, t: Text) {
+        let room = (w - 2 * PAD).max(1);
         if self.cursor < self.scroll {
             self.scroll = self.cursor;
-        } else if self.cursor > self.scroll + visible {
-            self.scroll = self.cursor - visible;
+        }
+        while self.scroll < self.cursor && t.prefix_width(&self.text, self.cursor) - t.prefix_width(&self.text, self.scroll) > room {
+            self.scroll += 1;
         }
     }
 
     pub(crate) fn click(&mut self, rect: Rect, x: i32) {
         self.all_selected = false;
-        let col = ((x - rect.x - PAD + CHAR_W / 2) / CHAR_W).max(0) as usize;
-        self.cursor = (self.scroll + col).min(self.text.len());
+        let t = draw::text();
+        let rest: String = self.text.chars().skip(self.scroll).collect();
+        self.cursor = (self.scroll + t.index_at(&rest, x - rect.x - PAD)).min(self.text.len());
     }
 
     fn key(&mut self, id: Id, k: KeyEvent) -> KeyResult {
@@ -210,13 +217,14 @@ impl TextField {
     }
 }
 
-fn visible_chars(w: i32) -> usize {
-    ((w - 2 * PAD) / CHAR_W).max(1) as usize
-}
-
 /// 一覧（スクロールバー付き）
 pub struct List {
     items: Vec<String>,
+    /// 項目のアイコン（16x16 の事前に掛けたアルファの ARGB。無ければアイコンの場所を空けない）
+    icons: Vec<Option<&'static [u32]>>,
+    /// 列: 項目の文字をタブで分け、i 番目を (左端, 寄せ方) の列に描く（左端は文字の場所の左からの位置。
+    /// 列の右端は次の列の左端か、文字の場所の右端）。空なら 1 列
+    columns: Vec<(i32, Align)>,
     selected: Option<usize>,
     /// 一番上に見えている項目
     top: usize,
@@ -236,7 +244,7 @@ pub(crate) enum ListPress {
 
 impl List {
     pub fn new(items: Vec<String>) -> List {
-        List { items, selected: None, top: 0, rows: 1 }
+        List { items, icons: Vec::new(), columns: Vec::new(), selected: None, top: 0, rows: 1 }
     }
 
     pub fn items(&self) -> &[String] {
@@ -246,8 +254,19 @@ impl List {
     /// 項目を置き換える（選択と表示位置は先頭に戻す）
     pub fn set_items(&mut self, items: Vec<String>) {
         self.items = items;
+        self.icons.clear();
         self.selected = if self.items.is_empty() { None } else { Some(0) };
         self.top = 0;
+    }
+
+    /// 列（項目の文字をタブで分けたもの）の (左端, 寄せ方)。左端は文字の場所の左端から
+    pub fn set_columns(&mut self, columns: Vec<(i32, Align)>) {
+        self.columns = columns;
+    }
+
+    /// 項目のアイコン（`items` と同じ順。`set_items` で消える）
+    pub fn set_icons(&mut self, icons: Vec<Option<&'static [u32]>>) {
+        self.icons = icons;
     }
 
     pub fn selected(&self) -> Option<usize> {
@@ -421,100 +440,125 @@ impl Widget {
         }
     }
 
-    pub(crate) fn draw(&self, s: &mut Surface, r: Rect, focused: bool, pressed: bool) {
+    /// 描く。`hover` はマウスが乗っている（ボタンを押していない）とき
+    pub(crate) fn draw(&self, c: &mut Canvas, r: Rect, focused: bool, pressed: bool, hover: bool, k: &Corners) {
+        let t = draw::text();
         match self {
             Widget::Label(l) => {
-                if let Some(bg) = l.bg {
-                    s.fill_rect(r.x, r.y, r.w, r.h, bg);
-                }
                 if l.sunken {
-                    draw::bevel(s, r, false);
+                    draw::frame(c, r, k, l.bg.unwrap_or(FIELD), LINE);
+                } else if let Some(bg) = l.bg {
+                    c.fill_rect(r.x, r.y, r.w, r.h, bg);
                 }
                 let lines: Vec<&str> = l.text.split('\n').collect();
-                let total = lines.len() as i32 * draw::LINE_H;
-                let mut y = r.y + (r.h - total) / 2 + 1;
+                let lh = t.height() + 2;
+                let total = lines.len() as i32 * lh;
+                let mut y = r.y + (r.h - total) / 2;
+                let inner = Rect::new(r.x + PAD, 0, r.w - 2 * PAD, lh);
                 for line in lines {
-                    draw::text_aligned(s, r.inset(PAD), y, line, l.align, l.color);
-                    y += draw::LINE_H;
+                    t.draw_in(c, Rect::new(inner.x, y, inner.w, lh), line, l.align, l.color);
+                    y += lh;
                 }
             }
             Widget::Button(b) => {
-                s.fill_rect(r.x, r.y, r.w, r.h, FACE);
-                let inner = if focused {
-                    s.rect(r.x, r.y, r.w, r.h, TEXT);
-                    r.inset(1)
+                let bg = if !b.enabled {
+                    FIELD
+                } else if pressed {
+                    BUTTON_PRESSED
+                } else if hover {
+                    BUTTON_HOVER
                 } else {
-                    r
+                    FIELD
                 };
-                draw::bevel(s, inner, !pressed);
-                let shift = pressed as i32;
-                let color = if b.enabled { TEXT } else { TEXT_DISABLED };
-                let y = r.y + (r.h - draw::CHAR_H) / 2 + shift;
-                draw::text_aligned(s, Rect::new(r.x + shift, r.y, r.w, r.h), y, &b.text, Align::Center, color);
-            }
-            Widget::TextField(t) => {
-                s.fill_rect(r.x, r.y, r.w, r.h, FIELD);
-                draw::bevel(s, r, false);
-                let mut t2 =
-                    TextField { text: String::new(), cursor: t.cursor, scroll: t.scroll, max_len: t.max_len, all_selected: false };
-                t2.fit_scroll(r.w);
-                let visible = visible_chars(r.w);
-                let shown: String = t.text.chars().skip(t2.scroll).take(visible).collect();
-                let y = r.y + (r.h - draw::CHAR_H) / 2;
-                if t.all_selected && focused {
-                    s.fill_rect(r.x + PAD - 1, y - 1, shown.len() as i32 * CHAR_W + 2, draw::CHAR_H + 2, SELECT);
-                    draw::text(s, r.x + PAD, y, &shown, SELECT_TEXT);
-                } else {
-                    draw::text(s, r.x + PAD, y, &shown, TEXT);
+                draw::frame(c, r, k, bg, LINE);
+                if focused {
+                    draw::focus_ring(c, r, k);
                 }
-                if focused && !t.all_selected {
-                    let cx = r.x + PAD + (t.cursor - t2.scroll) as i32 * CHAR_W;
-                    s.vline(cx.min(r.x + r.w - 2), y - 1, draw::CHAR_H + 2, TEXT);
+                let color = if b.enabled { TEXT } else { TEXT_DISABLED };
+                t.draw_in(c, r, &b.text, Align::Center, color);
+            }
+            Widget::TextField(f) => {
+                draw::frame(c, r, k, FIELD, LINE);
+                if focused {
+                    draw::focus_ring(c, r, k);
+                }
+                let mut f2 = TextField {
+                    text: f.text.clone(),
+                    cursor: f.cursor,
+                    scroll: f.scroll,
+                    max_len: f.max_len,
+                    all_selected: false,
+                };
+                f2.fit_scroll(r.w, t);
+                let rest: String = f.text.chars().skip(f2.scroll).collect();
+                let n = t.fit(&rest, r.w - 2 * PAD);
+                let shown: String = rest.chars().take(n).collect();
+                let top = r.y + (r.h - t.height()) / 2;
+                if f.all_selected && focused {
+                    c.fill_rect(r.x + PAD - 1, top, t.width(&shown) + 2, t.height(), SELECT_INACTIVE);
+                }
+                t.draw(c, r.x + PAD, top, &shown, TEXT);
+                if focused && !f.all_selected {
+                    let cx = r.x + PAD + t.prefix_width(&rest, f.cursor - f2.scroll);
+                    c.vline(cx.min(r.x + r.w - 3), top + 1, t.height() - 2, TEXT);
                 }
             }
             Widget::List(l) => {
-                s.fill_rect(r.x, r.y, r.w, r.h, FIELD);
-                draw::bevel(s, r, false);
+                draw::frame(c, r, k, FIELD, LINE);
                 let rows = List::rows_in(r);
                 let top = l.top.min(l.items.len().saturating_sub(rows));
                 let scroll = l.items.len() > rows;
-                let text_w = r.w - 4 - if scroll { SCROLLBAR_W } else { 0 };
+                let text_w = r.w - 4 - if scroll { SCROLLBAR_W + 2 } else { 0 };
                 for (row, i) in (top..l.items.len()).take(rows).enumerate() {
                     let y = r.y + 2 + row as i32 * ROW_H;
                     let color = if l.selected == Some(i) {
-                        s.fill_rect(r.x + 2, y, text_w, ROW_H, if focused { SELECT } else { SHADOW });
-                        SELECT_TEXT
+                        let bg = if focused { SELECT } else { SELECT_INACTIVE };
+                        c.fill_round_rect(r.x + 3, y + 1, text_w - 2, ROW_H - 2, &k.outer, bg, 255);
+                        if focused { SELECT_TEXT } else { TEXT }
                     } else {
                         TEXT
                     };
-                    let room = ((text_w - 4) / CHAR_W).max(0) as usize;
-                    let name: String = l.items[i].chars().take(room).collect();
-                    draw::text(s, r.x + 4, y + 1, &name, color);
+                    let mut x = r.x + PAD;
+                    if let Some(icon) = l.icons.get(i).copied().flatten() {
+                        c.blit_alpha(x, y + (ROW_H - ICON) / 2, icon, ICON as usize);
+                        x += ICON + 6;
+                    }
+                    let area = Rect::new(x, y, r.x + text_w - PAD - x, ROW_H);
+                    if l.columns.is_empty() {
+                        t.draw_in(c, area, &l.items[i], Align::Left, color);
+                    } else {
+                        for (n, part) in l.items[i].split('\t').enumerate().take(l.columns.len()) {
+                            let (x0, align) = l.columns[n];
+                            let x1 = l.columns.get(n + 1).map_or(area.w, |c| c.0 - 4);
+                            t.draw_in(c, Rect::new(area.x + x0, y, x1 - x0, ROW_H), part, align, color);
+                        }
+                    }
                 }
                 if scroll {
                     let (track, ty, th) = scrollbar_geometry(r, l.items.len(), rows, top);
-                    s.fill_rect(track.x, track.y, track.w, track.h, SHADOW);
-                    let thumb = Rect::new(track.x, ty, track.w, th);
-                    s.fill_rect(thumb.x, thumb.y, thumb.w, thumb.h, FACE);
-                    draw::bevel(s, thumb, true);
+                    // 細いつまみ（溝は描かない。押せる所は溝の幅いっぱい）
+                    c.fill_round_rect(track.x + 2, ty + 1, track.w - 4, th - 2, &k.outer, THUMB, 255);
                 }
                 if focused && l.selected.is_none() {
-                    s.rect(r.x + 2, r.y + 2, text_w, ROW_H, TEXT);
+                    c.round_rect(r.x + 3, r.y + 3, text_w - 2, ROW_H - 2, &k.outer, SELECT);
                 }
             }
-            Widget::Checkbox(c) => {
-                let bx = Rect::new(r.x, r.y + (r.h - 10) / 2, 10, 10);
-                s.fill_rect(bx.x, bx.y, bx.w, bx.h, FIELD);
-                draw::bevel(s, bx, false);
-                if c.checked {
-                    s.line(bx.x + 2, bx.y + 5, bx.x + 4, bx.y + 7, TEXT);
-                    s.line(bx.x + 4, bx.y + 7, bx.x + 7, bx.y + 2, TEXT);
+            Widget::Checkbox(cb) => {
+                let bx = Rect::new(r.x, r.y + (r.h - 14) / 2, 14, 14);
+                if cb.checked {
+                    c.fill_round_rect(bx.x, bx.y, bx.w, bx.h, &k.outer, SELECT, 255);
+                    // チェックの印（白、2 ピクセルの太さ）
+                    for d in 0..2 {
+                        c.line(bx.x + 3, bx.y + 7 + d, bx.x + 5, bx.y + 9 + d, SELECT_TEXT);
+                        c.line(bx.x + 5, bx.y + 9 + d, bx.x + 10, bx.y + 4 + d, SELECT_TEXT);
+                    }
+                } else {
+                    draw::frame(c, bx, k, FIELD, LINE);
                 }
-                let y = r.y + (r.h - draw::CHAR_H) / 2;
-                let end = draw::text(s, r.x + 14, y, &c.text, TEXT);
                 if focused {
-                    s.hline(r.x + 14, y + draw::CHAR_H, end - r.x - 14, TEXT);
+                    draw::focus_ring(c, bx, k);
                 }
+                t.draw_in(c, Rect::new(r.x + 20, r.y, r.w - 20, r.h), &cb.text, Align::Left, TEXT);
             }
         }
     }

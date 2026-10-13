@@ -13,14 +13,18 @@
 //! 描画は各ウィンドウのバッファに行い、`present` で書き換えた行だけを重ね合わせて VRAM に送る。
 //! マウスカーソルは重ね合わせのときに上に描く。全画面では、前面が端末なら一番上の行にステータスバーを出す。
 //!
-//! パレット: 全画面では前面のウィンドウの独自のパレットを VGA にそのまま設定する。デスクトップでは
-//! 他のウィンドウの色が変わらないよう VGA は標準のパレットのまま、独自のパレットを持つウィンドウの
-//! 中身は重ね合わせるときに標準のパレットの近い色に置き換える。
+//! 色: デスクトップは 32 ビットの画面（VESA の直接色）だけで、重ね合わせも 32 ビット（0x00RRGGBB）で
+//! 行う。上端のバー・タイトルバー・メニュー・端末の中身は 32 ビットで描く（文字はなめらかなフォント。
+//! gfx::fonts）。アプリのウィンドウ・背景のバッファは 8 ビット（パレットの色番号）で、重ね合わせるときに
+//! 「色番号 → 32 ビットの色」の表で直す（独自のパレットを持つウィンドウはその表で）。
+//! 全画面（320x200・モード 13h）は 8 ビットのまま、前面のウィンドウの独自のパレットを VGA にそのまま
+//! 設定する。
 //!
 //! 入力: キーはフォーカスのあるウィンドウ（全画面では前面）に、マウスはその中の座標にして届ける。
 //! ウィンドウの持ち主はそれぞれのキューから読む（`read_key` / `poll_mouse`）。
 
 mod bar;
+mod deco;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -29,10 +33,11 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use vibe_font::FONT_8X8;
-use vibe_gfx::{Surface, palette};
+use vibe_gfx::canvas::{self, Canvas};
+use vibe_gfx::{Surface, palette, theme};
 use vibe_keyboard::{KeyCode, KeyEvent, Modifiers};
 
-use crate::drivers::vga::{self, MAX_HEIGHT, MAX_WIDTH};
+use crate::drivers::vga::{self, MAX_WIDTH};
 use crate::sync::{BootCell, IrqMutex};
 use crate::task::sched::TaskId;
 use crate::task::wait::WaitQueue;
@@ -43,18 +48,21 @@ pub type WinId = u32;
 pub const CONSOLE: WinId = 0;
 
 /// タイトルバーの高さ・デスクトップの上端のバーの高さ
-pub const TITLE_H: usize = 12;
-pub const BAR_H: usize = 10;
+pub const TITLE_H: usize = 24;
+pub const BAR_H: usize = 24;
 /// 全画面のときのステータスバーの高さ（1 行）
 pub const FS_BAR_H: usize = 8;
-const CLOSE_W: usize = 9;
-pub const DESKTOP_BG: u8 = palette::DESKTOP_BG;
-const BORDER: u8 = palette::LIGHT_GRAY;
-const TITLE_ACTIVE: u8 = palette::BLUE;
-const TITLE_INACTIVE: u8 = palette::DARK_GRAY;
-/// 端末のウィンドウの大きさ（文字数）。左下に置き、上をアプリのウィンドウのために空ける
-const TERMINAL_COLS: usize = 64;
-const TERMINAL_ROWS: usize = 32;
+/// タイトルバーのボタン（[_]・[x]）の幅と、右端・ボタンどうしの間
+const BUTTON_W: usize = 20;
+const BUTTON_GAP: usize = 2;
+/// デスクトップの端末のウィンドウの大きさ（文字数）。左下に置く
+const TERMINAL_COLS: usize = 80;
+const TERMINAL_ROWS: usize = 25;
+/// 最初の端末（コンソール）の、全画面のときの一番大きな大きさ。バッファは起動直後から使うので静的な
+/// 領域（8 ビット）に置く。画面がこれより大きければ、起動直後とパニックのときの全画面のコンソールは
+/// 左上のこの大きさだけを使う。デスクトップでは最初の端末も 32 ビットのバッファをヒープから取る
+const CONSOLE_MAX_W: usize = 640;
+const CONSOLE_MAX_H: usize = 480;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -86,11 +94,72 @@ const NO_KEY: KeyEvent = KeyEvent {
     ch: None,
 };
 
+/// デスクトップの背景の画像（0x00RRGGBB の w × h と並べ方）
+pub struct Wallpaper {
+    pub w: usize,
+    pub h: usize,
+    pub fit: vibe_gfx::wallpaper::Fit,
+    pub pixels: Box<[u32]>,
+}
+
+/// ウィンドウの中身のバッファ
+enum Pixels {
+    /// 最初の端末の静的な領域（8 ビット。起動直後・全画面・パニックのとき）
+    Static,
+    /// 8 ビット（色番号）
+    P8(Box<[u8]>),
+    /// 32 ビット（0x00RRGGBB。デスクトップの端末）
+    P32(Box<[u32]>),
+}
+
+/// ウィンドウの中身に描くためのもの。`P32` の表は色番号 → 32 ビットの色（色番号で描くときに使う）
+pub enum WinPixels<'a> {
+    P8(Surface<'a>),
+    P32(Canvas<'a>, &'a [u32; 256]),
+}
+
+impl WinPixels<'_> {
+    pub fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u8) {
+        match self {
+            WinPixels::P8(s) => s.fill_rect(x, y, w, h, color),
+            WinPixels::P32(c, lut) => c.fill_rect(x, y, w, h, lut[color as usize]),
+        }
+    }
+
+    pub fn hline(&mut self, x: i32, y: i32, w: i32, color: u8) {
+        self.fill_rect(x, y, w, 1, color);
+    }
+
+    pub fn scroll_up(&mut self, x: i32, y: i32, w: i32, h: i32, dy: i32, fill: u8) {
+        match self {
+            WinPixels::P8(s) => s.scroll_up(x, y, w, h, dy, fill),
+            WinPixels::P32(c, lut) => c.scroll_up(x, y, w, h, dy, lut[fill as usize]),
+        }
+    }
+
+    /// 8x8 のビットマップのフォントで文字列を描く
+    pub fn draw_text8(&mut self, x: i32, y: i32, text: &str, fg: u8, bg: Option<u8>) {
+        match self {
+            WinPixels::P8(s) => {
+                s.draw_text(&FONT_8X8, x, y, text, fg, bg);
+            }
+            WinPixels::P32(c, lut) => {
+                c.draw_text(&FONT_8X8, x, y, text, lut[fg as usize], bg.map(|b| lut[b as usize]));
+            }
+        }
+    }
+}
+
+/// ウィンドウの中身の 1 行
+enum Row<'a> {
+    P8(&'a [u8]),
+    P32(&'a [u32]),
+}
+
 struct Window {
     w: usize,
     h: usize,
-    /// None ならコンソール（静的な領域）
-    buf: Option<Box<[u8]>>,
+    pixels: Pixels,
     /// 中身の左上の画面上の位置（デスクトップのとき）
     x: i32,
     y: i32,
@@ -99,11 +168,14 @@ struct Window {
     /// [x] で持ち主のプロセスを止める（gfx_open の画面）
     kill_on_close: bool,
     closable: bool,
-    titlebar: Vec<u8>,
+    /// タイトルバー（32 ビット、幅 × TITLE_H）
+    titlebar: Vec<u32>,
+    /// タイトルバー・上端のバーのボタンに出すアイコン（16x16）
+    icon: Option<&'static [u32]>,
     /// 独自のパレット（全画面で前に出ている間だけ使う）
     palette: Option<Box<[[u8; 3]; 256]>>,
-    /// 独自のパレットの色 → 標準のパレットの近い色（デスクトップで重ね合わせるときに使う）
-    remap: Option<Box<[u8; 256]>>,
+    /// 独自のパレットの色番号 → 32 ビットの色（デスクトップで重ね合わせるときに使う）
+    lut: Option<Box<[u32; 256]>>,
     /// アプリが忙しい間に打たれたキーも落とさないよう、押す・離すで 128 打鍵分
     keys: Ring<KeyEvent, 256>,
     mouse: Ring<MouseEvent, 64>,
@@ -168,8 +240,13 @@ enum Part {
     Client,
 }
 
-static CONSOLE_BUF: BootCell<[u8; MAX_WIDTH * MAX_HEIGHT]> = BootCell::new([0; MAX_WIDTH * MAX_HEIGHT]);
-static BAR_BUF: BootCell<[u8; MAX_WIDTH * BAR_H]> = BootCell::new([0; MAX_WIDTH * BAR_H]);
+static CONSOLE_BUF: BootCell<[u8; CONSOLE_MAX_W * CONSOLE_MAX_H]> =
+    BootCell::new([0; CONSOLE_MAX_W * CONSOLE_MAX_H]);
+/// 全画面のステータスバー（8 ビット。デスクトップの上端のバーは `Screen::bar`）
+static BAR_BUF: BootCell<[u8; MAX_WIDTH * FS_BAR_H]> = BootCell::new([0; MAX_WIDTH * FS_BAR_H]);
+/// 重ね合わせの 1 行（8 ビットと 32 ビット）。画面の幅が大きいとスタックに置けないので静的な領域に
+static ROW8: BootCell<[u8; MAX_WIDTH]> = BootCell::new([0; MAX_WIDTH]);
+static ROW32: BootCell<[u32; MAX_WIDTH]> = BootCell::new([0; MAX_WIDTH]);
 
 pub struct Screen {
     mode: Mode,
@@ -201,8 +278,20 @@ pub struct Screen {
     /// バーを描き直す
     bar_dirty: bool,
     menu: Option<bar::Menu>,
-    /// デスクトップの背景の画像（バーの下の全体、画面の幅 × (高さ − BAR_H)）
-    wallpaper: Option<Box<[u8]>>,
+    /// デスクトップの背景の画像（1 行ずつ並べる）
+    wallpaper: Option<Box<Wallpaper>>,
+    /// 標準のパレットの色番号 → 32 ビットの色
+    std_lut: [u32; 256],
+    /// デスクトップの端末の色番号 → 32 ビットの色（0〜15 を今風の配色に替えたもの。theme::TERMINAL）
+    term_lut: [u32; 256],
+    /// デスクトップの上端のバー（32 ビット、画面の幅 × BAR_H）
+    bar: Vec<u32>,
+    /// 角の丸み・影の表とカーソル（デスクトップにするときに作る）
+    deco: Option<Box<deco::Deco>>,
+    /// マウスが乗っているタイトルバーのボタン
+    hover: Option<(WinId, Part)>,
+    /// 最後にマウスの動きを届けたウィンドウ（出たときに知らせる）
+    mouse_in: Option<WinId>,
 }
 
 /// 画面。コンソール（gfx::console の CONSOLE）と両方取るときはコンソールを先に取ること
@@ -229,6 +318,12 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     bar_dirty: false,
     menu: None,
     wallpaper: None,
+    std_lut: [0; 256],
+    term_lut: [0; 256],
+    bar: Vec::new(),
+    deco: None,
+    hover: None,
+    mouse_in: None,
 });
 
 /// キー・マウス・閉じる要求が届いたら起こされる
@@ -239,8 +334,11 @@ pub fn init() {
     let mut s = SCREEN.lock();
     s.width = vga::width();
     s.height = vga::height();
-    s.console_w = s.width;
-    s.console_h = s.height - FS_BAR_H;
+    s.std_lut = palette::lut32(&palette::standard());
+    s.term_lut = s.std_lut;
+    s.term_lut[..16].copy_from_slice(&theme::TERMINAL);
+    s.console_w = s.width.min(CONSOLE_MAX_W);
+    s.console_h = (s.height - FS_BAR_H).min(CONSOLE_MAX_H);
     s.console_y = FS_BAR_H;
     s.cursor_x = (s.width / 2) as i32;
     s.cursor_y = (s.height / 2) as i32;
@@ -255,7 +353,7 @@ pub fn init() {
 pub fn init_windows() {
     let mut s = SCREEN.lock();
     let (w, h) = (s.console_w, s.console_h);
-    let mut win = new_window(w, h, None, "Terminal 1", None, false, false);
+    let mut win = new_window(w, h, Pixels::Static, "Terminal 1", None, false, false);
     win.y = s.console_y as i32;
     win.terminal = true;
     win.tty = Some(CONSOLE);
@@ -263,27 +361,32 @@ pub fn init_windows() {
     s.order.push(CONSOLE);
 }
 
-/// 画面が広ければデスクトップにする（スケジューラが動いた後に呼ぶ）。したら true
+/// 32 ビットの画面ならデスクトップにする（スケジューラが動いた後に呼ぶ）。したら true
 pub fn start_desktop() -> bool {
     let mut s = SCREEN.lock();
-    if s.width < 640 || s.height < 400 {
+    if vga::bpp() != 32 || s.width < 640 || s.height < 400 {
         return false;
     }
     s.mode = Mode::Desktop;
-    let (cw, ch) = (TERMINAL_COLS * FONT_8X8.width, TERMINAL_ROWS * FONT_8X8.height);
-    s.console_w = cw.min(s.width - 2);
-    s.console_h = ch.min(s.height - BAR_H - TITLE_H - 2);
-    let (cw, ch) = (s.console_w, s.console_h);
+    let (cw, ch) = s.desktop_terminal_size();
+    s.console_w = cw;
+    s.console_h = ch;
     let y = (s.height - ch - 8) as i32;
     s.console_y = y as usize;
+    let bg = s.term_lut[palette::BLACK as usize];
+    let width = s.width;
+    s.bar = vec![0; width * BAR_H];
+    s.deco = Some(Box::new(deco::Deco::new()));
     if let Some(c) = s.windows.get_mut(&CONSOLE) {
+        c.icon = crate::gfx::icons::get("terminal");
         c.w = cw;
         c.h = ch;
         c.x = 8;
         c.y = y;
         c.closable = false;
+        // デスクトップの端末は 32 ビット（なめらかな文字）
+        c.pixels = Pixels::P32(vec![bg; cw * ch].into_boxed_slice());
     }
-    s.surface().clear(palette::BLACK);
     s.refresh_titlebars();
     s.cursor_visible = true;
     s.bar_dirty = true;
@@ -301,7 +404,7 @@ pub fn mode() -> Mode {
 fn new_window(
     w: usize,
     h: usize,
-    buf: Option<Box<[u8]>>,
+    pixels: Pixels,
     title: &str,
     owner: Option<TaskId>,
     kill_on_close: bool,
@@ -310,7 +413,7 @@ fn new_window(
     Window {
         w,
         h,
-        buf,
+        pixels,
         x: 0,
         y: 0,
         title: String::from(title),
@@ -318,8 +421,9 @@ fn new_window(
         kill_on_close,
         closable,
         titlebar: Vec::new(),
+        icon: None,
         palette: None,
-        remap: None,
+        lut: None,
         keys: Ring::new(NO_KEY),
         mouse: Ring::new(MouseEvent { x: 0, y: 0, buttons: 0 }),
         close_requested: false,
@@ -335,12 +439,9 @@ impl Screen {
         self.mode
     }
 
-    /// コンソールの画面（端末の中身）
+    /// コンソールの静的な領域（全画面のときの端末の中身。パニックの画面もここに描く）
     pub fn surface(&mut self) -> Surface<'_> {
-        let (w, h) = (self.console_w, self.console_h);
-        // SAFETY: CONSOLE_BUF は SCREEN のロックの中でだけ触る
-        let buf = unsafe { &mut (&mut *CONSOLE_BUF.as_ptr())[..w * h] };
-        Surface::new(buf, w, h)
+        static_surface(self.console_w, self.console_h)
     }
 
     /// コンソールの大きさ（ピクセル）
@@ -353,12 +454,9 @@ impl Screen {
         self.mark_window_dirty(CONSOLE, y0, y1);
     }
 
-    /// ステータスバー（デスクトップでは上端のバー、全画面では一番上の行）に描く
+    /// 全画面のステータスバー（一番上の行）に描く。デスクトップの上端のバーは gui が描く（`set_status_text`）
     pub fn draw_status_bar(&mut self, draw: impl FnOnce(&mut Surface)) {
-        let h = match self.mode {
-            Mode::Desktop => BAR_H,
-            Mode::Fullscreen => FS_BAR_H,
-        };
+        let h = FS_BAR_H;
         let w = self.width;
         // SAFETY: BAR_BUF は SCREEN のロックの中でだけ触る
         let bar = unsafe { &mut (&mut *BAR_BUF.as_ptr())[..w * h] };
@@ -367,7 +465,9 @@ impl Screen {
     }
 
     /// ウィンドウを作って前に出す。`kill_on_close` なら [x] で持ち主を止め、そうでなければ閉じる要求のイベントを届ける。
-    /// `tty` は属する端末（作ったプロセスの端末）
+    /// `tty` は属する端末（作ったプロセスの端末）、`app` はアイコンを選ぶアプリの名前（小文字、拡張子なし）。
+    /// `rgb` なら中身は 32 ビット
+    #[allow(clippy::too_many_arguments)]
     pub fn create_window(
         &mut self,
         w: usize,
@@ -376,11 +476,15 @@ impl Screen {
         owner: Option<TaskId>,
         kill_on_close: bool,
         tty: Option<WinId>,
+        app: &str,
+        rgb: bool,
     ) -> WinId {
-        let id = self.add_window(w, h, title, owner, kill_on_close);
+        let id = self.add_window_with(w, h, title, owner, kill_on_close, rgb);
         if let Some(win) = self.windows.get_mut(&id) {
             win.tty = tty;
+            win.icon = crate::gfx::icons::for_app(app);
         }
+        self.refresh_titlebars();
         id
     }
 
@@ -391,8 +495,9 @@ impl Screen {
             Mode::Fullscreen => (self.width, self.height - FS_BAR_H),
             Mode::Desktop => self.desktop_terminal_size(),
         };
-        let id = self.add_window(w, h, title, None, false);
+        let id = self.add_window_with(w, h, title, None, false, self.mode == Mode::Desktop);
         if let Some(win) = self.windows.get_mut(&id) {
+            win.icon = crate::gfx::icons::get("terminal");
             win.terminal = true;
             win.tty = Some(id);
             if self.mode == Mode::Fullscreen {
@@ -402,16 +507,34 @@ impl Screen {
         id
     }
 
+    /// デスクトップの端末の中身の大きさ（ピクセル）。文字の枠は端末のフォント（無ければ 8x8）から
     fn desktop_terminal_size(&self) -> (usize, usize) {
-        let (cw, ch) = (TERMINAL_COLS * FONT_8X8.width, TERMINAL_ROWS * FONT_8X8.height);
-        (cw.min(self.width - 2), ch.min(self.height - BAR_H - TITLE_H - 2))
+        let (fw, fh) = match crate::gfx::fonts::mono() {
+            Some(f) => (f.cell_width as usize, f.line_height as usize),
+            None => (FONT_8X8.width, FONT_8X8.height),
+        };
+        let (cw, ch) = (TERMINAL_COLS * fw, TERMINAL_ROWS * fh);
+        (cw.min(self.width - 2), ch.min(self.height - BAR_H - TITLE_H - 2 - 8))
     }
 
-    fn add_window(&mut self, w: usize, h: usize, title: &str, owner: Option<TaskId>, kill_on_close: bool) -> WinId {
+    /// `rgb` なら中身は 32 ビット、そうでなければ 8 ビット
+    fn add_window_with(
+        &mut self,
+        w: usize,
+        h: usize,
+        title: &str,
+        owner: Option<TaskId>,
+        kill_on_close: bool,
+        rgb: bool,
+    ) -> WinId {
         self.next_id += 1; // 0 はコンソールなので 1 から
         let id = self.next_id;
-        let buf = vec![palette::BLACK; w * h].into_boxed_slice();
-        let mut win = new_window(w, h, Some(buf), title, owner, kill_on_close, true);
+        let pixels = if rgb {
+            Pixels::P32(vec![self.term_lut[palette::BLACK as usize]; w * h].into_boxed_slice())
+        } else {
+            Pixels::P8(vec![palette::BLACK; w * h].into_boxed_slice())
+        };
+        let mut win = new_window(w, h, pixels, title, owner, kill_on_close, true);
         if self.mode == Mode::Desktop {
             // 少しずつずらして置く
             let n = (self.placed % 8) as i32;
@@ -440,13 +563,33 @@ impl Screen {
         self.focus_changed();
     }
 
+    /// 8 ビットのウィンドウの中身（32 ビットのウィンドウなら None。`window_pixels` を使う）
     pub fn window_surface(&mut self, id: WinId) -> Option<Surface<'_>> {
-        if id == CONSOLE {
-            return Some(self.surface());
+        match self.window_pixels(id)? {
+            WinPixels::P8(s) => Some(s),
+            WinPixels::P32(..) => None,
         }
-        let win = self.windows.get_mut(&id)?;
-        let (w, h) = (win.w, win.h);
-        win.buf.as_mut().map(|b| Surface::new(b, w, h))
+    }
+
+    /// ウィンドウの中身（8 ビットか 32 ビット）
+    pub fn window_pixels(&mut self, id: WinId) -> Option<WinPixels<'_>> {
+        let (std_lut, term_lut) = (&self.std_lut, &self.term_lut);
+        let (cw, ch) = (self.console_w, self.console_h);
+        match self.windows.get_mut(&id) {
+            Some(win) => {
+                let (w, h) = (win.w, win.h);
+                // 端末は今風の 16 色、ほかは標準のパレット
+                let lut = if win.terminal { term_lut } else { std_lut };
+                Some(match &mut win.pixels {
+                    Pixels::Static => WinPixels::P8(static_surface(cw, ch)),
+                    Pixels::P8(b) => WinPixels::P8(Surface::new(b, w, h)),
+                    Pixels::P32(b) => WinPixels::P32(Canvas::new(b, w, h), lut),
+                })
+            }
+            // まだ登録していないコンソール（起動直後）
+            None if id == CONSOLE => Some(WinPixels::P8(static_surface(cw, ch))),
+            None => None,
+        }
     }
 
     /// ウィンドウ `id` の中身の行 [y0, y1) を書き換えたことを記録する
@@ -466,10 +609,9 @@ impl Screen {
         }
     }
 
-    /// デスクトップの背景の画像を変える（None で単色に戻す）。大きさは `wallpaper_size`
-    pub fn set_wallpaper(&mut self, pixels: Option<Box<[u8]>>) {
-        let (w, h) = self.wallpaper_size();
-        self.wallpaper = pixels.filter(|p| p.len() == w * h);
+    /// デスクトップの背景の画像を変える（None でグラデーションに戻す）
+    pub fn set_wallpaper(&mut self, wallpaper: Option<Wallpaper>) {
+        self.wallpaper = wallpaper.filter(|w| w.pixels.len() == w.w * w.h).map(Box::new);
         let h = self.height;
         self.mark_rows(0, h);
     }
@@ -477,6 +619,11 @@ impl Screen {
     /// 背景の画像の大きさ（バーの下の全体）
     pub fn wallpaper_size(&self) -> (usize, usize) {
         (self.width, self.height - BAR_H)
+    }
+
+    /// ウィンドウの中身が 32 ビットか
+    pub fn window_is_rgb(&self, id: WinId) -> bool {
+        self.windows.get(&id).is_some_and(|w| matches!(w.pixels, Pixels::P32(_)))
     }
 
     /// ウィンドウの中身の大きさ
@@ -520,12 +667,7 @@ impl Screen {
                 *slot = [c[0] & 0x3F, c[1] & 0x3F, c[2] & 0x3F];
             }
         }
-        let std = palette::standard();
-        let remap = win.remap.get_or_insert_with(|| Box::new(core::array::from_fn(|i| i as u8)));
-        for i in start..(start + colors.len()).min(256) {
-            let [r, g, b] = pal[i];
-            remap[i] = palette::nearest(&std, r << 2, g << 2, b << 2);
-        }
+        win.lut = Some(Box::new(palette::lut32(pal)));
         let h = self.height;
         self.mark_rows(0, h);
         if self.focused() == Some(id) {
@@ -554,7 +696,7 @@ impl Screen {
 
     fn mark_cursor_rows(&mut self) {
         let y = self.cursor_y.max(0) as usize;
-        self.mark_rows(y, y + CURSOR_SHAPE.len());
+        self.mark_rows(y, y + CURSOR_SHAPE.len().max(deco::CURSOR_H));
     }
 
     fn mark_rows(&mut self, y0: usize, y1: usize) {
@@ -648,8 +790,10 @@ impl Screen {
             return;
         }
         let focused = self.focused();
+        let hover = self.hover;
         for (&id, win) in self.windows.iter_mut() {
-            render_titlebar(win, Some(id) == focused);
+            let part = hover.filter(|h| h.0 == id).map(|h| h.1);
+            render_titlebar(win, Some(id) == focused, part);
         }
     }
 
@@ -666,7 +810,7 @@ impl Screen {
                 continue;
             }
             if y < w.y {
-                let on = |bx: Option<i32>| bx.is_some_and(|bx| x >= w.x + bx && x < w.x + bx + CLOSE_W as i32);
+                let on = |bx: Option<i32>| bx.is_some_and(|bx| x >= w.x + bx && x < w.x + bx + BUTTON_W as i32);
                 if on(w.close_box_x()) {
                     return Some((id, Part::Close));
                 }
@@ -683,11 +827,13 @@ impl Screen {
     fn move_window(&mut self, id: WinId, x: i32, y: i32) {
         let (sw, sh) = (self.width as i32, self.height as i32);
         let Some(win) = self.windows.get_mut(&id) else { return };
-        let old = (win.y - TITLE_H as i32 - 1, win.y + win.h as i32 + 1);
+        // 影の分も描き直す
+        let m = deco::SHADOW_MARGIN;
+        let old = (win.y - TITLE_H as i32 - 1 - m, win.y + win.h as i32 + 1 + m);
         // タイトルバーが上端のバーの下に、少なくとも一部が画面に残るようにする
         win.x = x.clamp(-(win.w as i32) + 40, sw - 40);
         win.y = y.clamp((BAR_H + TITLE_H + 1) as i32, sh - 4);
-        let new = (win.y - TITLE_H as i32 - 1, win.y + win.h as i32 + 1);
+        let new = (win.y - TITLE_H as i32 - 1 - m, win.y + win.h as i32 + 1 + m);
         for (a, b) in [old, new] {
             self.mark_rows(a.max(0) as usize, b.max(0) as usize);
         }
@@ -696,6 +842,9 @@ impl Screen {
     /// 入力スレッドから: マウスが (x, y)（画面の座標）にあり、ボタンが `buttons`
     fn on_mouse(&mut self, x: i32, y: i32, buttons: u8) -> Option<MouseAction> {
         self.set_cursor(x, y);
+        if self.mode == Mode::Desktop {
+            self.update_hover(x, y, buttons);
+        }
         let left = buttons & 1 != 0;
         let was_left = self.buttons & 1 != 0;
         self.buttons = buttons;
@@ -764,6 +913,15 @@ impl Screen {
             Some((id, Part::Client)) if self.focused() == Some(id) => Some(id),
             _ => None,
         });
+        // マウスがウィンドウから出たら、前のウィンドウに (-1, -1) を届ける（部品の「乗っている」を消すため）
+        if self.mouse_in != target {
+            if let Some(w) = self.mouse_in.and_then(|old| self.windows.get_mut(&old)) {
+                if !w.terminal {
+                    push_mouse(w, MouseEvent { x: -1, y: -1, buttons: 0 });
+                }
+            }
+            self.mouse_in = target;
+        }
         let mut action = None;
         if let Some(id) = target {
             if let Some(w) = self.windows.get_mut(&id) {
@@ -784,6 +942,28 @@ impl Screen {
             self.capture = None;
         }
         action
+    }
+
+    /// マウスが乗っているタイトルバーのボタンが変わったら、そのタイトルバーを描き直す
+    fn update_hover(&mut self, x: i32, y: i32, buttons: u8) {
+        let hover = match self.hit(x, y) {
+            Some((id, p @ (Part::Close | Part::Minimize))) if buttons == 0 && self.drag.is_none() && self.menu.is_none() => {
+                Some((id, p))
+            }
+            _ => None,
+        };
+        if hover == self.hover {
+            return;
+        }
+        let old = core::mem::replace(&mut self.hover, hover);
+        let focused = self.focused();
+        for (id, _) in [old, hover].into_iter().flatten() {
+            let Some(w) = self.windows.get_mut(&id) else { continue };
+            let part = hover.filter(|h| h.0 == id).map(|h| h.1);
+            render_titlebar(w, focused == Some(id), part);
+            let (top, bottom) = ((w.y - TITLE_H as i32).max(0) as usize, w.y.max(0) as usize);
+            self.mark_rows(top, bottom);
+        }
     }
 
     /// [x] が押された。gfx_open の画面なら持ち主のプロセスを、端末ならその端末のプロセスを止める
@@ -846,17 +1026,19 @@ impl Screen {
     /// パニックのとき: 全画面のコンソールに戻す
     pub fn panic_takeover(&mut self) {
         self.mode = Mode::Fullscreen;
-        self.console_w = self.width;
-        self.console_h = self.height;
+        self.console_w = self.width.min(CONSOLE_MAX_W);
+        self.console_h = self.height.min(CONSOLE_MAX_H);
         self.console_y = 0;
         self.order.retain(|&w| w != CONSOLE);
         self.order.push(CONSOLE);
         self.cursor_visible = false;
+        let (cw, ch) = (self.console_w, self.console_h);
         if let Some(c) = self.windows.get_mut(&CONSOLE) {
-            c.w = self.width;
-            c.h = self.height;
+            c.w = cw;
+            c.h = ch;
             c.x = 0;
             c.y = 0;
+            c.pixels = Pixels::Static;
         }
         vga::set_palette(&palette::standard());
         let h = self.height;
@@ -871,124 +1053,157 @@ impl Screen {
         if self.dirty_lo >= self.dirty_hi {
             return;
         }
-        let mut row = [0u8; MAX_WIDTH];
+        // SAFETY: ROW8・ROW32 は SCREEN のロックの中（ここ）でだけ触る
+        let row8 = unsafe { &mut (&mut *ROW8.as_ptr())[..self.width] };
+        let row32 = unsafe { &mut (&mut *ROW32.as_ptr())[..self.width] };
+        let focused = self.focused();
         for y in self.dirty_lo..self.dirty_hi {
-            let row = &mut row[..self.width];
-            self.compose_row(y, row);
-            if self.cursor_visible {
-                self.draw_cursor_row(y, row);
+            if self.mode == Mode::Desktop {
+                self.compose_desktop_row(y, row32, focused);
+                if self.cursor_visible {
+                    self.draw_cursor_row32(y, row32);
+                }
+                vga::write_row32(y, row32);
+                continue;
             }
-            vga::write_row(y, row);
+            self.compose_row(y, row8);
+            if self.cursor_visible {
+                self.draw_cursor_row(y, row8);
+            }
+            if vga::bpp() == 32 {
+                // 32 ビットの画面の全画面（パニックのとき）: 前面のウィンドウのパレットで直す
+                let lut = self.windows.get(&self.foreground()).and_then(|w| w.lut.as_deref()).unwrap_or(&self.std_lut);
+                convert_row(row32, row8, lut);
+                vga::write_row32(y, row32);
+            } else {
+                vga::write_row(y, row8);
+            }
         }
         self.dirty_lo = 0;
         self.dirty_hi = 0;
     }
 
-    fn client_row(&self, id: WinId, y: usize) -> &[u8] {
+    fn client_row(&self, id: WinId, y: usize) -> Row<'_> {
         let w = &self.windows[&id];
-        match &w.buf {
-            Some(b) => &b[y * w.w..(y + 1) * w.w],
-            None => {
+        match &w.pixels {
+            Pixels::P8(b) => Row::P8(&b[y * w.w..(y + 1) * w.w]),
+            Pixels::P32(b) => Row::P32(&b[y * w.w..(y + 1) * w.w]),
+            Pixels::Static => {
                 // SAFETY: CONSOLE_BUF は SCREEN のロックの中でだけ触る（今ロックを持っている）
                 let buf = unsafe { &*CONSOLE_BUF.as_ptr() };
-                &buf[y * self.console_w..(y + 1) * self.console_w]
+                Row::P8(&buf[y * self.console_w..(y + 1) * self.console_w])
             }
         }
     }
 
+    /// 全画面の 1 行（8 ビット）
     fn compose_row(&self, y: usize, row: &mut [u8]) {
-        match self.mode {
-            Mode::Fullscreen => {
-                row.fill(palette::BLACK);
-                let fg = self.foreground();
-                let top = match self.windows.get(&fg) {
-                    Some(win) => win.y.max(0) as usize,
-                    None => self.console_y,
-                };
-                if y < top {
-                    // 端末の上の行はステータスバー
-                    // SAFETY: 同上
-                    let bar = unsafe { &*BAR_BUF.as_ptr() };
-                    if y < FS_BAR_H {
-                        row.copy_from_slice(&bar[y * self.width..(y + 1) * self.width]);
-                    }
-                } else if let Some(win) = self.windows.get(&fg) {
-                    if y - top < win.h {
-                        let n = win.w.min(row.len());
-                        row[..n].copy_from_slice(&self.client_row(fg, y - top)[..n]);
-                    }
-                } else if y - top < self.console_h {
-                    // まだウィンドウを登録していない（起動直後）
-                    // SAFETY: 同上
-                    let buf = unsafe { &*CONSOLE_BUF.as_ptr() };
-                    let (r, w) = (y - top, self.console_w.min(row.len()));
-                    row[..w].copy_from_slice(&buf[r * self.console_w..r * self.console_w + w]);
+        row.fill(palette::BLACK);
+        let fg = self.foreground();
+        let top = match self.windows.get(&fg) {
+            Some(win) => win.y.max(0) as usize,
+            None => self.console_y,
+        };
+        if y < top {
+            // 端末の上の行はステータスバー
+            // SAFETY: BAR_BUF は SCREEN のロックの中でだけ触る（今ロックを持っている）
+            let bar = unsafe { &*BAR_BUF.as_ptr() };
+            if y < FS_BAR_H {
+                row.copy_from_slice(&bar[y * self.width..(y + 1) * self.width]);
+            }
+        } else if let Some(win) = self.windows.get(&fg) {
+            if y - top < win.h {
+                let n = win.w.min(row.len());
+                match self.client_row(fg, y - top) {
+                    Row::P8(r) => row[..n].copy_from_slice(&r[..n]),
+                    // 32 ビットのウィンドウは標準のパレットの近い色に
+                    Row::P32(r) => row[..n].iter_mut().zip(r).for_each(|(d, &c)| *d = canvas::to_palette8(c)),
                 }
             }
-            Mode::Desktop => {
-                if y < BAR_H {
-                    // SAFETY: 同上
-                    let bar = unsafe { &*BAR_BUF.as_ptr() };
-                    row.copy_from_slice(&bar[y * self.width..(y + 1) * self.width]);
-                    return;
-                }
-                match &self.wallpaper {
-                    Some(wp) => {
-                        let r = y - BAR_H;
-                        row.copy_from_slice(&wp[r * self.width..(r + 1) * self.width]);
-                    }
-                    None => row.fill(DESKTOP_BG),
-                }
-                for &id in &self.order {
-                    self.draw_window_row(id, y as i32, row);
-                }
-                self.draw_menu_row(y, row);
-            }
+        } else if y - top < self.console_h {
+            // まだウィンドウを登録していない（起動直後）
+            // SAFETY: 同上
+            let buf = unsafe { &*CONSOLE_BUF.as_ptr() };
+            let (r, w) = (y - top, self.console_w.min(row.len()));
+            row[..w].copy_from_slice(&buf[r * self.console_w..r * self.console_w + w]);
         }
     }
 
-    fn draw_window_row(&self, id: WinId, y: i32, row: &mut [u8]) {
+    /// デスクトップの 1 行（32 ビット）
+    fn compose_desktop_row(&self, y: usize, row: &mut [u32], focused: Option<WinId>) {
+        if y < BAR_H {
+            row.copy_from_slice(&self.bar[y * self.width..(y + 1) * self.width]);
+            return;
+        }
+        // 縦のグラデーション。背景の画像があれば並べる（真ん中に置いたときの周りはグラデーション）
+        let n = (self.height - BAR_H - 1) as u32;
+        let bg = canvas::lerp(theme::DESKTOP_TOP, theme::DESKTOP_BOTTOM, (y - BAR_H) as u32, n);
+        match &self.wallpaper {
+            Some(wp) => vibe_gfx::wallpaper::fill_row(row, y - BAR_H, &wp.pixels, wp.w, wp.h, self.height - BAR_H, wp.fit, bg),
+            None => row.fill(bg),
+        }
+        for &id in &self.order {
+            self.draw_window_row(id, y as i32, row, focused == Some(id));
+        }
+        self.draw_menu_row(y, row);
+    }
+
+    /// ウィンドウ（枠とタイトルバーを含む角の丸い矩形と影）の `y` 行目を重ねる
+    fn draw_window_row(&self, id: WinId, y: i32, row: &mut [u32], focused: bool) {
         let w = &self.windows[&id];
+        let Some(deco) = &self.deco else { return };
         if w.minimized {
             return;
         }
-        let top = w.y - TITLE_H as i32 - 1;
-        let bottom = w.y + w.h as i32;
-        if y < top || y > bottom {
+        // 枠を含む矩形
+        let rect = (w.x - 1, w.y - TITLE_H as i32 - 1, w.w as i32 + 2, w.h as i32 + TITLE_H as i32 + 2);
+        let m = deco::SHADOW_MARGIN;
+        if y < rect.1 - m || y >= rect.1 + rect.3 + m {
             return;
         }
-        let (left, right) = (w.x - 1, w.x + w.w as i32);
-        let width = row.len() as i32;
-        let mut put = |x: i32, c: u8| {
-            if (0..width).contains(&x) {
-                row[x as usize] = c;
+        let alpha = if focused { theme::SHADOW_ALPHA } else { theme::SHADOW_ALPHA_INACTIVE };
+        let fill = |x0: i32, span: &mut [u32]| {
+            // 中身（タイトルバーか、ウィンドウの中身）の行と、その左端の x
+            let src = if y >= w.y - TITLE_H as i32 && y < w.y {
+                let r = (y - (w.y - TITLE_H as i32)) as usize;
+                Row::P32(&w.titlebar[r * w.w..(r + 1) * w.w])
+            } else if y >= w.y && y < w.y + w.h as i32 {
+                self.client_row(id, (y - w.y) as usize)
+            } else {
+                return;
+            };
+            let (s0, s1) = ((x0 - w.x).max(0), (x0 + span.len() as i32 - w.x).min(w.w as i32));
+            if s0 >= s1 {
+                return;
+            }
+            let d = &mut span[(w.x + s0 - x0) as usize..(w.x + s1 - x0) as usize];
+            let (s0, s1) = (s0 as usize, s1 as usize);
+            match src {
+                Row::P8(r) => convert_row(d, &r[s0..s1], w.lut.as_deref().unwrap_or(&self.std_lut)),
+                Row::P32(r) => d.copy_from_slice(&r[s0..s1]),
             }
         };
-        if y == top || y == bottom {
-            for x in left..=right {
-                put(x, BORDER);
-            }
+        deco::panel_row(row, y, rect, &deco.corner, Some((&deco.shadow, alpha)), theme::BORDER, fill);
+    }
+
+    fn draw_cursor_row32(&self, y: usize, row: &mut [u32]) {
+        if let Some(d) = &self.deco {
+            deco::cursor_row(row, y as i32, self.cursor_x, self.cursor_y, &d.cursor);
             return;
         }
-        put(left, BORDER);
-        put(right, BORDER);
-        let src: &[u8] = if y < w.y {
-            let r = (y - top - 1) as usize;
-            &w.titlebar[r * w.w..(r + 1) * w.w]
-        } else {
-            self.client_row(id, (y - w.y) as usize)
-        };
-        // 画面からはみ出す部分を切る
-        let x0 = w.x.max(0);
-        let x1 = (w.x + w.w as i32).min(width);
-        if x0 < x1 {
-            let s0 = (x0 - w.x) as usize;
-            let src = &src[s0..s0 + (x1 - x0) as usize];
-            let dst = &mut row[x0 as usize..x1 as usize];
-            match (&w.remap, y >= w.y) {
-                // 独自のパレットの中身は標準のパレットの近い色に置き換える
-                (Some(map), true) => dst.iter_mut().zip(src).for_each(|(d, &s)| *d = map[s as usize]),
-                _ => dst.copy_from_slice(src),
+        let dy = y as i32 - self.cursor_y;
+        if dy < 0 || dy >= CURSOR_SHAPE.len() as i32 {
+            return;
+        }
+        for (dx, c) in CURSOR_SHAPE[dy as usize].bytes().enumerate() {
+            let x = self.cursor_x + dx as i32;
+            let color = match c {
+                b'#' => palette::CURSOR_BLACK,
+                b'o' => palette::CURSOR_WHITE,
+                _ => continue,
+            };
+            if (0..row.len() as i32).contains(&x) {
+                row[x as usize] = self.std_lut[color as usize];
             }
         }
     }
@@ -1012,6 +1227,13 @@ impl Screen {
     }
 }
 
+/// 8 ビットの色番号の並びを表 `lut` で 32 ビットの色に直す
+fn convert_row(dst: &mut [u32], src: &[u8], lut: &[u32; 256]) {
+    for (d, &c) in dst.iter_mut().zip(src) {
+        *d = lut[c as usize];
+    }
+}
+
 fn push_mouse(w: &mut Window, ev: MouseEvent) {
     if !w.mouse.push(ev) {
         w.mouse.pop();
@@ -1022,33 +1244,110 @@ fn push_mouse(w: &mut Window, ev: MouseEvent) {
 impl Window {
     /// タイトルバーの [x] の左端（中身の左端から）。閉じられなければ None
     fn close_box_x(&self) -> Option<i32> {
-        self.closable.then(|| (self.w - CLOSE_W - 2) as i32)
+        self.closable.then(|| self.w as i32 - (BUTTON_W + BUTTON_GAP) as i32)
     }
 
     /// タイトルバーの [_] の左端（[x] の左、[x] が無ければ右端）
     fn minimize_box_x(&self) -> i32 {
-        let x = (self.w - CLOSE_W - 2) as i32;
-        if self.closable { x - CLOSE_W as i32 - 2 } else { x }
+        let x = self.w as i32 - (BUTTON_W + BUTTON_GAP) as i32;
+        if self.closable { x - (BUTTON_W + BUTTON_GAP) as i32 } else { x }
     }
 }
 
-/// タイトルバーを描く（フォーカスがあれば青、なければ灰色。右端に [_] と、閉じられるなら [x]）
-fn render_titlebar(w: &mut Window, focused: bool) {
+/// コンソールの静的な領域（`w` × `h`。CONSOLE_MAX_W × CONSOLE_MAX_H まで）
+fn static_surface(w: usize, h: usize) -> Surface<'static> {
+    // SAFETY: CONSOLE_BUF は SCREEN のロックの中でだけ触る（呼ぶのは SCREEN を持っているときだけ）
+    let buf = unsafe { &mut (&mut *CONSOLE_BUF.as_ptr())[..w * h] };
+    Surface::new(buf, w, h)
+}
+
+/// UI の文字の種類
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Face {
+    Ui,
+    Bold,
+    /// 固定幅（バーの状態の表示: 数が変わっても位置が動かないように）
+    Mono,
+}
+
+fn face_font(face: Face) -> Option<&'static vibe_font::VFont<'static>> {
+    match face {
+        Face::Ui => crate::gfx::fonts::ui(),
+        Face::Bold => crate::gfx::fonts::ui_bold(),
+        Face::Mono => crate::gfx::fonts::mono(),
+    }
+}
+
+/// UI の文字の幅（なめらかなフォント。無ければ 8x8）
+pub(crate) fn label_width(face: Face, text: &str) -> i32 {
+    match face_font(face) {
+        Some(f) => f.measure(text),
+        None => (text.chars().count() * FONT_8X8.width) as i32,
+    }
+}
+
+/// 幅 `max` に入る先頭の文字数
+pub(crate) fn label_fit(face: Face, text: &str, max: i32) -> usize {
+    match face_font(face) {
+        Some(f) => f.fit(text, max),
+        None => (max.max(0) as usize / FONT_8X8.width).min(text.chars().count()),
+    }
+}
+
+/// UI の文字を 1 行描く。`top`〜`top + h` の帯の縦の真ん中に置く。描いた幅を返す
+pub(crate) fn draw_label(c: &mut Canvas, face: Face, x: i32, top: i32, h: i32, text: &str, color: u32) -> i32 {
+    match face_font(face) {
+        Some(f) => c.draw_vtext(f, x, top + (h - f.line_height as i32) / 2, text, color),
+        None => c.draw_text(&FONT_8X8, x, top + (h - FONT_8X8.height as i32) / 2, text, color, None),
+    }
+}
+
+/// タイトルバーを描く: 左にアイコンと題名（太字）、右端に [_] と、閉じられるなら [x]（線の記号。マウスが乗ると
+/// 地に色が付き、[x] は赤）。フォーカスがあれば明るい地に濃い文字、無ければ灰色の地に薄い文字
+fn render_titlebar(w: &mut Window, focused: bool, hover: Option<Part>) {
     let close_x = w.close_box_x();
     let min_x = w.minimize_box_x();
     w.titlebar.resize(w.w * TITLE_H, 0);
-    let mut s = Surface::new(&mut w.titlebar, w.w, TITLE_H);
-    s.clear(if focused { TITLE_ACTIVE } else { TITLE_INACTIVE });
-    let room = (min_x - 8).max(0) as usize / FONT_8X8.width;
-    let title: String = w.title.chars().take(room).collect();
-    s.draw_text(&FONT_8X8, 4, 2, &title, palette::WHITE, None);
-    let c = CLOSE_W as i32;
-    s.fill_rect(min_x, 1, c, c, palette::LIGHT_GRAY);
-    s.hline(min_x + 2, c - 2, c - 4, palette::BLACK);
+    let mut c = Canvas::new(&mut w.titlebar, w.w, TITLE_H);
+    let h = TITLE_H as i32;
+    let (bg, fg) = if focused { (theme::FACE, theme::TEXT) } else { (theme::FACE_INACTIVE, theme::TEXT_DIM) };
+    c.clear(bg);
+    c.hline(0, h - 1, w.w as i32, theme::SEPARATOR);
+    let mut tx = 8;
+    if let Some(icon) = w.icon {
+        let s = crate::gfx::icons::SIZE as i32;
+        c.blit_alpha(6, (h - s) / 2, icon, s as usize);
+        tx = 6 + s + 6;
+    }
+    let n = label_fit(Face::Bold, &w.title, min_x - tx - 4);
+    let title: String = w.title.chars().take(n).collect();
+    draw_label(&mut c, Face::Bold, tx, 0, h - 1, &title, fg);
+    // ボタン: 押せる所（幅 BUTTON_W）の中に 2 ピクセル空けた角の丸い地と、真ん中に 10x10 の記号
+    let corner = canvas::Corner::new(theme::RADIUS_SMALL);
+    let ink = if focused { theme::TEXT } else { theme::TEXT_DIM };
+    let button = |c: &mut Canvas, x: i32, part: Part| -> canvas::Color {
+        if hover == Some(part) {
+            let bgc = if part == Part::Close { theme::CLOSE_HOVER } else { theme::HOVER };
+            c.fill_round_rect(x, 2, BUTTON_W as i32, h - 5, &corner, bgc, 255);
+            if part == Part::Close { canvas::rgb(255, 255, 255) } else { ink }
+        } else {
+            ink
+        }
+    };
+    let (gx, gy) = ((BUTTON_W as i32 - 10) / 2, (h - 1 - 10) / 2);
+    let col = button(&mut c, min_x, Part::Minimize);
+    c.fill_rect(min_x + gx, gy + 5, 10, 1, col);
+    c.fill_rect(min_x + gx, gy + 6, 10, 1, canvas::blend(bg, col, 90));
     if let Some(x) = close_x {
-        s.fill_rect(x, 1, c, c, palette::LIGHT_GRAY);
-        s.line(x + 2, 3, x + c - 3, c - 2, palette::BLACK);
-        s.line(x + c - 3, 3, x + 2, c - 2, palette::BLACK);
+        let col = button(&mut c, x, Part::Close);
+        // ×: 2 本の斜めの線（隣のピクセルを薄く重ねて太さとなめらかさを出す）
+        for d in 0..10 {
+            for (px, py) in [(x + gx + d, gy + d), (x + gx + 9 - d, gy + d)] {
+                c.blend_pixel(px, py, col, 255);
+                c.blend_pixel(px + 1, py, col, 110);
+                c.blend_pixel(px - 1, py, col, 50);
+            }
+        }
     }
 }
 
@@ -1111,7 +1410,7 @@ fn menu_items() -> Vec<String> {
     items
 }
 
-const MENU_TERMINAL: &str = "Terminal";
+pub(super) const MENU_TERMINAL: &str = "Terminal";
 
 /// メニューから起動する。アプリは最初の端末につながる（出力はそこに出る）。終わるのは誰も待たない
 fn launch(name: &str) {

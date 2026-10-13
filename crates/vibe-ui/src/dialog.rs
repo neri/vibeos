@@ -7,15 +7,20 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use vibe_abi::key;
-use vibe_gfx::Surface;
+use vibe_gfx::canvas::Canvas;
 
-use crate::draw::{CHAR_W, FACE, LINE_H};
+use crate::draw::{self, FACE};
 use crate::{Action, Align, Button, Id, Input, Label, Rect, TextField, Ui};
 
-const MARGIN: i32 = 8;
-const BUTTON_H: i32 = 16;
-const BUTTON_MIN_W: i32 = 56;
-const FIELD_H: i32 = 14;
+pub const MARGIN: i32 = 12;
+pub const BUTTON_H: i32 = 26;
+const BUTTON_MIN_W: i32 = 72;
+pub const FIELD_H: i32 = 26;
+
+/// 文の 1 行の高さ（フォントの行の高さ + 2）
+pub fn line_h() -> i32 {
+    draw::text().height() + 2
+}
 
 pub struct Dialog {
     pub ui: Ui,
@@ -27,20 +32,28 @@ pub struct Dialog {
 
 /// `text` を幅 `cols` 文字で折り返す（単語の切れ目で。長すぎる単語は切る）。`\n` で改行
 pub fn wrap(text: &str, cols: usize) -> Vec<String> {
-    let cols = cols.max(1);
+    let cols = cols.max(1) as i32;
+    wrap_by(text, cols, |s| s.len() as i32)
+}
+
+/// `text` を幅 `max` に折り返す（幅は `width` で測る）
+pub fn wrap_by(text: &str, max: i32, width: impl Fn(&str) -> i32) -> Vec<String> {
+    let max = max.max(1);
     let mut lines = Vec::new();
     for para in text.split('\n') {
         let mut line = String::new();
         for word in para.split(' ') {
             let mut word = word;
-            while word.len() > cols {
+            while width(word) > max {
                 if !line.is_empty() {
                     lines.push(core::mem::take(&mut line));
                 }
-                lines.push(String::from(&word[..cols]));
-                word = &word[cols..];
+                // 入るだけ（少なくとも 1 文字）を切り出す
+                let n = (1..=word.len()).take_while(|&n| width(&word[..n]) <= max).last().unwrap_or(1);
+                lines.push(String::from(&word[..n]));
+                word = &word[n..];
             }
-            if !line.is_empty() && line.len() + 1 + word.len() > cols {
+            if !line.is_empty() && width(&line) + width(" ") + width(word) > max {
                 lines.push(core::mem::take(&mut line));
             }
             if !line.is_empty() {
@@ -66,8 +79,9 @@ impl Dialog {
 
     fn build(w: usize, text: &str, field: Option<&str>, buttons: &[&str]) -> Dialog {
         let wi = w as i32;
-        let lines = wrap(text, ((wi - 2 * MARGIN) / CHAR_W) as usize);
-        let text_h = lines.len() as i32 * LINE_H;
+        let t = draw::text();
+        let lines = wrap_by(text, wi - 2 * MARGIN - 12, |s| t.width(s));
+        let text_h = lines.len() as i32 * line_h();
         let field_h = if field.is_some() { FIELD_H + MARGIN } else { 0 };
         let h = MARGIN + text_h + MARGIN + field_h + BUTTON_H + MARGIN;
         let mut ui = Ui::new();
@@ -82,9 +96,8 @@ impl Dialog {
             ui.add(r, t)
         });
         let n = buttons.len().max(1) as i32;
-        let bw = ((wi - 2 * MARGIN - (n - 1) * MARGIN) / n).min(BUTTON_MIN_W.max(
-            buttons.iter().map(|b| b.len() as i32 * CHAR_W + 16).max().unwrap_or(0),
-        ));
+        let bw = ((wi - 2 * MARGIN - (n - 1) * MARGIN) / n)
+            .min(BUTTON_MIN_W.max(buttons.iter().map(|b| t.width(b) + 24).max().unwrap_or(0)));
         let total = n * bw + (n - 1) * MARGIN;
         let mut x = (wi - total) / 2;
         let y = h - MARGIN - BUTTON_H;
@@ -124,8 +137,8 @@ impl Dialog {
         }
     }
 
-    pub fn draw(&self, s: &mut Surface) {
-        s.clear(FACE);
-        self.ui.draw(s);
+    pub fn draw(&self, c: &mut Canvas) {
+        c.clear(FACE);
+        self.ui.draw(c);
     }
 }

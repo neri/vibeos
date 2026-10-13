@@ -10,6 +10,7 @@
 | 2026-10-11 | png（ホスト） | 0.17 | vibe-run の画面比較 | ホスト側ツール |
 | 2026-10-11 | font8x8 | 0.3（default-features なし） | 8×8 フォントのデータ | DESIGN.md §3.4 で可としたもの。描画は自作 |
 | 2026-10-12 | miniz_oxide | 0.9（default-features なし） | アプリ（gzip）の deflate の展開（`crates/vibe-pack` 経由でカーネルが使う） | DESIGN.md §3.4 で可としたもの（D-035）。gzip の枠は自作。ホストのテストでは deflate の圧縮にも使う |
+| 2026-10-13 | ab_glyph（ホスト） | 0.2.32 | `tools/vibe-fontgen` で TrueType をラスタライズする | ホスト側ツール（ブランチ `modern-look`、M3）。カーネル・アプリには入れない |
 
 ---
 
@@ -505,3 +506,82 @@
 - `sh -i FILE [引数]`: スクリプトを実行してから対話する。`vibe-files` の拡張子の対応に `SH` → 新しい端末で `sh -i` を足した（スクリプトが終わってもすぐに端末が閉じない。ホストのテストを 1 行足した）
 - `$(…)` は S2 の `interp` で作ってあった（子の sh の標準出力をパイプで読む）。シナリオでも確かめた
 - シナリオ `59-sh-autorun-files`（`AUTORUN.SH` の出力と変数、`$(echo sub | fault upper)`、files のキーボードで `/DOCS/HI.SH` を開くと新しい端末で動き、`exit` で閉じる）。テスト用のスクリプトは `tests/scripts/autorun.sh`・`hi.sh`
+
+## 2026-10-13 見た目を今風に M1: 32 ビットの画面（ブランチ `modern-look`）
+
+- オーナーの指示で、見た目を今風にする作業をブランチ `modern-look` で始めた（[計画書](plans/modern-look.md)、DECISIONS.md D-046〜D-048）。main に合流するかは未定
+- ローダ: VESA のモード一覧から「32 ビット・直接色（XRGB8888）・リニアフレームバッファ」で、上限（`video=WxH`、無ければ EDID の本来の解像度、読めなければ 1024x768）・メモリ（画面 1 枚が使用可能なメモリの 1/8 以下、640x480 はいつも可）・フレームバッファ 16MB 以下に収まる一番大きいモードを選ぶ。無ければ 320x200（レトロ）。EDID は VBE の DDC（`4F15h`）で読み、見出しと和を確かめて詳細タイミングの 1 つ目を使う。10 進の読み書き（`parse_dec`・`print_dec`）を足した。`loader.bin` は 5,232 → 6,112 バイト
+- ブート情報に 1 ピクセルのビット数（`bpp`、0x328）を足した
+- カーネル: `vga` の一番大きな画面を 2560x1600 にし、32 ビットの行を書く `write_row32` を足した。`gui` はデスクトップ（32 ビットの画面のときだけ）を 32 ビットで重ね合わせる。バッファは今までどおり 8 ビットで、行ごとに「色番号 → 32 ビットの色」の表（`palette::lut32`）で直す。6 ビットを 8 ビットに広げる式は QEMU と同じ（`palette::expand6`）にしたので、今の期待画像がそのまま通る。独自のパレットのウィンドウは表を差し替えるだけ（近い色への置き換え `remap` は消した）
+- 静的な領域: 最初の端末のバッファは 640x480 まで（起動直後の全画面のコンソールは左上だけを使う）。重ね合わせの 1 行（`ROW8`・`ROW32`）は画面の幅が大きいとスタックに置けないので静的な領域に。`.bss` は 0x68120 バイト
+- 製品の `BOOT.CFG` を `video=auto` にした。ローダは行の頭の `video=` だけを読む（前はコメントの `# video=640x480 …` に一致していた）
+- テストランナー: BOOT.CFG に `video=` を書かないシナリオは `video=640x480` で起動する（画面の大きさと期待画像をそろえるため）
+- 分かったこと: QEMU 11.1 の `-vga std` は EDID を返す（本来の解像度は 1280x800）。オーナーの想定（EDID が読めない）は `-global VGA.edid=off` で試し、EDID の大きさは `VGA.xres`/`VGA.yres` で変えられる（D-048）
+- シナリオ `60-video-auto`（EDID 無しで 1024x768）・`61-video-memory`（16MB で `video=1920x1200` でも 800x600）・`62-video-edid`（EDID 1600x1200）・`63-video-large`（128MB・1920x1200 で clock が動く）・`64-video-no-32bit`（`-vga cirrus` でレトロ）。`20-low-memory` は `video=auto` で 640x480 になることも見る
+- Bochs は 32 ビットのモードが無くレトロで動く（VGA BIOS のモード一覧が 640x480 までの 8 ビットだけ。D-048）。デスクトップが要る `59-sh-autorun-files` を QEMU だけにした。`make test-bochs` は 29 本が通り、36 本は飛ばす
+- 期待画像 `desktop-moved`（`28-desktop`）と `view-window-plasma`（`51-paint-view`）を作り直した: mandel と 8 ビットの BMP は独自のパレットなので、標準のパレットの近い色ではなく元の色で出るようになった（段々が無くなった。目で確かめた）
+
+## 2026-10-13 見た目を今風に M2: 32 ビットの描画（ブランチ `modern-look`）
+
+- `crates/vibe-gfx/src/canvas.rs`: 32 ビットの `Canvas`。半透明の合成 `blend`（整数だけ。RB と G を 16 ビットずつ並べて 2 つ同時に掛け、255 で割って丸める。どの値でも `(s*a + d*(255-a) + 127) / 255` と同じになることをテストで確かめた）、`lerp`・縦横のグラデーション、角の丸い矩形（`Corner`: 1/4 円の覆う割合を 4×4 の点で数えた表。塗りと 1 ピクセルの枠）、影（`Shadow`: 3t²−2t³ の S 字の 1 次元の表。ぼかした矩形を縦と横の表の積で描き、矩形の中は飛ばす）、32 ビット・8 ビット（表で直す）・アルファ付き（事前に掛けたアルファ）の画像の転送、8x8 のフォントの文字、32 ビット → 標準のパレットの色（`to_palette8`）
+- ホストのテスト 11 本。試しに描いた画像（グラデーションの上に影と角の丸いウィンドウ 2 つ）を目で確かめた
+- ktest `gfx_compose_speed`: 1024x768 に背景のグラデーションと、影・角の丸い枠・8 ビットの中身のウィンドウ 4 つを 10 回描き、1 枚の時間をシリアルに出す（`bench: compose 1024x768 with 4 windows: 10 ms per frame`）。上限は 100ms（QEMU の速さで、遅くなったことに気づくため）
+
+## 2026-10-13 見た目を今風に M3: フォントと大きさ（ブランチ `modern-look`）
+
+- `.VFN`（`crates/vibe-font/src/vfn.rs`）: 決まった大きさで先にラスタライズした字を 4 ビットの濃さで持つ形式。字の表は文字コードの順で二分探索。`measure`・`fit`。壊れたデータ（短い・印が違う・濃さがデータの外・順番が違う）を拒むテスト。組み立て（`vfn::build`）は `std` 機能のときだけ
+- `tools/vibe-fontgen`（`ab_glyph`。ホストのツール）: TrueType を em の大きさでラスタライズする（`ab_glyph` の `PxScale` は ascent − descent の高さなので直す。最初は 13 を `PxScale` に渡して小さすぎた）。固定幅は枠とベースラインを指定（`MONO.VFN` は 8x16、ベースライン 12。全部の字が枠に入ることを確かめた）。`make fonts`
+- フォントはこのパソコンの Noto Sans / Noto Sans Mono（OFL）。`assets/fonts/*.VFN`（4.6〜5.0KB、gzip で 2.9〜3.3KB）と `OFL.TXT`（Debian の copyright から OFL の本文を取り出した）。フロッピーの `/SYSTEM/FONTS/`（フォントはいつも gzip）
+- `Canvas::draw_glyph`・`draw_vtext`（濃さをアルファに。ペンは 1/16 ピクセル）・`scroll_up`
+- カーネル `gfx::fonts`: 起動時（`VIBEOS READY` の前）に読み込み、`Box::leak` でずっと持つ。無ければ 8x8
+- `gui`: ウィンドウの中身を `Pixels`（静的な領域・8 ビット・32 ビット）にした。デスクトップの端末（最初の端末も、デスクトップにするときにヒープの 32 ビットに替える）は 32 ビット。端末は `WinPixels`（8 ビットの `Surface` か 32 ビットの `Canvas`）に描き、32 ビットなら `MONO.VFN`。上端のバー（`Screen::bar`）・タイトルバー・メニューを 32 ビットにし、UI のフォントで描く（`Face`: ふつう・太字・固定幅）
+- 大きさ: バー 24・タイトルバー 24・[_]/[x] の幅 20・メニューの 1 項目 22（入りきらなければ何列か）・端末 80x25（640x400）。テストの画面を 1024x768 にし、デスクトップのシナリオ（10・15・25・28・29・34・44・46〜53・59・63）の座標を直した。直し方は、アプリのウィンドウの中身が 26 ピクセル下（47 → 73）、タイトルバーを含む切り抜きは 12 ピクセル高く、カーソルは 512,384 から。25 と 52 は 640x480 のまま（`boot-config video=640x480`）。52 は 640x480 だと端末がほぼ全体を覆うので、バーと端末の間で背景を見るようにした
+- 詰まったこと: 28 でドラッグした後のタイトルバーの色が黒と出た。確かめる点がちょうどマウスカーソルの先だった
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, calc-46, clip-edit, clip-selected, desktop-moved, desktop-terminal, files-images, net-statusbar-ip, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-tile。新しく fonts-fallback（`65-fonts-missing`）。アプリの中身だけを切り抜くもの（mines・blocks・calc-cleared・tasks-header など）はそのまま通った
+- ktest `fonts_loaded`
+- フロッピーの空き: 圧縮したイメージ 617,984 バイト、圧縮しないイメージ（`vibeos-raw.img`）13,824 バイト（フォントと OFL.TXT で約 14KB 使った）
+
+## 2026-10-13 見た目を今風に M4: ウィンドウの見た目（ブランチ `modern-look`）
+
+- `vibe_gfx::theme`（色・半径・影）。`Canvas::shadow_round`（角の丸い矩形の影。丸めて欠けた所にも描く）
+- `gui/deco.rs`: 角の丸いパネル（ウィンドウ・メニュー）の 1 行を、影 → 中身 → 1 ピクセルの縁 → 角を覆う割合で下と混ぜる、の順に描く `panel_row`。角の所の下の色は先に取っておく。アルファ付きのカーソル（多角形を 4×4 の点で数える。影は 3×3 でぼかす）
+- タイトルバー: 明るい地・アイコン・太字の題名・線の記号のボタン。マウスが乗ったボタン（`Screen::hover`）だけ描き直す。上端のバー: 明るい地・強調色の「VibeOS」・アイコン付きのボタン（フォーカスは薄い強調色の角の丸い地）。メニュー: 影付きの角の丸いパネルにアイコンと名前
+- 背景の画像が無ければ縦のグラデーション（行ごとに 1 回 `lerp`）
+- アイコン: `vibe_gfx::icons`（`.VIA`。名前の順に 16x16 を並べる）、`tools/vibe-icongen`（SVG の一部を自分で読むラスタライザ）、`assets/icons/*.svg`（AI が手で書いた 18 個）→ `ICONS.VIA`（18,656 バイト、gzip で 2,537 バイト）。カーネルは `gfx::icons` で読み込み、ウィンドウを作るときにプログラムの名前で選ぶ（`create_window` に引数 `app`）
+- 詰まったこと 1: 圧縮しないイメージが約 8KB 入らなくなった（カーネル 425,784 バイト）。カーネルを opt-level 2 にすると 391,224 バイトで入ったが、オーナーの指示で、圧縮しないイメージに入れるアプリを減らすことにした（`RAW_APPS`、D-050）。空きは 652,800 バイト
+- 詰まったこと 2: `32-net-arp` が 3 回に 1 回ほど失敗した。フォントを読み込む間に DHCP が終わり、アドレスの知らせが VIBEOS READY より前に出ていた（シナリオはその後ろを探す）。フォントとアイコンをネットワークより先に読むようにした（5 回続けて通った）
+- シナリオの色を直した: 背景はグラデーションの値（y から計算）、タイトルバーは文字の無い下の方の行で明るい地・灰色の地、上端のバーは明るい灰色。カーソルが大きくなり、確かめる点が重なった 28 の 1 か所をずらした。52 の真ん中に置いた画像の周りは `sh` の 8 ビットの背景の色のまま
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, calc-46, clip-edit, clip-selected, desktop-moved, desktop-terminal, files-images, fonts-fallback, mines-flag, mines-lost, mines-open（カーソルが写る）, net-statusbar-ip, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-tile
+- シナリオ `66-title-hover`（[x] に乗せると赤、[_] に移ると灰色、離れると戻る）
+
+## 2026-10-13 フォントを取ってくる手段（ブランチ `modern-look`）
+
+- オーナーの指示で、ほかのマシンでも `.VFN` を作り直せるように `tools/fetch-fonts.sh`（`make fonts-fetch`）を作った（D-052）。GitHub へのアクセスはオーナーが許可した
+- リリースの zip は大きすぎた（Noto Sans 117MB）ので、`notofonts.github.io` の決まったコミットの TrueType を 1 つずつ取る（合わせて 1.2MB）。SHA-256 を確かめ、正しいファイルがあれば取り直さない。空の場所からと 2 回目とで試した
+- `make fonts` でその版から作り直した。`UIBOLD.VFN` と `MONO.VFN`（`]`）が少し変わり、太字の題名が写る期待画像（bar-menu, bar-minimized, bar-three, calc-46, desktop-moved, desktop-terminal, files-images, paint-window, terminals-two, view-window-gradient, view-window-plasma）を作り直した（目で確かめた）
+
+## 2026-10-13 見た目を今風に M5: アプリの部品（ブランチ `modern-look`）
+
+- ABI: `win_open` のフラグ `WIN_RGB32`、`font_data`（71）・`icon_data`（72）、マウスが出たときの (-1, -1)。カーネルの `fonts` は展開したバイト列も持つ。`win_blit` は 32 ビットのウィンドウなら幅 × 高さ × 4 バイトを読む（4 バイトにそろっていなければ EINVAL）
+- `vibe-rt`: `Window32`（`Canvas` で描いて `present`）、`gfx::font`（最初に使うときにカーネルから写して `Box::leak`）、`gfx::icon`
+- `vibe-ui` を 32 ビットの描画に: `draw.rs`（`Text`: 幅・何文字入るか・x に近い文字の境目・寄せて描く。`Corners`・`frame`・`focus_ring`。フォントは `set_fonts` でプロセスに 1 つ）。ボタンのホバー（`Ui::draw` がマウスの位置から決める）。一覧は 1 行 20 ピクセル・アイコン・タブで分けた列。テキスト欄のスクロールとクリックは文字の幅で。ダイアログは幅を測って折り返す（`wrap_by`）。ホストのテストの座標を新しい大きさに直した（18 本が通る）
+- `Canvas::line_aa`（なめらかな太い線。整数の平方根 `isqrt`）
+- アプリ: `calc`（大きさはそのまま）、`files`（アイコン・名前と大きさの 2 列。`vibe_files::icon_name`・`list_line` を「名前・タブ・大きさ」に）、`tasks`（見出しと 5 列。高さ 300）、`clock`（白地に薄い灰色の円の文字盤、なめらかな目盛りと針、太字の時刻。高さ 170）
+- シナリオ: 48（一覧の行が 20 ピクセル、ボタンの位置）と 49（tasks の大きさ）の座標を直した。新しく `67-calc-retro`（320x200 で calc が動き、近い色で出る）
+- 期待画像を作り直したもの（目で確かめた）: calc-46, calc-cleared, files-images, tasks-header。新しく calc-retro
+
+## 2026-10-13 見た目を今風に M6: 残りのアプリ・背景・端末の配色（ブランチ `modern-look`）
+
+- `mines`: 32 ビットのウィンドウ。角の丸いマス（上半分を明るく）、開いたマスは平らな薄い灰色、数字は太字の UI の文字（今風の 8 色）、地雷と旗はなめらかな線、顔は黄色の丸に目と口（勝ちはサングラス、負けは × の目）。大きさとマスの位置は同じ
+- `blocks`: 濃い角の丸い盤面に角の丸いブロック（上の縁を明るく）、影は枠だけ、右の文字は UI の文字、一時停止・終わりは強調色の帯
+- `view`: デスクトップでは 32 ビットのウィンドウに画像の色そのまま（`Bmp::rgb`）。320x200 は前のまま
+- `paint`: デスクトップのウィンドウの色の並びを明るい地と強調色の枠に。最初は全画面にも効いてしまい、レトロの `13-paint` の期待画像と合わなくなったので、ウィンドウのときだけにした
+- 背景の画像: `vibe_gfx::wallpaper::fill_row`（1 行ずつ並べる。ホストのテスト）、`Bmp::to_rgb32`、`wallpaper_set(pixels, w, h, fit)`。カーネルは `gui::Wallpaper`（元の大きさの画像と並べ方）を持つ。plasma（8 ビットの BMP）も元の色で並ぶようになった
+- 端末の 16 色（`theme::TERMINAL`）。端末のウィンドウだけ色番号の表を替える（`term_lut`）。地は濃い灰色
+- `vibe-rt`: `gfx::draw_text`・`draw_text_centered`・`text_width`・`text_height`（フォントが無ければ 8x8）
+- シナリオ: 28 の端末の地の色、52 の真ん中に置いたときの周り（グラデーション）、51 に 24 ビットの画像の画素の確認（mkassets の式から計算した色と同じ）
+- 期待画像を作り直したもの（目で確かめた）: blocks-bottom, blocks-paused, clip-edit, clip-selected, desktop-moved, desktop-terminal, fonts-fallback, mines-counter, mines-flag, mines-lost, mines-open, mines-sad, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-center, wallpaper-tile, bar-menu
+
+## 2026-10-13 README のスクリーンショットを今風の見た目に（ブランチ `modern-look`）
+
+- オーナーの指示で、README のスクリーンショット（`docs/images/desktop.png`）をこのブランチの見た目で撮り直した。`tools/screenshots/desktop.scn` を 1024x768 の配置に書き直した（上の段にファイルマネージャ・電卓・時計・マインスイーパ・落ち物パズル、左下に端末、右下にタスクマネージャ。時計は 10 時 10 分）。README の画像の説明を「1024×768 のデスクトップ」にした

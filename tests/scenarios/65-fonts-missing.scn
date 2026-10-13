@@ -1,0 +1,16 @@
+# M3: /SYSTEM/FONTS の .VFN が無くても起動し、8x8 の文字で動く（端末は 80 桁 x 25 行の 640x200、
+# 中身 8,560 から。タイトルバー y=536〜559）
+disk-delete /SYSTEM/FONTS/UI.VFN
+disk-delete /SYSTEM/FONTS/UIBOLD.VFN
+disk-delete /SYSTEM/FONTS/MONO.VFN
+timeout 30
+wait-serial fonts: UI.VFN is not available
+wait-serial fonts: MONO.VFN is not available
+wait-serial gui: desktop 1024x768
+wait-serial VibeOS shell
+type echo fallback "font"
+key ret
+wait-serial fallback font
+sleep 300
+expect-screen fonts-fallback 0 534 660 50
+serial-absent PANIC

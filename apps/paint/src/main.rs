@@ -33,6 +33,8 @@ fn main() -> i32 {
 struct Paint {
     color: u8,
     last: Option<(i32, i32)>,
+    /// デスクトップのウィンドウ（今風の明るい色の並び。320x200 の全画面は前のまま）
+    modern: bool,
 }
 
 impl Paint {
@@ -50,11 +52,24 @@ impl Paint {
     fn toolbar(&self, s: &mut Surface) {
         let w = s.width() as i32;
         let sw = Self::swatch(w);
-        s.fill_rect(0, 0, w, TOOLBAR_H, palette::DARK_GRAY);
+        if !self.modern {
+            s.fill_rect(0, 0, w, TOOLBAR_H, palette::DARK_GRAY);
+            for i in 0..16 {
+                s.fill_rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, i as u8);
+                if i as u8 == self.color {
+                    s.rect(i * sw, 0, sw, TOOLBAR_H, palette::YELLOW);
+                }
+            }
+            return;
+        }
+        // 明るい灰色の地に色の並び。選んだ色は強調色（青）の枠（画面のテーマに合わせる）
+        s.fill_rect(0, 0, w, TOOLBAR_H, palette::GRAY_BASE + 14);
+        let accent = palette::rgb(37, 99, 235);
         for i in 0..16 {
-            s.fill_rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, i as u8);
+            s.fill_rect(i * sw + 2, 2, sw - 4, TOOLBAR_H - 4, i as u8);
             if i as u8 == self.color {
-                s.rect(i * sw, 0, sw, TOOLBAR_H, palette::YELLOW);
+                s.rect(i * sw, 0, sw, TOOLBAR_H, accent);
+                s.rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, accent);
             }
         }
     }
@@ -105,7 +120,7 @@ fn run_window(w: usize, h: usize) -> i32 {
         println!("paint: cannot open a window");
         return 1;
     };
-    let mut p = Paint { color: palette::BLACK, last: None };
+    let mut p = Paint { color: palette::BLACK, last: None, modern: true };
     p.clear(&mut win.surface());
     win.present();
     println!("paint: started ({w}x{h})");
@@ -132,7 +147,7 @@ fn run_fullscreen() -> i32 {
         println!("paint: cannot open the screen");
         return 1;
     };
-    let mut p = Paint { color: palette::BLACK, last: None };
+    let mut p = Paint { color: palette::BLACK, last: None, modern: false };
     p.clear(&mut screen.surface());
     screen.present();
     println!("paint: started");

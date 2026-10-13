@@ -1,8 +1,8 @@
-# Phase 32（デスクトップ D1）: 端末を何個でも開ける。出力はそれぞれの端末に出る。edit は端末の大きさ（64x32）を使う。
+# Phase 32（デスクトップ D1）: 端末を何個でも開ける。出力はそれぞれの端末に出る。edit は端末の大きさ（80x25）を使う。
 # 端末を閉じると、その端末のプロセスも止まる
-# 端末 1 は中身 8,216 から 512x256。端末 2 は中身 120,47 から 512x256（[x] は 621〜629, 35〜43）
+# 端末 1 は中身 8,360 から 640x400。端末 2 は中身 120,73 から 640x400（タイトルバー y=49〜72、[x] は 738〜757）
 timeout 30
-wait-serial gui: desktop 640x480
+wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
 type term
 key ret
@@ -13,8 +13,8 @@ sleep 300
 type echo in "two"
 key ret
 wait-serial in two
-# 端末 1 の見えている所をクリックして前に出す（カーソル 320,240 → 60,400）
-mouse-move -260 160
+# 端末 1 の見えている所をクリックして前に出す（カーソル 512,384 → 60,600）
+mouse-move -452 216
 mouse-button left down
 mouse-button left up
 sleep 200
@@ -23,16 +23,16 @@ key ret
 wait-serial in one
 sleep 300
 # 上端のバー（時計）を除いて比べる
-expect-screen terminals-two 0 10 640 470
-# edit は 64 桁 x 32 行を使う（1 行目にファイル名、32 行目にキーの説明）
+expect-screen terminals-two 0 24 1024 744
+# edit は 80 桁 x 25 行を使う（1 行目にファイル名、25 行目にキーの説明）
 type edit /new.txt
 key ret
 wait-serial /new.txt (new)
 sleep 300
-expect-screen terminals-edit 8 216 512 256
+expect-screen terminals-edit 8 360 640 400
 key ctrl+q
 # 端末 2 をクリックして前に出し（→ 400,100）、裏で clock、前面で life を動かす
-mouse-move 340 -300
+mouse-move 340 -500
 mouse-button left down
 mouse-button left up
 sleep 200
@@ -49,8 +49,8 @@ type life
 key ret
 wait-serial life: started
 sleep 300
-# 端末 2 の [x]（→ 625,40）で閉じると、clock と life も止まり、シェルが終わってウィンドウが消える
-mouse-move 125 -110
+# 端末 2 の [x]（→ 747,60）で閉じると、clock と life も止まり、シェルが終わってウィンドウが消える
+mouse-move 247 -90
 mouse-button left down
 mouse-button left up
 wait-serial term: stopping clock.ELF
@@ -58,9 +58,9 @@ wait-serial term: stopping life.ELF
 wait-serial term: closed terminal 2
 sleep 500
 # 端末 2・clock・life のあった所は背景に戻る
-expect-pixel 600 100 0 103 55
-expect-pixel 200 150 0 103 55
-expect-pixel 300 200 0 103 55
+expect-pixel 600 100 72 111 195
+expect-pixel 200 150 78 111 194
+expect-pixel 300 200 83 110 193
 # フォーカスは端末 1 に戻る
 type echo "still" here
 key ret

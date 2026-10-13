@@ -1,7 +1,11 @@
-# 最低動作メモリ（8MB）で起動してアプリが動く
+# 最低動作メモリ（8MB）で起動してアプリが動く。画面はメモリに合わせて 640x480（M1）
 qemu-arg -m
 qemu-arg 8M
+qemu-arg -global
+qemu-arg VGA.edid=off
+boot-config video=auto
 timeout 20
+wait-serial video: 640x480x32
 wait-serial VIBEOS READY
 wait-serial VibeOS shell
 type hello

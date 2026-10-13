@@ -18,4 +18,5 @@ BI_SCREEN_H     equ 0x31A               ; u16
 BI_KERNEL_ADDR  equ 0x31C               ; u32
 BI_KERNEL_SIZE  equ 0x320               ; u32
 BI_PITCH        equ 0x324               ; u32（画面 1 行のバイト数）
-BI_SIZE         equ 0x328
+BI_BPP          equ 0x328               ; u32（1 ピクセルのビット数: 8 か 32）
+BI_SIZE         equ 0x32C

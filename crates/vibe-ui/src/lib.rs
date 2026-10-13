@@ -2,19 +2,20 @@
 //!
 //! 部品（`Widget`）を位置（`Rect`）と一緒に `Ui` に登録し、キー・マウスの入力（`Input`）を
 //! `Ui::handle` に渡すと、部品の状態が変わり、アプリが知るべきこと（`Action`: ボタンが押された・
-//! 一覧で選んだ など）が返る。描画は `Ui::draw` で `vibe_gfx::Surface` に行う。
+//! 一覧で選んだ など）が返る。描画は `Ui::draw` で 32 ビットの `vibe_gfx::canvas::Canvas` に行う
+//! （明るい地・強調色の青・角の丸い枠。文字は `set_fonts` で渡したなめらかなフォント）。
 //!
 //! 入力から状態への変化は画面やシステムコールに触らない純粋な処理なので、ホストの `cargo test` で
 //! 配置・当たり判定・入力の流れを確かめられる。アプリでは `vibe_rt::gfx::Window` と組み合わせて使う
 //! （イベントを `Input` に直して渡し、描いてから `present`）。
 //!
 //! - フォーカス: Tab / Shift+Tab で順に移る。マウスで押した部品にも移る
-//! - ボタン: マウスで押して中で離すか、フォーカスがあるときの Space / Enter で `Clicked`
+//! - ボタン: マウスで押して中で離すか、フォーカスがあるときの Space / Enter で `Clicked`。マウスが乗ると地の色が変わる
 //! - テキスト欄: 文字の入力・BackSpace・Delete・←→・Home・End（`Changed`）、Enter で `Submitted`。
 //!   クリップボード（`Ui::set_clipboard`）があれば、Ctrl+Insert で写す、Ctrl+X か Shift+Delete で切り取る、
 //!   Ctrl+V か Shift+Insert で貼り付ける（Ctrl+C はカーネルがプログラムを止めるのに使うので使わない）
 //! - 一覧: クリック・↑↓・PageUp/Down・Home/End で `Selected`、ダブルクリックか Enter で `Activated`。
-//!   入りきらなければ右にスクロールバー（溝を押すと 1 画面ずつ、つまみはドラッグ）
+//!   入りきらなければ右にスクロールバー（溝を押すと 1 画面ずつ、つまみはドラッグ）。項目にアイコンを付けられる
 //! - チェックボックス: クリックか Space で `Toggled`
 //! - 使わなかったキーは `Action::Key` でそのまま返す（アプリのショートカット用）
 
@@ -23,7 +24,7 @@
 extern crate alloc;
 
 pub mod dialog;
-mod draw;
+pub mod draw;
 mod widget;
 
 #[cfg(test)]
@@ -35,8 +36,9 @@ use alloc::vec::Vec;
 
 pub use vibe_abi::KeyEvent;
 use vibe_abi::key;
-use vibe_gfx::Surface;
+use vibe_gfx::canvas::Canvas;
 
+pub use draw::set_fonts;
 pub use widget::{Align, Button, Checkbox, Label, List, TextField, Widget};
 
 /// 部品の番号（`Ui::add` が返す）
@@ -419,14 +421,26 @@ impl Ui {
     }
 
     /// 全部の部品を描く（背景は描かないので、先に塗っておく）
-    pub fn draw(&self, s: &mut Surface) {
+    pub fn draw(&self, c: &mut Canvas) {
+        let k = draw::Corners::new();
+        let over = self.hit(self.mouse.0, self.mouse.1);
         for (id, it) in self.items.iter().enumerate() {
             if !it.visible {
                 continue;
             }
             let focused = self.focus == Some(id);
-            let pressed = self.pressed == Some(id) && self.buttons & 1 != 0 && it.rect.contains(self.mouse.0, self.mouse.1);
-            it.widget.draw(s, it.rect, focused, pressed);
+            let inside = it.rect.contains(self.mouse.0, self.mouse.1);
+            let pressed = self.pressed == Some(id) && self.buttons & 1 != 0 && inside;
+            let hover = over == Some(id) && self.buttons == 0;
+            it.widget.draw(c, it.rect, focused, pressed, hover, &k);
         }
+    }
+
+    /// マウスが乗っている部品（ボタンを押していないとき）。変わったら描き直すのに使う
+    pub fn hover(&self) -> Option<Id> {
+        if self.buttons != 0 {
+            return None;
+        }
+        self.hit(self.mouse.0, self.mouse.1)
     }
 }

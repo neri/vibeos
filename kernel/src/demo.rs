@@ -34,8 +34,8 @@ pub fn start() -> bool {
                     // 端末の右上に並べる
                     let x = (w - text.len() * FONT_8X8.width) as i32;
                     let y = (i * FONT_8X8.height) as i32;
-                    if let Some(mut surf) = s.window_surface(tty) {
-                        surf.draw_text(&FONT_8X8, x, y, &text, colors[i], Some(palette::BLACK));
+                    if let Some(mut px) = s.window_pixels(tty) {
+                        px.draw_text8(x, y, &text, colors[i], Some(palette::BLACK));
                     }
                     s.mark_window_dirty(tty, y as usize, y as usize + FONT_8X8.height);
                     s.present();

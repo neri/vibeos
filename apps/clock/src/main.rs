@@ -5,14 +5,13 @@
 
 use vibe_rt::abi::key;
 use vibe_rt::font::FONT_8X8;
-use vibe_rt::gfx::{Event, Window};
-use vibe_rt::gfx_lib::palette;
+use vibe_rt::gfx::{Event, Window32 as Window};
 use vibe_rt::{println, sys};
 
 vibe_rt::entry!(main);
 
 const W: usize = 136;
-const H: usize = 156;
+const H: usize = 170;
 const R: i32 = 60;
 
 /// sin(6° × i) × 1000（i = 0..=15, 4 分の 1 周）
@@ -55,34 +54,47 @@ fn main() -> i32 {
 }
 
 fn draw(win: &mut Window, now: u32) {
+    use vibe_rt::gfx_lib::canvas::{Corner, rgb};
+    use vibe_rt::gfx_lib::theme;
     let t = vibe_rt::time::DateTime::from_unix(now as u64);
-    let mut s = win.surface();
-    s.clear(palette::WHITE);
+    let mut c = win.canvas();
+    c.clear(rgb(255, 255, 255));
     let (cx, cy) = (W as i32 / 2, R + 8);
-    // 文字盤: 5 分ごとに太い目盛り
-    for i in 0..60 {
-        let (dx, dy) = dir(i);
-        let inner = if i % 5 == 0 { R - 8 } else { R - 3 };
-        s.line(cx + dx * inner / 1000, cy + dy * inner / 1000, cx + dx * R / 1000, cy + dy * R / 1000, palette::DARK_GRAY);
-    }
-    let hand = |s: &mut vibe_rt::gfx_lib::Surface, pos: i32, len: i32, color: u8, thick: bool| {
+    // 文字盤: 薄い灰色の円に、5 分ごとの太い目盛りと 1 分ごとの細い目盛り（なめらかな線。1/16 ピクセル単位）
+    c.fill_round_rect(cx - R, cy - R, 2 * R, 2 * R, &Corner::new(R as usize), rgb(244, 245, 248), 255);
+    let p = |v: i32| v * 16 + 8;
+    let at = |pos: i32, len: i32| {
         let (dx, dy) = dir(pos);
-        let (x, y) = (cx + dx * len / 1000, cy + dy * len / 1000);
-        s.line(cx, cy, x, y, color);
-        if thick {
-            s.line(cx + 1, cy, x + 1, y, color);
-            s.line(cx, cy + 1, x, y + 1, color);
-        }
+        (p(cx) + dx * len * 16 / 1000, p(cy) + dy * len * 16 / 1000)
+    };
+    for i in 0..60 {
+        let (major, inner) = if i % 5 == 0 { (true, R - 9) } else { (false, R - 5) };
+        let (x0, y0) = at(i, inner);
+        let (x1, y1) = at(i, R - 3);
+        let (w, color) = if major { (32, theme::TEXT) } else { (16, rgb(176, 180, 188)) };
+        c.line_aa(x0, y0, x1, y1, w, color);
+    }
+    let hand = |c: &mut vibe_rt::gfx_lib::canvas::Canvas, pos: i32, len: i32, width: i32, color| {
+        let (x, y) = at(pos, len);
+        c.line_aa(p(cx), p(cy), x, y, width, color);
     };
     let hour_pos = (t.hour as i32 % 12) * 5 + t.minute as i32 / 12;
-    hand(&mut s, hour_pos, R * 5 / 10, palette::BLACK, true);
-    hand(&mut s, t.minute as i32, R * 8 / 10, palette::BLACK, true);
-    hand(&mut s, t.second as i32, R * 9 / 10, palette::RED, false);
-    s.fill_rect(cx - 2, cy - 2, 5, 5, palette::BLACK);
+    hand(&mut c, hour_pos, R * 5 / 10, 64, theme::TEXT);
+    hand(&mut c, t.minute as i32, R * 8 / 10, 48, theme::TEXT);
+    hand(&mut c, t.second as i32, R * 9 / 10, 20, theme::CLOSE_HOVER);
+    c.fill_round_rect(cx - 3, cy - 3, 7, 7, &Corner::new(3), theme::CLOSE_HOVER, 255);
     let text = vibe_rt::format_fixed::<20>(format_args!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second));
-    let x = (W as i32 - text.len() as i32 * FONT_8X8.width as i32) / 2;
-    s.draw_text(&FONT_8X8, x, H as i32 - 20, &text, palette::BLUE, None);
     let date = vibe_rt::format_fixed::<20>(format_args!("{:04}-{:02}-{:02}", t.year, t.month, t.day));
-    let x = (W as i32 - date.len() as i32 * FONT_8X8.width as i32) / 2;
-    s.draw_text(&FONT_8X8, x, H as i32 - 10, &date, palette::DARK_GRAY, None);
+    let center = |c: &mut vibe_rt::gfx_lib::canvas::Canvas, kind, top, s: &str, color| match vibe_rt::gfx::font(kind) {
+        Some(f) => {
+            let x = (W as i32 - f.measure(s)) / 2;
+            c.draw_vtext(f, x, top, s, color);
+        }
+        None => {
+            let x = (W as i32 - s.len() as i32 * FONT_8X8.width as i32) / 2;
+            c.draw_text(&FONT_8X8, x, top + 4, s, color, None);
+        }
+    };
+    center(&mut c, vibe_rt::abi::FONT_BOLD, cy + R + 4, &text, theme::TEXT);
+    center(&mut c, vibe_rt::abi::FONT_UI, cy + R + 21, &date, theme::TEXT_DIM);
 }

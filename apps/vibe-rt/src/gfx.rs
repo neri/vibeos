@@ -1,10 +1,14 @@
 //! 全画面の画面（gfx_open / gfx_blit）を使うための入れ物
 
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use vibe_abi::{GFX_CURSOR, SCREEN_HEIGHT, SCREEN_WIDTH};
+use vibe_font::VFont;
 use vibe_gfx::Surface;
+use vibe_gfx::canvas::Canvas;
 
 use crate::sys;
 
@@ -70,7 +74,7 @@ pub enum Event {
 
 impl Window {
     pub fn open(w: usize, h: usize, title: &str) -> Option<Window> {
-        let id = sys::win_open(w as u32, h as u32, title);
+        let id = sys::win_open(w as u32, h as u32, title, 0);
         (id >= 0).then(|| Window { id, w, h, buf: vec![0; w * h] })
     }
 
@@ -111,6 +115,118 @@ impl Drop for Window {
     fn drop(&mut self) {
         sys::win_close(self.id);
     }
+}
+
+/// 中身が 32 ビット（0x00RRGGBB）のウィンドウ（win_open の WIN_RGB32）。捨てると閉じる。
+/// 320x200 の全画面では標準のパレットの近い色で出る
+pub struct Window32 {
+    id: i32,
+    w: usize,
+    h: usize,
+    buf: Vec<u32>,
+}
+
+impl Window32 {
+    pub fn open(w: usize, h: usize, title: &str) -> Option<Window32> {
+        let id = sys::win_open(w as u32, h as u32, title, vibe_abi::WIN_RGB32);
+        (id >= 0).then(|| Window32 { id, w, h, buf: vec![0; w * h] })
+    }
+
+    pub fn width(&self) -> usize {
+        self.w
+    }
+
+    pub fn height(&self) -> usize {
+        self.h
+    }
+
+    pub fn canvas(&mut self) -> Canvas<'_> {
+        Canvas::new(&mut self.buf, self.w, self.h)
+    }
+
+    pub fn present(&self) {
+        sys::win_blit32(self.id, &self.buf);
+    }
+
+    /// イベントを待つ（timeout_ms = 0 なら待たない、None ならいつまでも）。マウスがウィンドウから出ると
+    /// `Mouse { x: -1, y: -1, .. }`
+    pub fn event(&self, timeout_ms: Option<u32>) -> Option<Event> {
+        let ev = sys::win_event(self.id, timeout_ms.unwrap_or(u32::MAX))?;
+        match ev.kind {
+            vibe_abi::WIN_EVENT_KEY => Some(Event::Key(vibe_abi::KeyEvent(ev.key))),
+            vibe_abi::WIN_EVENT_MOUSE => Some(Event::Mouse { x: ev.x, y: ev.y, buttons: ev.buttons }),
+            vibe_abi::WIN_EVENT_CLOSE => Some(Event::Close),
+            _ => None,
+        }
+    }
+}
+
+impl Drop for Window32 {
+    fn drop(&mut self) {
+        sys::win_close(self.id);
+    }
+}
+
+static FONTS: [AtomicPtr<VFont<'static>>; 3] =
+    [AtomicPtr::new(core::ptr::null_mut()), AtomicPtr::new(core::ptr::null_mut()), AtomicPtr::new(core::ptr::null_mut())];
+
+/// カーネルが読み込んだフォント（kind は vibe_abi::FONT_*）。最初に使うときにカーネルから写し、ずっと持つ。
+/// 無ければ None（8x8 のビットマップのフォントで描く）
+pub fn font(kind: u32) -> Option<&'static VFont<'static>> {
+    let slot = FONTS.get(kind as usize)?;
+    let p = slot.load(Ordering::Acquire);
+    if !p.is_null() {
+        // SAFETY: 入れるのは Box::leak したものだけで、消さない
+        return Some(unsafe { &*p });
+    }
+    let size = sys::font_data(kind, &mut []);
+    if size <= 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; size as usize];
+    if sys::font_data(kind, &mut buf) != size {
+        return None;
+    }
+    let data: &'static [u8] = Box::leak(buf.into_boxed_slice());
+    let font: &'static VFont<'static> = Box::leak(Box::new(VFont::parse(data).ok()?));
+    slot.store(font as *const _ as *mut _, Ordering::Release);
+    Some(font)
+}
+
+/// 文字の幅（フォント kind が無ければ 8x8）
+pub fn text_width(kind: u32, s: &str) -> i32 {
+    match font(kind) {
+        Some(f) => f.measure(s),
+        None => (s.chars().count() * vibe_font::FONT_8X8.width) as i32,
+    }
+}
+
+/// 文字の行の高さ（フォント kind が無ければ 8x8 の 8）
+pub fn text_height(kind: u32) -> i32 {
+    font(kind).map_or(vibe_font::FONT_8X8.height as i32, |f| f.line_height as i32)
+}
+
+/// 文字を描く（`top` は行の上端。フォント kind が無ければ 8x8 を行の縦の真ん中に）。描いた幅を返す
+pub fn draw_text(c: &mut Canvas, kind: u32, x: i32, top: i32, s: &str, color: u32) -> i32 {
+    match font(kind) {
+        Some(f) => c.draw_vtext(f, x, top, s, color),
+        None => {
+            let h = text_height(vibe_abi::FONT_UI).max(8);
+            c.draw_text(&vibe_font::FONT_8X8, x, top + (h - 8) / 2, s, color, None)
+        }
+    }
+}
+
+/// 文字を `x`〜`x + w` の真ん中に描く
+pub fn draw_text_centered(c: &mut Canvas, kind: u32, x: i32, w: i32, top: i32, s: &str, color: u32) {
+    let tw = text_width(kind, s);
+    draw_text(c, kind, x + (w - tw) / 2, top, s, color);
+}
+
+/// 16x16 のアイコン（事前に掛けたアルファの 0xAARRGGBB）。無ければ None
+pub fn icon(name: &str) -> Option<Vec<u32>> {
+    let mut buf = [0u32; vibe_abi::ICON_SIZE * vibe_abi::ICON_SIZE];
+    (sys::icon_data(name, &mut buf) == 0).then(|| buf.to_vec())
 }
 
 /// 画面がデスクトップ（ウィンドウを重ねて出す）か。320x200 の全画面なら false
