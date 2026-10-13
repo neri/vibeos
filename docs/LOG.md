@@ -599,3 +599,12 @@
 - ホストのテスト: 縁なしの角が中身と下の色だけで混ざる、縁を渡せば描く、2 層の影が外へ向かって薄くなり中身の下に描かない・左右対称、`shadow_round` の列の飛ばし方を変えても前と同じピクセル、`blit_alpha_faded`、温かい灰色の `to_palette8`
 - 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, blocks-bottom, calc-46, calc-cleared, calc-retro, desktop-moved, desktop-terminal, files-images, fonts-fallback, mines-counter, mines-flag, mines-lost, mines-open, mines-sad, net-statusbar-ip, paint-window, tasks-header, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-tile（バーと部品はテーマの灰色・文字の色が変わった分だけ）
 - 気づいたこと: 端末どうしが重なると、暗い地どうしで影がほとんど見えない（terminals-two）。計画書 §7 の「影が見えない」の端末の場合
+
+## 2026-10-13 Aster に近づける A2: 部品と強調色（ブランチ `aster-look`）
+
+- オーナーが A1 の仮のスクリーンショットを見て「A2 に進んで」（D-061）
+- テーマ: 強調色を紫（83, 74, 183）、薄い強調色（206, 203, 246）、薄い強調色の地の上の文字 `ACCENT_TEXT`（38, 33, 92）、既定のボタンの乗せた・押した色、押したボタンの `PRESSED`。小さな部品の角の半径 6
+- `vibe-ui`: 枠（`draw::frame`・`LINE`）をやめ、ボタン・テキスト欄・一覧・表示欄を `SUBTLE` の角の丸い塗り（`draw::fill`）に。ボタンは乗せる・押すと一段ずつ濃く。`Button::primary`（強調色の地に白い文字）を足し、ダイアログの最初のボタンに使う。一覧の選んだ行は薄い強調色の地に濃い強調色の文字（一覧にフォーカスが無いと灰色）。テキスト欄の全体の選択も薄い強調色。フォーカスの輪とチェックの付いたチェックボックスは強調色（`FOCUS`）、付いていないチェックボックスは灰色の塗り。スクロールバーのつまみは今までどおり幅 6 の丸で、色を温かい灰色に。部品の配置は変えていない
+- アプリ: `mines`（マスと盤面の地・顔のボタン）、`clock`（文字盤・細い目盛り）、`blocks`（帯の小さな文字）の色をテーマに合わせた（D-061）。`tasks` の下のボタンは角の丸み（半径 14）にかからないことを画面で確かめた
+- ホストのテスト: 枠を描かない（辺の一番外のピクセルも塗りの色）、選んだ行の文字が濃い強調色・フォーカスを外すと灰色の地、既定のボタン、ダイアログの最初のボタンが既定のボタン（`vibe-ui` は 20 本）
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three（強調色が変わった分）, blocks-paused, calc-46, calc-cleared, calc-retro, files-images, mines-counter, mines-flag, mines-lost, mines-open, mines-sad

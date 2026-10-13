@@ -159,6 +159,6 @@ fn draw(c: &mut Canvas, g: &Blocks, paused: bool) {
         let y = BOARD_Y + bh / 2 - 20;
         c.fill_round_rect(BOARD_X + 2, y, bw - 4, 40, &panel, theme::ACCENT, 240);
         draw_text_centered(c, FONT_BOLD, BOARD_X, bw, y + 2, big, rgb(255, 255, 255));
-        draw_text_centered(c, FONT_UI, BOARD_X, bw, y + 20, small, rgb(219, 234, 254));
+        draw_text_centered(c, FONT_UI, BOARD_X, bw, y + 20, small, theme::ACCENT_LIGHT);
     }
 }

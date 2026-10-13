@@ -1,24 +1,31 @@
 //! デスクトップの見た目（色・角の丸み・影）。カーネルの gui とアプリの部品（vibe-ui）で同じものを使う
 //!
-//! 明るい地に強調色 1 色（青）。文字は黒ではなく濃い灰色（DECISIONS.md D-047）。
-//! ウィンドウ・メニューは縁を描かず、2 層の影で背景と分ける。灰色は少し温かい色（D-057、Aster のモックアップ）
+//! 明るい地に強調色 1 色（紫）。文字は黒ではなく濃い灰色（DECISIONS.md D-047）。
+//! ウィンドウ・メニュー・部品は縁を描かず、ウィンドウは 2 層の影で背景と、部品は薄い灰色の塗りで地と分ける。
+//! 灰色は少し温かい色（D-057、Aster のモックアップ）
 
 use crate::canvas::{Color, rgb};
 
-/// 強調色（フォーカス・選んだもの）と、その薄い色（地に敷く）
-pub const ACCENT: Color = rgb(37, 99, 235);
-pub const ACCENT_LIGHT: Color = rgb(219, 230, 252);
+/// 強調色（フォーカスの輪・既定のボタン・チェック）と、その薄い色（選んだもの・フォーカスのあるバーのボタンの地）
+pub const ACCENT: Color = rgb(83, 74, 183);
+pub const ACCENT_LIGHT: Color = rgb(206, 203, 246);
+/// 薄い強調色の地の上の文字（濃い強調色）
+pub const ACCENT_TEXT: Color = rgb(38, 33, 92);
+/// 既定のボタンにマウスを乗せた・押したときの地
+pub const ACCENT_HOVER: Color = rgb(101, 92, 201);
+pub const ACCENT_PRESSED: Color = rgb(66, 58, 152);
 /// 文字と、薄い文字（フォーカスの無いウィンドウの題名・最小化したウィンドウ）
 pub const TEXT: Color = rgb(44, 44, 42);
 pub const TEXT_DIM: Color = rgb(136, 135, 128);
 /// ウィンドウ・パネルの地（タイトルバーも。フォーカスの有無で変えない）
 pub const FACE: Color = rgb(255, 255, 255);
-/// 薄い灰色の地（タイトルバーのボタン）
+/// 薄い灰色の地（タイトルバーのボタン・部品の塗り・一覧の地）
 pub const SUBTLE: Color = rgb(241, 239, 232);
 /// 区切りの線（上端のバー）
 pub const SEPARATOR: Color = rgb(218, 220, 225);
-/// マウスを乗せたボタンの地と、閉じるボタンの地
+/// マウスを乗せたボタンの地と、押したボタンの地（もう一段濃い）、閉じるボタンの地
 pub const HOVER: Color = rgb(211, 209, 199);
+pub const PRESSED: Color = rgb(190, 187, 175);
 pub const CLOSE_HOVER: Color = rgb(226, 67, 72);
 /// 端末の暗いタイトルバーの文字（フォーカスの有無）とボタンの地（ふつう・乗せたとき）
 pub const DARK_TEXT: Color = rgb(222, 221, 214);
@@ -53,7 +60,7 @@ pub const TERMINAL: [Color; 16] = [
 
 /// 角の半径（ウィンドウ・パネル）と、小さな部品の角の半径
 pub const RADIUS: usize = 14;
-pub const RADIUS_SMALL: usize = 4;
+pub const RADIUS_SMALL: usize = 6;
 /// 影は 2 層: 近い影（小さくぼかして少し下へ）と遠い影（大きくぼかして下へ）。色は黒でなく背景の暗い色
 pub const SHADOW_COLOR: Color = rgb(4, 0, 30);
 pub const SHADOW_NEAR_BLUR: usize = 3;

@@ -7,8 +7,8 @@ use vibe_abi::key;
 use vibe_gfx::canvas::{Canvas, Color};
 
 use crate::draw::{
-    self, BUTTON_HOVER, BUTTON_PRESSED, Corners, FIELD, LINE, SELECT, SELECT_INACTIVE, SELECT_TEXT, TEXT, TEXT_DISABLED,
-    THUMB, Text,
+    self, BUTTON_HOVER, BUTTON_PRESSED, Corners, FIELD, FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_PRESSED, PRIMARY_TEXT,
+    SELECT, SELECT_INACTIVE, SELECT_TEXT, TEXT, TEXT_DISABLED, THUMB, Text,
 };
 use crate::{Action, Id, KeyEvent, Rect};
 
@@ -43,7 +43,7 @@ pub struct Label {
     pub color: Color,
     /// 背景の色（None なら塗らない）
     pub bg: Option<Color>,
-    /// 角の丸い枠を付ける（電卓の表示など）
+    /// 角の丸い塗りの欄にする（電卓の表示など）
     pub sunken: bool,
 }
 
@@ -57,7 +57,7 @@ impl Label {
         self
     }
 
-    /// 白地の角の丸い枠（表示欄）
+    /// 薄い灰色の角の丸い塗り（表示欄）
     pub fn display(mut self) -> Label {
         self.bg = Some(FIELD);
         self.sunken = true;
@@ -68,11 +68,19 @@ impl Label {
 pub struct Button {
     pub text: String,
     pub enabled: bool,
+    /// 既定のボタン（強調色の地に白い文字。ダイアログの Enter で押されるもの）
+    pub primary: bool,
 }
 
 impl Button {
     pub fn new(text: &str) -> Button {
-        Button { text: String::from(text), enabled: true }
+        Button { text: String::from(text), enabled: true, primary: false }
+    }
+
+    /// 既定のボタンにする
+    pub fn primary(mut self) -> Button {
+        self.primary = true;
+        self
     }
 }
 
@@ -446,7 +454,7 @@ impl Widget {
         match self {
             Widget::Label(l) => {
                 if l.sunken {
-                    draw::frame(c, r, k, l.bg.unwrap_or(FIELD), LINE);
+                    draw::fill(c, r, k, l.bg.unwrap_or(FIELD));
                 } else if let Some(bg) = l.bg {
                     c.fill_rect(r.x, r.y, r.w, r.h, bg);
                 }
@@ -461,24 +469,28 @@ impl Widget {
                 }
             }
             Widget::Button(b) => {
-                let bg = if !b.enabled {
-                    FIELD
-                } else if pressed {
-                    BUTTON_PRESSED
-                } else if hover {
-                    BUTTON_HOVER
-                } else {
-                    FIELD
+                let primary = b.primary && b.enabled;
+                let bg = match (primary, b.enabled && pressed, b.enabled && hover) {
+                    (true, true, _) => PRIMARY_PRESSED,
+                    (true, false, true) => PRIMARY_HOVER,
+                    (true, false, false) => PRIMARY,
+                    (false, true, _) => BUTTON_PRESSED,
+                    (false, false, true) => BUTTON_HOVER,
+                    (false, false, false) => FIELD,
                 };
-                draw::frame(c, r, k, bg, LINE);
+                draw::fill(c, r, k, bg);
                 if focused {
                     draw::focus_ring(c, r, k);
                 }
-                let color = if b.enabled { TEXT } else { TEXT_DISABLED };
+                let color = match (primary, b.enabled) {
+                    (true, _) => PRIMARY_TEXT,
+                    (false, true) => TEXT,
+                    (false, false) => TEXT_DISABLED,
+                };
                 t.draw_in(c, r, &b.text, Align::Center, color);
             }
             Widget::TextField(f) => {
-                draw::frame(c, r, k, FIELD, LINE);
+                draw::fill(c, r, k, FIELD);
                 if focused {
                     draw::focus_ring(c, r, k);
                 }
@@ -495,7 +507,7 @@ impl Widget {
                 let shown: String = rest.chars().take(n).collect();
                 let top = r.y + (r.h - t.height()) / 2;
                 if f.all_selected && focused {
-                    c.fill_rect(r.x + PAD - 1, top, t.width(&shown) + 2, t.height(), SELECT_INACTIVE);
+                    c.fill_rect(r.x + PAD - 1, top, t.width(&shown) + 2, t.height(), SELECT);
                 }
                 t.draw(c, r.x + PAD, top, &shown, TEXT);
                 if focused && !f.all_selected {
@@ -504,7 +516,7 @@ impl Widget {
                 }
             }
             Widget::List(l) => {
-                draw::frame(c, r, k, FIELD, LINE);
+                draw::fill(c, r, k, FIELD);
                 let rows = List::rows_in(r);
                 let top = l.top.min(l.items.len().saturating_sub(rows));
                 let scroll = l.items.len() > rows;
@@ -540,20 +552,20 @@ impl Widget {
                     c.fill_round_rect(track.x + 2, ty + 1, track.w - 4, th - 2, &k.outer, THUMB, 255);
                 }
                 if focused && l.selected.is_none() {
-                    c.round_rect(r.x + 3, r.y + 3, text_w - 2, ROW_H - 2, &k.outer, SELECT);
+                    c.round_rect(r.x + 3, r.y + 3, text_w - 2, ROW_H - 2, &k.outer, FOCUS);
                 }
             }
             Widget::Checkbox(cb) => {
                 let bx = Rect::new(r.x, r.y + (r.h - 14) / 2, 14, 14);
                 if cb.checked {
-                    c.fill_round_rect(bx.x, bx.y, bx.w, bx.h, &k.outer, SELECT, 255);
+                    c.fill_round_rect(bx.x, bx.y, bx.w, bx.h, &k.outer, FOCUS, 255);
                     // チェックの印（白、2 ピクセルの太さ）
                     for d in 0..2 {
-                        c.line(bx.x + 3, bx.y + 7 + d, bx.x + 5, bx.y + 9 + d, SELECT_TEXT);
-                        c.line(bx.x + 5, bx.y + 9 + d, bx.x + 10, bx.y + 4 + d, SELECT_TEXT);
+                        c.line(bx.x + 3, bx.y + 7 + d, bx.x + 5, bx.y + 9 + d, PRIMARY_TEXT);
+                        c.line(bx.x + 5, bx.y + 9 + d, bx.x + 10, bx.y + 4 + d, PRIMARY_TEXT);
                     }
                 } else {
-                    draw::frame(c, bx, k, FIELD, LINE);
+                    draw::fill(c, bx, k, BUTTON_HOVER);
                 }
                 if focused {
                     draw::focus_ring(c, bx, k);

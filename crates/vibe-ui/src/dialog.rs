@@ -102,8 +102,10 @@ impl Dialog {
         let mut x = (wi - total) / 2;
         let y = h - MARGIN - BUTTON_H;
         let mut ids = Vec::new();
-        for b in buttons {
-            ids.push(ui.add(Rect::new(x, y, bw, BUTTON_H), Button::new(b)));
+        // 最初のボタン（Enter で押されるもの）は既定のボタン
+        for (i, b) in buttons.iter().enumerate() {
+            let button = if i == 0 { Button::new(b).primary() } else { Button::new(b) };
+            ids.push(ui.add(Rect::new(x, y, bw, BUTTON_H), button));
             x += bw + MARGIN;
         }
         if let Some(f) = field {

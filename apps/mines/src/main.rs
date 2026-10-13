@@ -39,10 +39,10 @@ const NUMBER_COLORS: [Color; 8] = [
     rgb(32, 33, 36),
     rgb(110, 114, 122),
 ];
-/// まだ開いていないマス・開いたマス・負けたマスの地
-const CLOSED: Color = rgb(190, 197, 209);
-const CLOSED_TOP: Color = rgb(206, 212, 222);
-const OPENED: Color = rgb(236, 238, 242);
+/// まだ開いていないマス・開いたマス・負けたマスの地（テーマの温かい灰色に合わせる）
+const CLOSED: Color = rgb(190, 187, 174);
+const CLOSED_TOP: Color = rgb(210, 207, 195);
+const OPENED: Color = theme::SUBTLE;
 const LOST: Color = rgb(239, 68, 68);
 
 struct Game {
@@ -129,10 +129,9 @@ fn counter(c: &mut Canvas, k: &Corner, x: i32, value: i32) {
     draw_text_centered(c, FONT_MONO, x, 40, top, &text, rgb(248, 113, 113));
 }
 
-/// 顔のボタン（黄色の丸に目と口）
+/// 顔のボタン（薄い灰色の塗りの上に、黄色の丸に目と口。部品のボタンと同じく枠は描かない）
 fn face(c: &mut Canvas, k: &Corner, state: State) {
-    c.fill_round_rect(FACE_X, MARGIN, 24, PANEL_H, k, rgb(255, 255, 255), 255);
-    c.round_rect(FACE_X, MARGIN, 24, PANEL_H, k, rgb(198, 201, 208));
+    c.fill_round_rect(FACE_X, MARGIN, 24, PANEL_H, k, theme::SUBTLE, 255);
     let (cx, cy) = (FACE_X + 12, MARGIN + 12);
     c.fill_round_rect(cx - 8, cy - 8, 16, 16, &Corner::new(8), rgb(250, 204, 21), 255);
     let ink = theme::TEXT;
@@ -170,6 +169,8 @@ fn draw(c: &mut Canvas, g: &Game) {
     counter(c, &k, W as i32 - MARGIN - 40, g.seconds().min(999) as i32);
     face(c, &k, g.mines.state());
     let p = |v: i32| v * 16 + 8;
+    // 盤面の地は開いたマスの色（まだ開いていないマスの周りの隙間が白く見えないように）
+    c.fill_rect(BOARD_X, BOARD_Y, COLS as i32 * CELL, ROWS as i32 * CELL, OPENED);
     for cy in 0..ROWS {
         for cx in 0..COLS {
             let (x, y) = (BOARD_X + cx as i32 * CELL, BOARD_Y + cy as i32 * CELL);
