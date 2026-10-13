@@ -348,7 +348,9 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
                 // タイトルはプログラムの名前（拡張子を除く）
                 let name = sched::current_name();
                 let title = name.rsplit_once('.').map_or(name.as_str(), |(base, _)| base);
-                let id = s.create_window(APP_W, APP_H, title, Some(sched::current_id()), true, Some(sched::current_tty()));
+                let app = title.to_ascii_lowercase();
+                let id =
+                    s.create_window(APP_W, APP_H, title, Some(sched::current_id()), true, Some(sched::current_tty()), &app);
                 u.display = Some(id);
             }
             s.set_cursor_visible(a & vibe_abi::GFX_CURSOR != 0);
@@ -399,7 +401,10 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             }
             let title = user_str(user, c, d)?;
             let tty = Some(sched::current_tty());
-            let id = SCREEN.lock().create_window(w, h, &title, Some(sched::current_id()), false, tty);
+            // アイコンはプログラムの名前（小文字、拡張子を除く）から
+            let name = sched::current_name().to_ascii_lowercase();
+            let app = name.rsplit_once('.').map_or(name.as_str(), |(base, _)| base);
+            let id = SCREEN.lock().create_window(w, h, &title, Some(sched::current_id()), false, tty, app);
             user.lock().windows.push(id);
             SCREEN.lock().present();
             Ok(id)

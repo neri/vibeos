@@ -19,6 +19,7 @@ mouse-button left down
 mouse-button left up
 sleep 300
 expect-screen wallpaper-center 236 198 168 108
+# 真ん中に置いた画像の周りは、sh が作る背景の色（8 ビットの DESKTOP_BG）
 expect-pixel 600 30 0 103 55
 # バーの Terminal 1 のボタン（→ 100,10）で戻す
 mouse-move -530 -50
@@ -33,7 +34,7 @@ expect-screen wallpaper-tile 300 24 340 22
 type wallpaper none
 key ret
 sleep 300
-expect-pixel 300 30 0 103 55
+expect-pixel 300 30 65 112 196
 type wallpaper /hello.txt
 key ret
 wait-serial wallpaper: /hello.txt: not a BMP file

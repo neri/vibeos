@@ -13,6 +13,6 @@ type hello
 key ret
 wait-serial primes below 20000: 2262
 # 背景（右下）・上端のバー（右上）の色
-expect-pixel 1000 700 0 103 55
-expect-pixel 1020 9 0 0 168
+expect-pixel 1000 700 139 105 185
+expect-pixel 1020 9 244 245 248
 serial-absent PANIC

@@ -1,0 +1,9 @@
+[package]
+name = "vibe-icongen"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "手で書いた SVG（の一部）のアイコンをラスタライズして 1 つのファイル（ICONS.VIA）にまとめるホスト側ツール"
+
+[dependencies]
+vibe-gfx = { path = "../../crates/vibe-gfx" }

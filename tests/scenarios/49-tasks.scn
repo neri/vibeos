@@ -29,7 +29,7 @@ wait-serial tasks: killed
 wait-serial (life.ELF)
 sleep 500
 # life のウィンドウが消えた（tasks の左側に見えていた所が背景に戻る）
-expect-pixel 125 86 0 103 55
+expect-pixel 125 86 71 111 195
 # カーネルスレッドは止められない（先頭の boot か idle を選んで Delete キー）
 key home
 key delete

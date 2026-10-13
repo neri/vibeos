@@ -396,6 +396,41 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// 角の丸い矩形 (x, y, w, h) の影。`shadow` と同じだが、矩形の中でも角の外（丸めて欠けた所）には描く
+    #[allow(clippy::too_many_arguments)]
+    pub fn shadow_round(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        dy: i32,
+        shadow: &Shadow,
+        corner: &Corner,
+        c: Color,
+        a: u8,
+    ) {
+        let b = shadow.blur as i32;
+        let (sx, sy, sw, sh) = (x - b, y + dy - b, w + 2 * b, h + 2 * b);
+        let Some((x0, y0, x1, y1)) = self.clip(sx, sy, sw, sh) else { return };
+        for row in y0..y1 {
+            let py = row as i32;
+            let inside_y = py >= y && py < y + h;
+            let s = row * self.width;
+            for col in x0..x1 {
+                let px = col as i32;
+                if inside_y && px >= x && px < x + w && corner.at(px - x, py - y, w, h) == 255 {
+                    continue;
+                }
+                let k = shadow.alpha_at(px, py, x, y, w, h, dy) as u32 * a as u32 / 255;
+                if k > 0 {
+                    let p = &mut self.pixels[s + col];
+                    *p = blend(*p, c, k as u8);
+                }
+            }
+        }
+    }
+
     /// 32 ビットの画像（幅 `src_w`）をそのまま転送する
     pub fn blit(&mut self, x: i32, y: i32, src: &[Color], src_w: usize) {
         if src_w == 0 {

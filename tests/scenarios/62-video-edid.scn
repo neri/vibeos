@@ -14,5 +14,5 @@ wait-serial VibeOS shell
 type hello
 key ret
 wait-serial primes below 20000: 2262
-expect-pixel 1590 1190 0 103 55
+expect-pixel 1590 1190 145 104 184
 serial-absent PANIC

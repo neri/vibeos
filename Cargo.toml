@@ -65,6 +65,7 @@ members = [
     "crates/vibe-ui",
     "tools/mkassets",
     "tools/vibe-fontgen",
+    "tools/vibe-icongen",
     "tools/vibe-lzsa",
     "tools/vibe-run",
 ]
@@ -92,6 +93,7 @@ default-members = [
     "crates/vibe-ui",
     "tools/mkassets",
     "tools/vibe-fontgen",
+    "tools/vibe-icongen",
     "tools/vibe-lzsa",
     "tools/vibe-run",
 ]
@@ -110,7 +112,6 @@ opt-level = "z"
 opt-level = "z"
 [profile.release.package.vibe-line]
 opt-level = "z"
-
 # 圧縮器のテストは大きなデータを最適パースするので、テスト（dev）でも最適化する
 [profile.dev.package.vibe-lzsa]
 opt-level = 3

@@ -24,6 +24,7 @@
 //! ウィンドウの持ち主はそれぞれのキューから読む（`read_key` / `poll_mouse`）。
 
 mod bar;
+mod deco;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -33,7 +34,7 @@ use alloc::vec::Vec;
 
 use vibe_font::FONT_8X8;
 use vibe_gfx::canvas::{self, Canvas};
-use vibe_gfx::{Surface, palette};
+use vibe_gfx::{Surface, palette, theme};
 use vibe_keyboard::{KeyCode, KeyEvent, Modifiers};
 
 use crate::drivers::vga::{self, MAX_WIDTH};
@@ -55,9 +56,6 @@ pub const FS_BAR_H: usize = 8;
 const BUTTON_W: usize = 20;
 const BUTTON_GAP: usize = 2;
 pub const DESKTOP_BG: u8 = palette::DESKTOP_BG;
-const BORDER: u8 = palette::LIGHT_GRAY;
-const TITLE_ACTIVE: u8 = palette::BLUE;
-const TITLE_INACTIVE: u8 = palette::DARK_GRAY;
 /// デスクトップの端末のウィンドウの大きさ（文字数）。左下に置く
 const TERMINAL_COLS: usize = 80;
 const TERMINAL_ROWS: usize = 25;
@@ -165,6 +163,8 @@ struct Window {
     closable: bool,
     /// タイトルバー（32 ビット、幅 × TITLE_H）
     titlebar: Vec<u32>,
+    /// タイトルバー・上端のバーのボタンに出すアイコン（16x16）
+    icon: Option<&'static [u32]>,
     /// 独自のパレット（全画面で前に出ている間だけ使う）
     palette: Option<Box<[[u8; 3]; 256]>>,
     /// 独自のパレットの色番号 → 32 ビットの色（デスクトップで重ね合わせるときに使う）
@@ -277,6 +277,10 @@ pub struct Screen {
     std_lut: [u32; 256],
     /// デスクトップの上端のバー（32 ビット、画面の幅 × BAR_H）
     bar: Vec<u32>,
+    /// 角の丸み・影の表とカーソル（デスクトップにするときに作る）
+    deco: Option<Box<deco::Deco>>,
+    /// マウスが乗っているタイトルバーのボタン
+    hover: Option<(WinId, Part)>,
 }
 
 /// 画面。コンソール（gfx::console の CONSOLE）と両方取るときはコンソールを先に取ること
@@ -305,6 +309,8 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     wallpaper: None,
     std_lut: [0; 256],
     bar: Vec::new(),
+    deco: None,
+    hover: None,
 });
 
 /// キー・マウス・閉じる要求が届いたら起こされる
@@ -355,7 +361,9 @@ pub fn start_desktop() -> bool {
     let bg = s.std_lut[palette::BLACK as usize];
     let width = s.width;
     s.bar = vec![0; width * BAR_H];
+    s.deco = Some(Box::new(deco::Deco::new()));
     if let Some(c) = s.windows.get_mut(&CONSOLE) {
+        c.icon = crate::gfx::icons::get("terminal");
         c.w = cw;
         c.h = ch;
         c.x = 8;
@@ -398,6 +406,7 @@ fn new_window(
         kill_on_close,
         closable,
         titlebar: Vec::new(),
+        icon: None,
         palette: None,
         lut: None,
         keys: Ring::new(NO_KEY),
@@ -441,7 +450,8 @@ impl Screen {
     }
 
     /// ウィンドウを作って前に出す。`kill_on_close` なら [x] で持ち主を止め、そうでなければ閉じる要求のイベントを届ける。
-    /// `tty` は属する端末（作ったプロセスの端末）
+    /// `tty` は属する端末（作ったプロセスの端末）、`app` はアイコンを選ぶアプリの名前（小文字、拡張子なし）
+    #[allow(clippy::too_many_arguments)]
     pub fn create_window(
         &mut self,
         w: usize,
@@ -450,11 +460,14 @@ impl Screen {
         owner: Option<TaskId>,
         kill_on_close: bool,
         tty: Option<WinId>,
+        app: &str,
     ) -> WinId {
         let id = self.add_window(w, h, title, owner, kill_on_close);
         if let Some(win) = self.windows.get_mut(&id) {
             win.tty = tty;
+            win.icon = crate::gfx::icons::for_app(app);
         }
+        self.refresh_titlebars();
         id
     }
 
@@ -467,6 +480,7 @@ impl Screen {
         };
         let id = self.add_window_with(w, h, title, None, false, self.mode == Mode::Desktop);
         if let Some(win) = self.windows.get_mut(&id) {
+            win.icon = crate::gfx::icons::get("terminal");
             win.terminal = true;
             win.tty = Some(id);
             if self.mode == Mode::Fullscreen {
@@ -668,7 +682,7 @@ impl Screen {
 
     fn mark_cursor_rows(&mut self) {
         let y = self.cursor_y.max(0) as usize;
-        self.mark_rows(y, y + CURSOR_SHAPE.len());
+        self.mark_rows(y, y + CURSOR_SHAPE.len().max(deco::CURSOR_H));
     }
 
     fn mark_rows(&mut self, y0: usize, y1: usize) {
@@ -762,9 +776,10 @@ impl Screen {
             return;
         }
         let focused = self.focused();
-        let lut = &self.std_lut;
+        let hover = self.hover;
         for (&id, win) in self.windows.iter_mut() {
-            render_titlebar(win, Some(id) == focused, lut);
+            let part = hover.filter(|h| h.0 == id).map(|h| h.1);
+            render_titlebar(win, Some(id) == focused, part);
         }
     }
 
@@ -798,11 +813,13 @@ impl Screen {
     fn move_window(&mut self, id: WinId, x: i32, y: i32) {
         let (sw, sh) = (self.width as i32, self.height as i32);
         let Some(win) = self.windows.get_mut(&id) else { return };
-        let old = (win.y - TITLE_H as i32 - 1, win.y + win.h as i32 + 1);
+        // 影の分も描き直す
+        let m = deco::SHADOW_MARGIN;
+        let old = (win.y - TITLE_H as i32 - 1 - m, win.y + win.h as i32 + 1 + m);
         // タイトルバーが上端のバーの下に、少なくとも一部が画面に残るようにする
         win.x = x.clamp(-(win.w as i32) + 40, sw - 40);
         win.y = y.clamp((BAR_H + TITLE_H + 1) as i32, sh - 4);
-        let new = (win.y - TITLE_H as i32 - 1, win.y + win.h as i32 + 1);
+        let new = (win.y - TITLE_H as i32 - 1 - m, win.y + win.h as i32 + 1 + m);
         for (a, b) in [old, new] {
             self.mark_rows(a.max(0) as usize, b.max(0) as usize);
         }
@@ -811,6 +828,9 @@ impl Screen {
     /// 入力スレッドから: マウスが (x, y)（画面の座標）にあり、ボタンが `buttons`
     fn on_mouse(&mut self, x: i32, y: i32, buttons: u8) -> Option<MouseAction> {
         self.set_cursor(x, y);
+        if self.mode == Mode::Desktop {
+            self.update_hover(x, y, buttons);
+        }
         let left = buttons & 1 != 0;
         let was_left = self.buttons & 1 != 0;
         self.buttons = buttons;
@@ -899,6 +919,28 @@ impl Screen {
             self.capture = None;
         }
         action
+    }
+
+    /// マウスが乗っているタイトルバーのボタンが変わったら、そのタイトルバーを描き直す
+    fn update_hover(&mut self, x: i32, y: i32, buttons: u8) {
+        let hover = match self.hit(x, y) {
+            Some((id, p @ (Part::Close | Part::Minimize))) if buttons == 0 && self.drag.is_none() && self.menu.is_none() => {
+                Some((id, p))
+            }
+            _ => None,
+        };
+        if hover == self.hover {
+            return;
+        }
+        let old = core::mem::replace(&mut self.hover, hover);
+        let focused = self.focused();
+        for (id, _) in [old, hover].into_iter().flatten() {
+            let Some(w) = self.windows.get_mut(&id) else { continue };
+            let part = hover.filter(|h| h.0 == id).map(|h| h.1);
+            render_titlebar(w, focused == Some(id), part);
+            let (top, bottom) = ((w.y - TITLE_H as i32).max(0) as usize, w.y.max(0) as usize);
+            self.mark_rows(top, bottom);
+        }
     }
 
     /// [x] が押された。gfx_open の画面なら持ち主のプロセスを、端末ならその端末のプロセスを止める
@@ -991,9 +1033,10 @@ impl Screen {
         // SAFETY: ROW8・ROW32 は SCREEN のロックの中（ここ）でだけ触る
         let row8 = unsafe { &mut (&mut *ROW8.as_ptr())[..self.width] };
         let row32 = unsafe { &mut (&mut *ROW32.as_ptr())[..self.width] };
+        let focused = self.focused();
         for y in self.dirty_lo..self.dirty_hi {
             if self.mode == Mode::Desktop {
-                self.compose_desktop_row(y, row32);
+                self.compose_desktop_row(y, row32, focused);
                 if self.cursor_visible {
                     self.draw_cursor_row32(y, row32);
                 }
@@ -1064,8 +1107,7 @@ impl Screen {
     }
 
     /// デスクトップの 1 行（32 ビット）
-    fn compose_desktop_row(&self, y: usize, row: &mut [u32]) {
-        let lut = &self.std_lut;
+    fn compose_desktop_row(&self, y: usize, row: &mut [u32], focused: Option<WinId>) {
         if y < BAR_H {
             row.copy_from_slice(&self.bar[y * self.width..(y + 1) * self.width]);
             return;
@@ -1073,62 +1115,63 @@ impl Screen {
         match &self.wallpaper {
             Some(wp) => {
                 let r = y - BAR_H;
-                convert_row(row, &wp[r * self.width..(r + 1) * self.width], lut);
+                convert_row(row, &wp[r * self.width..(r + 1) * self.width], &self.std_lut);
             }
-            None => row.fill(lut[DESKTOP_BG as usize]),
+            // 背景の画像が無ければ縦のグラデーション
+            None => {
+                let n = (self.height - BAR_H - 1) as u32;
+                row.fill(canvas::lerp(theme::DESKTOP_TOP, theme::DESKTOP_BOTTOM, (y - BAR_H) as u32, n));
+            }
         }
         for &id in &self.order {
-            self.draw_window_row(id, y as i32, row);
+            self.draw_window_row(id, y as i32, row, focused == Some(id));
         }
         self.draw_menu_row(y, row);
     }
 
-    fn draw_window_row(&self, id: WinId, y: i32, row: &mut [u32]) {
+    /// ウィンドウ（枠とタイトルバーを含む角の丸い矩形と影）の `y` 行目を重ねる
+    fn draw_window_row(&self, id: WinId, y: i32, row: &mut [u32], focused: bool) {
         let w = &self.windows[&id];
+        let Some(deco) = &self.deco else { return };
         if w.minimized {
             return;
         }
-        let top = w.y - TITLE_H as i32 - 1;
-        let bottom = w.y + w.h as i32;
-        if y < top || y > bottom {
+        // 枠を含む矩形
+        let rect = (w.x - 1, w.y - TITLE_H as i32 - 1, w.w as i32 + 2, w.h as i32 + TITLE_H as i32 + 2);
+        let m = deco::SHADOW_MARGIN;
+        if y < rect.1 - m || y >= rect.1 + rect.3 + m {
             return;
         }
-        let (left, right) = (w.x - 1, w.x + w.w as i32);
-        let width = row.len() as i32;
-        let border = self.std_lut[BORDER as usize];
-        let mut put = |x: i32, c: u32| {
-            if (0..width).contains(&x) {
-                row[x as usize] = c;
+        let alpha = if focused { theme::SHADOW_ALPHA } else { theme::SHADOW_ALPHA_INACTIVE };
+        let fill = |x0: i32, span: &mut [u32]| {
+            // 中身（タイトルバーか、ウィンドウの中身）の行と、その左端の x
+            let src = if y >= w.y - TITLE_H as i32 && y < w.y {
+                let r = (y - (w.y - TITLE_H as i32)) as usize;
+                Row::P32(&w.titlebar[r * w.w..(r + 1) * w.w])
+            } else if y >= w.y && y < w.y + w.h as i32 {
+                self.client_row(id, (y - w.y) as usize)
+            } else {
+                return;
+            };
+            let (s0, s1) = ((x0 - w.x).max(0), (x0 + span.len() as i32 - w.x).min(w.w as i32));
+            if s0 >= s1 {
+                return;
             }
-        };
-        if y == top || y == bottom {
-            for x in left..=right {
-                put(x, border);
-            }
-            return;
-        }
-        put(left, border);
-        put(right, border);
-        let src = if y < w.y {
-            let r = (y - top - 1) as usize;
-            Row::P32(&w.titlebar[r * w.w..(r + 1) * w.w])
-        } else {
-            self.client_row(id, (y - w.y) as usize)
-        };
-        // 画面からはみ出す部分を切る
-        let x0 = w.x.max(0);
-        let x1 = (w.x + w.w as i32).min(width);
-        if x0 < x1 {
-            let s0 = (x0 - w.x) as usize;
-            let (dst, n) = (&mut row[x0 as usize..x1 as usize], (x1 - x0) as usize);
+            let d = &mut span[(w.x + s0 - x0) as usize..(w.x + s1 - x0) as usize];
+            let (s0, s1) = (s0 as usize, s1 as usize);
             match src {
-                Row::P8(r) => convert_row(dst, &r[s0..s0 + n], w.lut.as_deref().unwrap_or(&self.std_lut)),
-                Row::P32(r) => dst.copy_from_slice(&r[s0..s0 + n]),
+                Row::P8(r) => convert_row(d, &r[s0..s1], w.lut.as_deref().unwrap_or(&self.std_lut)),
+                Row::P32(r) => d.copy_from_slice(&r[s0..s1]),
             }
-        }
+        };
+        deco::panel_row(row, y, rect, &deco.corner, Some((&deco.shadow, alpha)), theme::BORDER, fill);
     }
 
     fn draw_cursor_row32(&self, y: usize, row: &mut [u32]) {
+        if let Some(d) = &self.deco {
+            deco::cursor_row(row, y as i32, self.cursor_x, self.cursor_y, &d.cursor);
+            return;
+        }
         let dy = y as i32 - self.cursor_y;
         if dy < 0 || dy >= CURSOR_SHAPE.len() as i32 {
             return;
@@ -1240,29 +1283,51 @@ pub(crate) fn draw_label(c: &mut Canvas, face: Face, x: i32, top: i32, h: i32, t
     }
 }
 
-/// タイトルバーを描く（フォーカスがあれば青、なければ灰色。右端に [_] と、閉じられるなら [x]）
-fn render_titlebar(w: &mut Window, focused: bool, lut: &[u32; 256]) {
+/// タイトルバーを描く: 左にアイコンと題名（太字）、右端に [_] と、閉じられるなら [x]（線の記号。マウスが乗ると
+/// 地に色が付き、[x] は赤）。フォーカスがあれば明るい地に濃い文字、無ければ灰色の地に薄い文字
+fn render_titlebar(w: &mut Window, focused: bool, hover: Option<Part>) {
     let close_x = w.close_box_x();
     let min_x = w.minimize_box_x();
     w.titlebar.resize(w.w * TITLE_H, 0);
     let mut c = Canvas::new(&mut w.titlebar, w.w, TITLE_H);
-    c.clear(lut[if focused { TITLE_ACTIVE } else { TITLE_INACTIVE } as usize]);
-    let n = label_fit(Face::Bold, &w.title, min_x - 12);
+    let h = TITLE_H as i32;
+    let (bg, fg) = if focused { (theme::FACE, theme::TEXT) } else { (theme::FACE_INACTIVE, theme::TEXT_DIM) };
+    c.clear(bg);
+    c.hline(0, h - 1, w.w as i32, theme::SEPARATOR);
+    let mut tx = 8;
+    if let Some(icon) = w.icon {
+        let s = crate::gfx::icons::SIZE as i32;
+        c.blit_alpha(6, (h - s) / 2, icon, s as usize);
+        tx = 6 + s + 6;
+    }
+    let n = label_fit(Face::Bold, &w.title, min_x - tx - 4);
     let title: String = w.title.chars().take(n).collect();
-    draw_label(&mut c, Face::Bold, 6, 0, TITLE_H as i32, &title, lut[palette::WHITE as usize]);
-    // ボタン: 16x16 の灰色の四角に記号
-    let (b, top) = (16, (TITLE_H as i32 - 16) / 2);
-    let pad = (BUTTON_W as i32 - b) / 2;
-    let (face, ink) = (lut[palette::LIGHT_GRAY as usize], lut[palette::BLACK as usize]);
-    let mx = min_x + pad;
-    c.fill_rect(mx, top, b, b, face);
-    c.fill_rect(mx + 4, top + b - 5, b - 8, 2, ink);
+    draw_label(&mut c, Face::Bold, tx, 0, h - 1, &title, fg);
+    // ボタン: 押せる所（幅 BUTTON_W）の中に 2 ピクセル空けた角の丸い地と、真ん中に 10x10 の記号
+    let corner = canvas::Corner::new(theme::RADIUS_SMALL);
+    let ink = if focused { theme::TEXT } else { theme::TEXT_DIM };
+    let button = |c: &mut Canvas, x: i32, part: Part| -> canvas::Color {
+        if hover == Some(part) {
+            let bgc = if part == Part::Close { theme::CLOSE_HOVER } else { theme::HOVER };
+            c.fill_round_rect(x, 2, BUTTON_W as i32, h - 5, &corner, bgc, 255);
+            if part == Part::Close { canvas::rgb(255, 255, 255) } else { ink }
+        } else {
+            ink
+        }
+    };
+    let (gx, gy) = ((BUTTON_W as i32 - 10) / 2, (h - 1 - 10) / 2);
+    let col = button(&mut c, min_x, Part::Minimize);
+    c.fill_rect(min_x + gx, gy + 5, 10, 1, col);
+    c.fill_rect(min_x + gx, gy + 6, 10, 1, canvas::blend(bg, col, 90));
     if let Some(x) = close_x {
-        let x = x + pad;
-        c.fill_rect(x, top, b, b, face);
-        for d in 0..2 {
-            c.line(x + 4 + d, top + 4, x + b - 5 + d, top + b - 5, ink);
-            c.line(x + b - 5 + d, top + 4, x + 4 + d, top + b - 5, ink);
+        let col = button(&mut c, x, Part::Close);
+        // ×: 2 本の斜めの線（隣のピクセルを薄く重ねて太さとなめらかさを出す）
+        for d in 0..10 {
+            for (px, py) in [(x + gx + d, gy + d), (x + gx + 9 - d, gy + d)] {
+                c.blend_pixel(px, py, col, 255);
+                c.blend_pixel(px + 1, py, col, 110);
+                c.blend_pixel(px - 1, py, col, 50);
+            }
         }
     }
 }
@@ -1326,7 +1391,7 @@ fn menu_items() -> Vec<String> {
     items
 }
 
-const MENU_TERMINAL: &str = "Terminal";
+pub(super) const MENU_TERMINAL: &str = "Terminal";
 
 /// メニューから起動する。アプリは最初の端末につながる（出力はそこに出る）。終わるのは誰も待たない
 fn launch(name: &str) {

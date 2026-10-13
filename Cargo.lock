@@ -576,6 +576,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vibe-icongen"
+version = "0.1.0"
+dependencies = [
+ "vibe-gfx",
+]
+
+[[package]]
 name = "vibe-keyboard"
 version = "0.1.0"
 

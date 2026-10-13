@@ -540,3 +540,16 @@
 - 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, calc-46, clip-edit, clip-selected, desktop-moved, desktop-terminal, files-images, net-statusbar-ip, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-tile。新しく fonts-fallback（`65-fonts-missing`）。アプリの中身だけを切り抜くもの（mines・blocks・calc-cleared・tasks-header など）はそのまま通った
 - ktest `fonts_loaded`
 - フロッピーの空き: 圧縮したイメージ 617,984 バイト、圧縮しないイメージ（`vibeos-raw.img`）13,824 バイト（フォントと OFL.TXT で約 14KB 使った）
+
+## 2026-10-13 見た目を今風に M4: ウィンドウの見た目（ブランチ `modern-look`）
+
+- `vibe_gfx::theme`（色・半径・影）。`Canvas::shadow_round`（角の丸い矩形の影。丸めて欠けた所にも描く）
+- `gui/deco.rs`: 角の丸いパネル（ウィンドウ・メニュー）の 1 行を、影 → 中身 → 1 ピクセルの縁 → 角を覆う割合で下と混ぜる、の順に描く `panel_row`。角の所の下の色は先に取っておく。アルファ付きのカーソル（多角形を 4×4 の点で数える。影は 3×3 でぼかす）
+- タイトルバー: 明るい地・アイコン・太字の題名・線の記号のボタン。マウスが乗ったボタン（`Screen::hover`）だけ描き直す。上端のバー: 明るい地・強調色の「VibeOS」・アイコン付きのボタン（フォーカスは薄い強調色の角の丸い地）。メニュー: 影付きの角の丸いパネルにアイコンと名前
+- 背景の画像が無ければ縦のグラデーション（行ごとに 1 回 `lerp`）
+- アイコン: `vibe_gfx::icons`（`.VIA`。名前の順に 16x16 を並べる）、`tools/vibe-icongen`（SVG の一部を自分で読むラスタライザ）、`assets/icons/*.svg`（AI が手で書いた 18 個）→ `ICONS.VIA`（18,656 バイト、gzip で 2,537 バイト）。カーネルは `gfx::icons` で読み込み、ウィンドウを作るときにプログラムの名前で選ぶ（`create_window` に引数 `app`）
+- 詰まったこと 1: 圧縮しないイメージが約 8KB 入らなくなった（カーネル 425,784 バイト）。カーネルを opt-level 2 にすると 391,224 バイトで入ったが、オーナーの指示で、圧縮しないイメージに入れるアプリを減らすことにした（`RAW_APPS`、D-050）。空きは 652,800 バイト
+- 詰まったこと 2: `32-net-arp` が 3 回に 1 回ほど失敗した。フォントを読み込む間に DHCP が終わり、アドレスの知らせが VIBEOS READY より前に出ていた（シナリオはその後ろを探す）。フォントとアイコンをネットワークより先に読むようにした（5 回続けて通った）
+- シナリオの色を直した: 背景はグラデーションの値（y から計算）、タイトルバーは文字の無い下の方の行で明るい地・灰色の地、上端のバーは明るい灰色。カーソルが大きくなり、確かめる点が重なった 28 の 1 か所をずらした。52 の真ん中に置いた画像の周りは `sh` の 8 ビットの背景の色のまま
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, calc-46, clip-edit, clip-selected, desktop-moved, desktop-terminal, files-images, fonts-fallback, mines-flag, mines-lost, mines-open（カーソルが写る）, net-statusbar-ip, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-tile
+- シナリオ `66-title-hover`（[x] に乗せると赤、[_] に移ると灰色、離れると戻る）

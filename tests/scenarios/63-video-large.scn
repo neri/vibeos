@@ -11,7 +11,7 @@ type clock &
 key ret
 wait-serial clock: started
 sleep 500
-expect-pixel 1910 1190 0 103 55
+expect-pixel 1910 1190 145 104 184
 # 時計のウィンドウ（中身の左上 120,73）の中は白い文字盤の地
 expect-pixel 125 86 255 255 255
 serial-absent PANIC

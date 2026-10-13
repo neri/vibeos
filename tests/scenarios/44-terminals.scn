@@ -58,9 +58,9 @@ wait-serial term: stopping life.ELF
 wait-serial term: closed terminal 2
 sleep 500
 # 端末 2・clock・life のあった所は背景に戻る
-expect-pixel 600 100 0 103 55
-expect-pixel 200 150 0 103 55
-expect-pixel 300 200 0 103 55
+expect-pixel 600 100 72 111 195
+expect-pixel 200 150 78 111 194
+expect-pixel 300 200 83 110 193
 # フォーカスは端末 1 に戻る
 type echo "still" here
 key ret
