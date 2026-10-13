@@ -127,11 +127,13 @@ endif
 # ボリュームシリアルを固定して、同じ入力なら同じイメージになるようにする。
 # BPB は boot.asm にも同じ値で書いてあり、mkfs.fat の BPB（オフセット 11〜61）と
 # 一致することを確かめてから boot.bin で上書きする。
+# （macOS の cmp は通常ファイルどうしで -i と -n を併用すると誤って EOF を報告するので、
+#   boot.bin は標準入力から渡す）
 # $(1) = 出力イメージ, $(2) = kernel.sys, $(3) = アプリのディレクトリ（BIN/*.ELF）
 define make-image
 	rm -f $(1).tmp
 	mkfs.fat -C -F 12 -R 1 -i 56494245 -n VIBEOS $(1).tmp 1440 >/dev/null
-	@cmp -s -i 11 -n 51 $(1).tmp $(BUILD)/boot.bin || { \
+	@cmp -s -i 11 -n 51 $(1).tmp - < $(BUILD)/boot.bin || { \
 		echo "BPB in boot/boot.asm differs from mkfs.fat"; rm -f $(1).tmp; exit 1; }
 	dd if=$(BUILD)/boot.bin of=$(1).tmp conv=notrunc bs=512 count=1 status=none
 	mcopy -i $(1).tmp $(BUILD)/loader.bin ::LOADER.SYS
