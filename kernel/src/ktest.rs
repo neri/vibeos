@@ -715,7 +715,7 @@ fn fs_write_and_sync() {
 /// QEMU の速さで見るので実機の保証ではない）: グラデーションの背景、影と角の丸い枠の付いたウィンドウ 4 つ
 /// （中身は 8 ビットを表で直す）
 fn gfx_compose_speed() {
-    use vibe_gfx::canvas::{Corner, Shadow, lerp, rgb};
+    use vibe_gfx::canvas::{Corner, Shadow, rgb};
     use vibe_gfx::panel::{PanelStyle, ShadowLayer, panel_row};
     const W: usize = 1024;
     const H: usize = 768;
@@ -723,7 +723,7 @@ fn gfx_compose_speed() {
     const CW: usize = 400;
     const CH: usize = 300;
     const TH: usize = 24;
-    // デスクトップと同じく 1 行ずつ: 背景 → 4 つのウィンドウ（影・タイトルバー・8 ビットの中身）
+    // デスクトップと同じく 1 行ずつ: 既定の背景（紫の地に円） → 4 つのウィンドウ（影・タイトルバー・8 ビットの中身）
     let mut screen = vec![0u32; W * H];
     let client = vec![7u8; CW * CH];
     let titlebar = vec![rgb(250, 250, 251); CW * TH];
@@ -740,7 +740,7 @@ fn gfx_compose_speed() {
     let start = pit::ticks();
     for f in 0..FRAMES as i32 {
         for (y, row) in screen.chunks_exact_mut(W).enumerate() {
-            row.fill(lerp(rgb(70, 110, 190), rgb(150, 90, 170), y as u32, H as u32 - 1));
+            vibe_gfx::backdrop::fill_row(row, y, H, theme::DESKTOP, &theme::DESKTOP_CIRCLES);
             for i in 0..4 {
                 let (x, top) = (60 + i * 150 + f, 60 + i * 100);
                 let rect = (x, top, CW as i32, (TH + CH) as i32);

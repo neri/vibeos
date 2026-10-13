@@ -4,6 +4,7 @@
 //! ウィンドウ・メニュー・部品は縁を描かず、ウィンドウは 2 層の影で背景と、部品は薄い灰色の塗りで地と分ける。
 //! 灰色は少し温かい色（D-057、Aster のモックアップ）
 
+use crate::backdrop::Circle;
 use crate::canvas::{Color, rgb};
 
 /// 強調色（フォーカスの輪・既定のボタン・チェック）と、その薄い色（選んだもの・フォーカスのあるバーのボタンの地）
@@ -21,8 +22,6 @@ pub const TEXT_DIM: Color = rgb(136, 135, 128);
 pub const FACE: Color = rgb(255, 255, 255);
 /// 薄い灰色の地（タイトルバーのボタン・部品の塗り・一覧の地）
 pub const SUBTLE: Color = rgb(241, 239, 232);
-/// 区切りの線（上端のバー）
-pub const SEPARATOR: Color = rgb(218, 220, 225);
 /// マウスを乗せたボタンの地と、押したボタンの地（もう一段濃い）、閉じるボタンの地
 pub const HOVER: Color = rgb(211, 209, 199);
 pub const PRESSED: Color = rgb(190, 187, 175);
@@ -32,11 +31,19 @@ pub const DARK_TEXT: Color = rgb(222, 221, 214);
 pub const DARK_TEXT_DIM: Color = rgb(128, 128, 122);
 pub const DARK_BUTTON: Color = rgb(68, 68, 65);
 pub const DARK_HOVER: Color = rgb(95, 94, 90);
-/// 上端のバー
-pub const BAR: Color = rgb(244, 245, 248);
-/// 背景のグラデーション（上 → 下）
-pub const DESKTOP_TOP: Color = rgb(64, 112, 196);
-pub const DESKTOP_BOTTOM: Color = rgb(146, 104, 184);
+/// 上端のバーの文字（地は塗らず背景の上に描く）と、最小化したウィンドウの文字
+pub const BAR_TEXT: Color = rgb(238, 237, 254);
+pub const BAR_TEXT_DIM: Color = rgb(168, 162, 216);
+/// 上端のバーのフォーカスのあるウィンドウ・開いているメニューのボタンの地（白をこの濃さで重ねる）
+pub const BAR_PILL_ALPHA: u8 = 51;
+/// 背景の画像の上のバーに重ねる黒の濃さ（明るい画像でも白い文字が読めるように。35%）
+pub const BAR_SHADE_ALPHA: u8 = 89;
+/// 既定の背景: 紫の地に、同じ系統の色の大きな円（右上に明るい紫、左下に濃い紫）
+pub const DESKTOP: Color = rgb(60, 52, 137);
+pub const DESKTOP_CIRCLES: [Circle; 2] = [
+    Circle { cx: 880, cy: 100, r: 660, color: rgb(83, 74, 183) },
+    Circle { cx: 100, cy: 960, r: 375, color: rgb(38, 33, 92) },
+];
 /// デスクトップの端末の 16 色（CGA の並び: 黒 青 緑 水 赤 紫 茶 明るい灰 / 濃い灰 明るい青 …）。
 /// 0 番（黒）は端末の地、7 番（明るい灰）は文字の色
 pub const TERMINAL: [Color; 16] = [

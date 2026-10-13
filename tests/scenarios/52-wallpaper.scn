@@ -1,5 +1,6 @@
 # Phase 37（デスクトップ D6）: デスクトップの背景の画像（BOOT.CFG の wallpaper= と、シェルの wallpaper）
-# 640x480 では端末（中身 8,72 から 638x400、タイトルバー y=48〜71）がほぼ全体を覆うので、バーとの間（y=24〜46）で見る
+# 640x480 では端末（中身 8,72 から 638x400、タイトルバー y=48〜71）がほぼ全体を覆うので、バーとの間（y=24〜46）で見る。
+# 背景の画像は画面全体に並べ、上端のバーはその上に黒を 35% 重ねて白い文字を描く（A3）
 boot-config video=640x480
 boot-config wallpaper=/IMAGES/PLASMA.BMP tile
 timeout 30
@@ -9,7 +10,9 @@ wait-serial VibeOS shell
 sleep 300
 # 端末の上の空いている所（敷き詰めた plasma）
 expect-screen wallpaper-tile 300 24 340 22
-# 真ん中に 1 枚（160x100 の gradient を 240,202 に）。周りは背景のグラデーション
+# 画像の上のバー（黒を重ねて文字が読める。右の時計は除く）
+expect-screen wallpaper-bar 0 0 300 24
+# 真ん中に 1 枚（160x100 の gradient を画面の真ん中 240,190 に）。周りは既定の背景
 type wallpaper /images/gradient.bmp center
 key ret
 sleep 500
@@ -18,15 +21,15 @@ mouse-move 310 -180
 mouse-button left down
 mouse-button left up
 sleep 300
-expect-screen wallpaper-center 236 198 168 108
-# 真ん中に置いた画像の周りは背景のグラデーション
-expect-pixel 600 30 65 112 196
+expect-screen wallpaper-center 236 186 168 108
+# 真ん中に置いた画像の周りは既定の背景（右上の大きな円）
+expect-pixel 600 30 83 74 183
 # バーの Terminal 1 のボタン（→ 100,10）で戻す
 mouse-move -530 -50
 mouse-button left down
 mouse-button left up
 sleep 300
-# 敷き詰めてから背景の画像をやめる（端末の上の所が plasma → グラデーション）
+# 敷き詰めてから背景の画像をやめる（端末の上の所が plasma → 既定の背景）
 type wallpaper /images/plasma.bmp tile
 key ret
 sleep 300
@@ -34,7 +37,7 @@ expect-screen wallpaper-tile 300 24 340 22
 type wallpaper none
 key ret
 sleep 300
-expect-pixel 300 30 65 112 196
+expect-pixel 300 30 83 74 183
 type wallpaper /hello.txt
 key ret
 wait-serial wallpaper: /hello.txt: not a BMP file

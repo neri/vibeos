@@ -608,3 +608,16 @@
 - アプリ: `mines`（マスと盤面の地・顔のボタン）、`clock`（文字盤・細い目盛り）、`blocks`（帯の小さな文字）の色をテーマに合わせた（D-061）。`tasks` の下のボタンは角の丸み（半径 14）にかからないことを画面で確かめた
 - ホストのテスト: 枠を描かない（辺の一番外のピクセルも塗りの色）、選んだ行の文字が濃い強調色・フォーカスを外すと灰色の地、既定のボタン、ダイアログの最初のボタンが既定のボタン（`vibe-ui` は 20 本）
 - 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three（強調色が変わった分）, blocks-paused, calc-46, calc-cleared, calc-retro, files-images, mines-counter, mines-flag, mines-lost, mines-open, mines-sad
+
+## 2026-10-13 Aster に近づける A3: バーと背景（ブランチ `aster-look`）
+
+- オーナーが A2 の仮のスクリーンショットを見て「A3 に進んで」（D-062）
+- `vibe_gfx::backdrop`（新）: 地の色に、画面に対する割合で置いた円を重ねた 1 行を描く `fill_row`。1 行を 4 本の細い行に分け、それぞれの範囲（1/16 ピクセル、整数の平方根）が各ピクセルを覆う長さで縁を混ぜる。どの細い行でも覆う所はまとめて塗る。平方根は 32 ビットに収まれば割り算を使わない 1 桁ずつの方法（`isqrt32`。64 ビットの割り算の Newton 法だと ktest の合成が 1 枚 18ms になった）
+- テーマ: `BAR`・`SEPARATOR`・`DESKTOP_TOP/BOTTOM` を無くし、`BAR_TEXT`・`BAR_TEXT_DIM`・`BAR_PILL_ALPHA`（白 20%）・`BAR_SHADE_ALPHA`（黒 35%）・`DESKTOP`・`DESKTOP_CIRCLES` を足した
+- 上端のバー: `render_bar` で背景の行（`Screen::background_row`）を先に描き、背景の画像なら黒を 35% 重ね、白い文字とアイコンを描く。フォーカスのあるウィンドウ・開いているメニューのボタンは白 20% の角の丸い地。最小化したものは薄い文字と半分の濃さのアイコン。`set_wallpaper` でバーも描き直す
+- メニュー: 乗せた項目は薄い強調色の地に濃い強調色の文字
+- 背景の画像: 画面全体に並べる（D-062）。`wallpaper::fill_row` は真ん中に置いたときの画像の無い所を書かない（先に既定の背景を描く）。敷き詰めのときは既定の背景を描かない
+- ktest `gfx_compose_speed` の背景をグラデーションから既定の背景に替えた: 1 枚 13〜16ms（A1 の後のグラデーションでは 8〜9ms。円の縁の計算と、地を塗ってから円を塗る分）
+- シナリオ: 背景の色を見ていた所（10・25・28・29・44・46・49・52・60〜63）を紫の地か右上の円の色に。60〜63 には「右の真ん中が右上の円の中」（円が画面の大きさに対する割合で置かれる）を足した。52 は真ん中に置いた画像の位置（240,190）と、画像の上のバーの期待画像 `wallpaper-bar` を足した
+- ホストのテスト: 円の中は塗り・縁はなめらか・上下左右で対称・面積がおよそ π r²、画面の大きさを変えても割合で置かれる、後ろの円が手前・画面の外は切る、`isqrt32`、真ん中に置いたときに画像の無い所は書かない
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, calc-46, desktop-moved, desktop-terminal, files-images, fonts-fallback, net-statusbar-ip, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-center, wallpaper-tile。新しく wallpaper-bar

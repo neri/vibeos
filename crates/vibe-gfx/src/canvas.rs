@@ -618,7 +618,7 @@ impl<'a> Canvas<'a> {
 }
 
 /// 整数の平方根（切り捨て）
-fn isqrt(n: u64) -> u64 {
+pub(crate) fn isqrt(n: u64) -> u64 {
     if n < 2 {
         return n;
     }

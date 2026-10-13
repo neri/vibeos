@@ -27,10 +27,10 @@ mouse-move 50 115
 mouse-move 50 115
 mouse-button left up
 sleep 300
-# 新しい位置のタイトルバーは白い地（カーソルの下を避ける）、元の位置は背景のグラデーション
+# 新しい位置のタイトルバーは白い地（カーソルの下を避ける）、元の位置は既定の背景（紫の地。右の方は大きな円の色）
 expect-pixel 430 300 255 255 255
 expect-pixel 527 290 44 44 42
-expect-pixel 200 60 68 112 195
+expect-pixel 200 60 60 52 137
 # 時計や描画時間が写る上端のバー・端末の文字は除き、mandel のウィンドウ（枠を含む）だけを比べる
 expect-screen desktop-moved 219 278 322 226
 # 端末の中身（150,370）をクリックすると端末が前に出る（mandel の下の方は端末の下に隠れる。端末の地は濃い灰色）
@@ -55,9 +55,9 @@ mouse-button left down
 mouse-button left up
 sleep 500
 # 閉じた場所は背景か端末の中身（黒）に戻る
-expect-pixel 400 290 93 109 192
+expect-pixel 400 290 60 52 137
 expect-pixel 400 400 26 28 34
-expect-pixel 560 300 94 109 192
+expect-pixel 560 300 83 74 183
 type ps
 key ret
 wait-serial shell

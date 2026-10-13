@@ -609,16 +609,28 @@ impl Screen {
         }
     }
 
-    /// デスクトップの背景の画像を変える（None でグラデーションに戻す）
+    /// デスクトップの背景の画像を変える（None で既定の背景に戻す）。上端のバーも背景の上に描くので描き直す
     pub fn set_wallpaper(&mut self, wallpaper: Option<Wallpaper>) {
         self.wallpaper = wallpaper.filter(|w| w.pixels.len() == w.w * w.h).map(Box::new);
+        self.bar_dirty = true;
         let h = self.height;
         self.mark_rows(0, h);
     }
 
-    /// 背景の画像の大きさ（バーの下の全体）
+    /// 背景の画像の大きさ（画面全体。上端のバーは背景の上に描く）
     pub fn wallpaper_size(&self) -> (usize, usize) {
-        (self.width, self.height - BAR_H)
+        (self.width, self.height)
+    }
+
+    /// 背景の `y` 行目: 既定の背景（紫の地に大きな円）か、背景の画像（真ん中に置いたときの周りは既定の背景）
+    fn background_row(&self, y: usize, row: &mut [u32]) {
+        let tiled = self.wallpaper.as_ref().is_some_and(|wp| wp.fit == vibe_gfx::wallpaper::Fit::Tile);
+        if !tiled {
+            vibe_gfx::backdrop::fill_row(row, y, self.height, theme::DESKTOP, &theme::DESKTOP_CIRCLES);
+        }
+        if let Some(wp) = &self.wallpaper {
+            vibe_gfx::wallpaper::fill_row(row, y, &wp.pixels, wp.w, wp.h, self.height, wp.fit);
+        }
     }
 
     /// ウィンドウの中身が 32 ビットか
@@ -1140,13 +1152,7 @@ impl Screen {
             row.copy_from_slice(&self.bar[y * self.width..(y + 1) * self.width]);
             return;
         }
-        // 縦のグラデーション。背景の画像があれば並べる（真ん中に置いたときの周りはグラデーション）
-        let n = (self.height - BAR_H - 1) as u32;
-        let bg = canvas::lerp(theme::DESKTOP_TOP, theme::DESKTOP_BOTTOM, (y - BAR_H) as u32, n);
-        match &self.wallpaper {
-            Some(wp) => vibe_gfx::wallpaper::fill_row(row, y - BAR_H, &wp.pixels, wp.w, wp.h, self.height - BAR_H, wp.fit, bg),
-            None => row.fill(bg),
-        }
+        self.background_row(y, row);
         for &id in &self.order {
             self.draw_window_row(id, y as i32, row, focused == Some(id));
         }

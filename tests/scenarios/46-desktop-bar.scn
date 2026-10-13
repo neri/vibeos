@@ -30,8 +30,8 @@ mouse-move 192 -88
 mouse-button left down
 mouse-button left up
 sleep 300
-expect-pixel 125 86 71 111 195
-expect-pixel 200 60 68 112 195
+expect-pixel 125 86 60 52 137
+expect-pixel 200 60 60 52 137
 expect-screen bar-minimized 0 0 400 24
 # バーの clock のボタン（212〜349）を押すと戻る（→ 280,10）
 mouse-move 58 -50
@@ -53,7 +53,7 @@ expect-pixel 635 348 128 128 122
 mouse-button left down
 mouse-button left up
 sleep 300
-expect-pixel 125 86 71 111 195
+expect-pixel 125 86 60 52 137
 # メニューの Terminal で新しい端末を開く（→ 20,10 → 30,38）
 mouse-move -260 0
 mouse-button left down
