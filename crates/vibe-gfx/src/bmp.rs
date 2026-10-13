@@ -120,6 +120,19 @@ impl<'a> Bmp<'a> {
         }
     }
 
+    /// 32 ビットの色（0x00RRGGBB）の画素（左上から）。8 ビットの画像も画像のパレットの色そのまま
+    pub fn to_rgb32(&self) -> Vec<u32> {
+        let (w, h) = (self.width, self.height);
+        let mut out = Vec::with_capacity(w as usize * h as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let [r, g, b] = self.rgb(x, y);
+                out.push((r as u32) << 16 | (g as u32) << 8 | b as u32);
+            }
+        }
+        out
+    }
+
     /// 標準パレットの番号に変換した画素（左上から）。
     /// 8 ビットは色ごとに近い色へ置き換え、24/32 ビットは誤差拡散（Floyd–Steinberg）で階調を表す
     pub fn to_standard_palette(&self) -> Vec<u8> {

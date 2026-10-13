@@ -9,7 +9,7 @@ wait-serial VibeOS shell
 sleep 300
 # 端末の上の空いている所（敷き詰めた plasma）
 expect-screen wallpaper-tile 300 24 340 22
-# 真ん中に 1 枚（160x100 の gradient を 240,202 に）。周りは単色の背景
+# 真ん中に 1 枚（160x100 の gradient を 240,202 に）。周りは背景のグラデーション
 type wallpaper /images/gradient.bmp center
 key ret
 sleep 500
@@ -19,14 +19,14 @@ mouse-button left down
 mouse-button left up
 sleep 300
 expect-screen wallpaper-center 236 198 168 108
-# 真ん中に置いた画像の周りは、sh が作る背景の色（8 ビットの DESKTOP_BG）
-expect-pixel 600 30 0 103 55
+# 真ん中に置いた画像の周りは背景のグラデーション
+expect-pixel 600 30 65 112 196
 # バーの Terminal 1 のボタン（→ 100,10）で戻す
 mouse-move -530 -50
 mouse-button left down
 mouse-button left up
 sleep 300
-# 敷き詰めてから単色に戻す（端末の上の所が plasma → 背景の色）
+# 敷き詰めてから背景の画像をやめる（端末の上の所が plasma → グラデーション）
 type wallpaper /images/plasma.bmp tile
 key ret
 sleep 300

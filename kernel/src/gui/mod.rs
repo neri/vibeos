@@ -55,7 +55,6 @@ pub const FS_BAR_H: usize = 8;
 /// タイトルバーのボタン（[_]・[x]）の幅と、右端・ボタンどうしの間
 const BUTTON_W: usize = 20;
 const BUTTON_GAP: usize = 2;
-pub const DESKTOP_BG: u8 = palette::DESKTOP_BG;
 /// デスクトップの端末のウィンドウの大きさ（文字数）。左下に置く
 const TERMINAL_COLS: usize = 80;
 const TERMINAL_ROWS: usize = 25;
@@ -94,6 +93,14 @@ const NO_KEY: KeyEvent = KeyEvent {
     },
     ch: None,
 };
+
+/// デスクトップの背景の画像（0x00RRGGBB の w × h と並べ方）
+pub struct Wallpaper {
+    pub w: usize,
+    pub h: usize,
+    pub fit: vibe_gfx::wallpaper::Fit,
+    pub pixels: Box<[u32]>,
+}
 
 /// ウィンドウの中身のバッファ
 enum Pixels {
@@ -271,10 +278,12 @@ pub struct Screen {
     /// バーを描き直す
     bar_dirty: bool,
     menu: Option<bar::Menu>,
-    /// デスクトップの背景の画像（バーの下の全体、画面の幅 × (高さ − BAR_H)）
-    wallpaper: Option<Box<[u8]>>,
+    /// デスクトップの背景の画像（1 行ずつ並べる）
+    wallpaper: Option<Box<Wallpaper>>,
     /// 標準のパレットの色番号 → 32 ビットの色
     std_lut: [u32; 256],
+    /// デスクトップの端末の色番号 → 32 ビットの色（0〜15 を今風の配色に替えたもの。theme::TERMINAL）
+    term_lut: [u32; 256],
     /// デスクトップの上端のバー（32 ビット、画面の幅 × BAR_H）
     bar: Vec<u32>,
     /// 角の丸み・影の表とカーソル（デスクトップにするときに作る）
@@ -310,6 +319,7 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     menu: None,
     wallpaper: None,
     std_lut: [0; 256],
+    term_lut: [0; 256],
     bar: Vec::new(),
     deco: None,
     hover: None,
@@ -325,6 +335,8 @@ pub fn init() {
     s.width = vga::width();
     s.height = vga::height();
     s.std_lut = palette::lut32(&palette::standard());
+    s.term_lut = s.std_lut;
+    s.term_lut[..16].copy_from_slice(&theme::TERMINAL);
     s.console_w = s.width.min(CONSOLE_MAX_W);
     s.console_h = (s.height - FS_BAR_H).min(CONSOLE_MAX_H);
     s.console_y = FS_BAR_H;
@@ -361,7 +373,7 @@ pub fn start_desktop() -> bool {
     s.console_h = ch;
     let y = (s.height - ch - 8) as i32;
     s.console_y = y as usize;
-    let bg = s.std_lut[palette::BLACK as usize];
+    let bg = s.term_lut[palette::BLACK as usize];
     let width = s.width;
     s.bar = vec![0; width * BAR_H];
     s.deco = Some(Box::new(deco::Deco::new()));
@@ -518,7 +530,7 @@ impl Screen {
         self.next_id += 1; // 0 はコンソールなので 1 から
         let id = self.next_id;
         let pixels = if rgb {
-            Pixels::P32(vec![self.std_lut[palette::BLACK as usize]; w * h].into_boxed_slice())
+            Pixels::P32(vec![self.term_lut[palette::BLACK as usize]; w * h].into_boxed_slice())
         } else {
             Pixels::P8(vec![palette::BLACK; w * h].into_boxed_slice())
         };
@@ -561,11 +573,13 @@ impl Screen {
 
     /// ウィンドウの中身（8 ビットか 32 ビット）
     pub fn window_pixels(&mut self, id: WinId) -> Option<WinPixels<'_>> {
-        let lut = &self.std_lut;
+        let (std_lut, term_lut) = (&self.std_lut, &self.term_lut);
         let (cw, ch) = (self.console_w, self.console_h);
         match self.windows.get_mut(&id) {
             Some(win) => {
                 let (w, h) = (win.w, win.h);
+                // 端末は今風の 16 色、ほかは標準のパレット
+                let lut = if win.terminal { term_lut } else { std_lut };
                 Some(match &mut win.pixels {
                     Pixels::Static => WinPixels::P8(static_surface(cw, ch)),
                     Pixels::P8(b) => WinPixels::P8(Surface::new(b, w, h)),
@@ -595,10 +609,9 @@ impl Screen {
         }
     }
 
-    /// デスクトップの背景の画像を変える（None で単色に戻す）。大きさは `wallpaper_size`
-    pub fn set_wallpaper(&mut self, pixels: Option<Box<[u8]>>) {
-        let (w, h) = self.wallpaper_size();
-        self.wallpaper = pixels.filter(|p| p.len() == w * h);
+    /// デスクトップの背景の画像を変える（None でグラデーションに戻す）
+    pub fn set_wallpaper(&mut self, wallpaper: Option<Wallpaper>) {
+        self.wallpaper = wallpaper.filter(|w| w.pixels.len() == w.w * w.h).map(Box::new);
         let h = self.height;
         self.mark_rows(0, h);
     }
@@ -1122,16 +1135,12 @@ impl Screen {
             row.copy_from_slice(&self.bar[y * self.width..(y + 1) * self.width]);
             return;
         }
+        // 縦のグラデーション。背景の画像があれば並べる（真ん中に置いたときの周りはグラデーション）
+        let n = (self.height - BAR_H - 1) as u32;
+        let bg = canvas::lerp(theme::DESKTOP_TOP, theme::DESKTOP_BOTTOM, (y - BAR_H) as u32, n);
         match &self.wallpaper {
-            Some(wp) => {
-                let r = y - BAR_H;
-                convert_row(row, &wp[r * self.width..(r + 1) * self.width], &self.std_lut);
-            }
-            // 背景の画像が無ければ縦のグラデーション
-            None => {
-                let n = (self.height - BAR_H - 1) as u32;
-                row.fill(canvas::lerp(theme::DESKTOP_TOP, theme::DESKTOP_BOTTOM, (y - BAR_H) as u32, n));
-            }
+            Some(wp) => vibe_gfx::wallpaper::fill_row(row, y - BAR_H, &wp.pixels, wp.w, wp.h, self.height - BAR_H, wp.fit, bg),
+            None => row.fill(bg),
         }
         for &id in &self.order {
             self.draw_window_row(id, y as i32, row, focused == Some(id));

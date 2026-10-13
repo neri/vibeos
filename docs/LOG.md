@@ -569,3 +569,15 @@
 - アプリ: `calc`（大きさはそのまま）、`files`（アイコン・名前と大きさの 2 列。`vibe_files::icon_name`・`list_line` を「名前・タブ・大きさ」に）、`tasks`（見出しと 5 列。高さ 300）、`clock`（白地に薄い灰色の円の文字盤、なめらかな目盛りと針、太字の時刻。高さ 170）
 - シナリオ: 48（一覧の行が 20 ピクセル、ボタンの位置）と 49（tasks の大きさ）の座標を直した。新しく `67-calc-retro`（320x200 で calc が動き、近い色で出る）
 - 期待画像を作り直したもの（目で確かめた）: calc-46, calc-cleared, files-images, tasks-header。新しく calc-retro
+
+## 2026-10-13 見た目を今風に M6: 残りのアプリ・背景・端末の配色（ブランチ `modern-look`）
+
+- `mines`: 32 ビットのウィンドウ。角の丸いマス（上半分を明るく）、開いたマスは平らな薄い灰色、数字は太字の UI の文字（今風の 8 色）、地雷と旗はなめらかな線、顔は黄色の丸に目と口（勝ちはサングラス、負けは × の目）。大きさとマスの位置は同じ
+- `blocks`: 濃い角の丸い盤面に角の丸いブロック（上の縁を明るく）、影は枠だけ、右の文字は UI の文字、一時停止・終わりは強調色の帯
+- `view`: デスクトップでは 32 ビットのウィンドウに画像の色そのまま（`Bmp::rgb`）。320x200 は前のまま
+- `paint`: デスクトップのウィンドウの色の並びを明るい地と強調色の枠に。最初は全画面にも効いてしまい、レトロの `13-paint` の期待画像と合わなくなったので、ウィンドウのときだけにした
+- 背景の画像: `vibe_gfx::wallpaper::fill_row`（1 行ずつ並べる。ホストのテスト）、`Bmp::to_rgb32`、`wallpaper_set(pixels, w, h, fit)`。カーネルは `gui::Wallpaper`（元の大きさの画像と並べ方）を持つ。plasma（8 ビットの BMP）も元の色で並ぶようになった
+- 端末の 16 色（`theme::TERMINAL`）。端末のウィンドウだけ色番号の表を替える（`term_lut`）。地は濃い灰色
+- `vibe-rt`: `gfx::draw_text`・`draw_text_centered`・`text_width`・`text_height`（フォントが無ければ 8x8）
+- シナリオ: 28 の端末の地の色、52 の真ん中に置いたときの周り（グラデーション）、51 に 24 ビットの画像の画素の確認（mkassets の式から計算した色と同じ）
+- 期待画像を作り直したもの（目で確かめた）: blocks-bottom, blocks-paused, clip-edit, clip-selected, desktop-moved, desktop-terminal, fonts-fallback, mines-counter, mines-flag, mines-lost, mines-open, mines-sad, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-center, wallpaper-tile, bar-menu

@@ -9,9 +9,10 @@
 
 use vibe_games::blocks::{self, Blocks, Move};
 use vibe_rt::abi::key;
-use vibe_rt::font::FONT_8X8;
-use vibe_rt::gfx::{Event, Window};
-use vibe_rt::gfx_lib::{Surface, palette};
+use vibe_rt::abi::{FONT_BOLD, FONT_UI};
+use vibe_rt::gfx::{Event, Window32 as Window, draw_text, draw_text_centered, text_height};
+use vibe_rt::gfx_lib::canvas::{Canvas, Color, Corner, rgb};
+use vibe_rt::gfx_lib::theme;
 use vibe_rt::{format_fixed, println, sys};
 
 vibe_rt::entry!(main);
@@ -24,15 +25,18 @@ const W: usize = 152;
 const H: usize = (BOARD_Y * 2 + blocks::H as i32 * CELL) as usize;
 
 /// 形ごとの色（I O T S Z J L）
-const COLORS: [u8; 7] = [
-    palette::LIGHT_CYAN,
-    palette::YELLOW,
-    palette::LIGHT_MAGENTA,
-    palette::LIGHT_GREEN,
-    palette::LIGHT_RED,
-    palette::LIGHT_BLUE,
-    palette::CUBE_BASE + 5 * 36 + 3 * 6, // だいだい色
+const COLORS: [Color; 7] = [
+    rgb(34, 211, 238),
+    rgb(250, 204, 21),
+    rgb(192, 132, 252),
+    rgb(74, 222, 128),
+    rgb(248, 113, 113),
+    rgb(96, 165, 250),
+    rgb(251, 146, 60),
 ];
+/// 盤面の地と、止まる位置の影
+const BOARD: Color = rgb(30, 32, 38);
+const GHOST: Color = rgb(90, 95, 106);
 
 fn main() -> i32 {
     let mut seed = vibe_rt::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or_else(sys::ticks);
@@ -45,7 +49,7 @@ fn main() -> i32 {
     println!("blocks: started (seed {seed})");
     let mut next_fall = sys::ticks() + game.fall_interval_ms() / 10;
     loop {
-        draw(&mut win.surface(), &game, paused);
+        draw(&mut win.canvas(), &game, paused);
         win.present();
         let wait = if game.is_over() || paused { None } else { Some(next_fall.saturating_sub(sys::ticks()) * 10) };
         let mv = match win.event(wait) {
@@ -94,23 +98,24 @@ fn main() -> i32 {
     0
 }
 
-fn cell(s: &mut Surface, x: i32, y: i32, color: u8) {
+/// 1 マス: 角の丸いブロックに、上の縁を明るく
+fn cell(c: &mut Canvas, k: &Corner, x: i32, y: i32, color: Color) {
     let (px, py) = (BOARD_X + x * CELL, BOARD_Y + y * CELL);
-    s.fill_rect(px, py, CELL - 1, CELL - 1, color);
-    s.hline(px, py, CELL - 1, palette::WHITE);
+    c.fill_round_rect(px, py, CELL - 1, CELL - 1, k, color, 255);
+    c.hline(px + 2, py, CELL - 5, vibe_rt::gfx_lib::canvas::blend(color, rgb(255, 255, 255), 110));
 }
 
-fn draw(s: &mut Surface, g: &Blocks, paused: bool) {
-    let font = &FONT_8X8;
-    s.clear(palette::LIGHT_GRAY);
+fn draw(c: &mut Canvas, g: &Blocks, paused: bool) {
+    let k = Corner::new(2);
+    let panel = Corner::new(4);
+    c.clear(theme::FACE);
     let (bw, bh) = (blocks::W as i32 * CELL, blocks::H as i32 * CELL);
-    s.fill_rect(BOARD_X, BOARD_Y, bw, bh, palette::BLACK);
-    s.rect(BOARD_X - 1, BOARD_Y - 1, bw + 2, bh + 2, palette::DARK_GRAY);
+    c.fill_round_rect(BOARD_X - 2, BOARD_Y - 2, bw + 4, bh + 4, &panel, BOARD, 255);
     for y in 0..blocks::H {
         for x in 0..blocks::W {
-            let c = g.cell(x, y);
-            if c != 0 {
-                cell(s, x as i32, y as i32, COLORS[c as usize - 1]);
+            let v = g.cell(x, y);
+            if v != 0 {
+                cell(c, &k, x as i32, y as i32, COLORS[v as usize - 1]);
             }
         }
     }
@@ -118,29 +123,30 @@ fn draw(s: &mut Surface, g: &Blocks, paused: bool) {
         // 止まる位置の影と、落ちているブロック
         for (x, y) in g.ghost() {
             if y >= 0 {
-                s.rect(BOARD_X + x * CELL, BOARD_Y + y * CELL, CELL - 1, CELL - 1, palette::DARK_GRAY);
+                c.round_rect(BOARD_X + x * CELL, BOARD_Y + y * CELL, CELL - 1, CELL - 1, &k, GHOST);
             }
         }
         let (cells, color) = g.piece();
         for (x, y) in cells {
             if y >= 0 {
-                cell(s, x, y, COLORS[color as usize - 1]);
+                cell(c, &k, x, y, COLORS[color as usize - 1]);
             }
         }
     }
     // 右側: 次の形・点数・列・レベル
-    s.draw_text(font, PANEL_X, BOARD_Y, "NEXT", palette::BLACK, None);
-    s.fill_rect(PANEL_X, BOARD_Y + 10, 40, 24, palette::BLACK);
+    let lh = text_height(FONT_UI);
+    draw_text(c, FONT_UI, PANEL_X, BOARD_Y - 4, "NEXT", theme::TEXT_DIM);
+    c.fill_round_rect(PANEL_X, BOARD_Y + 14, 40, 24, &panel, BOARD, 255);
     let next = g.next_kind();
     for (x, y) in blocks::shape_cells(next, 0) {
-        let (px, py) = (PANEL_X + 4 + x * CELL, BOARD_Y + 14 + y * CELL);
-        s.fill_rect(px, py, CELL - 1, CELL - 1, COLORS[next as usize]);
+        let (px, py) = (PANEL_X + 4 + x * CELL, BOARD_Y + 18 + y * CELL);
+        c.fill_round_rect(px, py, CELL - 1, CELL - 1, &k, COLORS[next as usize], 255);
     }
     let rows = [("SCORE", g.score()), ("LINES", g.lines()), ("LEVEL", g.level())];
     for (i, (label, value)) in rows.iter().enumerate() {
-        let y = BOARD_Y + 44 + i as i32 * 26;
-        s.draw_text(font, PANEL_X, y, label, palette::BLACK, None);
-        s.draw_text(font, PANEL_X, y + 10, &format_fixed::<12>(format_args!("{value}")), palette::BLUE, None);
+        let y = BOARD_Y + 44 + i as i32 * 36;
+        draw_text(c, FONT_UI, PANEL_X, y, label, theme::TEXT_DIM);
+        draw_text(c, FONT_BOLD, PANEL_X, y + lh - 2, &format_fixed::<12>(format_args!("{value}")), theme::TEXT);
     }
     let banner = if g.is_over() {
         Some(("GAME OVER", "Enter: again"))
@@ -150,10 +156,9 @@ fn draw(s: &mut Surface, g: &Blocks, paused: bool) {
         None
     };
     if let Some((big, small)) = banner {
-        let y = BOARD_Y + bh / 2 - 12;
-        s.fill_rect(BOARD_X, y, bw, 26, palette::BLUE);
-        let cx = |t: &str| BOARD_X + (bw - (t.len() * font.width) as i32) / 2;
-        s.draw_text(font, cx(big), y + 4, big, palette::YELLOW, None);
-        s.draw_text(font, cx(small).max(BOARD_X), y + 15, small, palette::WHITE, None);
+        let y = BOARD_Y + bh / 2 - 20;
+        c.fill_round_rect(BOARD_X + 2, y, bw - 4, 40, &panel, theme::ACCENT, 240);
+        draw_text_centered(c, FONT_BOLD, BOARD_X, bw, y + 2, big, rgb(255, 255, 255));
+        draw_text_centered(c, FONT_UI, BOARD_X, bw, y + 20, small, rgb(219, 234, 254));
     }
 }

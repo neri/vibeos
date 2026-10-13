@@ -351,8 +351,9 @@ pub fn wallpaper_size() -> Result<(usize, usize), i32> {
 }
 
 /// 背景の画像（標準のパレットの番号、幅 × 高さ）。空なら単色に戻す
-pub fn wallpaper_set(pixels: &[u8]) -> i32 {
-    syscall(nr::WALLPAPER_SET, pixels.as_ptr() as u32, pixels.len() as u32, 0, 0, 0)
+/// 背景の画像（w × h の 0x00RRGGBB）と並べ方（vibe_gfx::wallpaper::fit_code）。w = 0 なら背景の画像をやめる
+pub fn wallpaper_set(pixels: &[u32], w: u32, h: u32, fit: u32) -> i32 {
+    syscall(nr::WALLPAPER_SET, pixels.as_ptr() as u32, w, h, fit, 0)
 }
 
 /// CMOS の時計を読み直す。Ok(1970 年からの秒)、読めない値なら Err(読んだままの 秒・分・時・日・月・年)

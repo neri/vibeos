@@ -1,4 +1,4 @@
-//! デスクトップの背景の画像（BMP を読んで、画面の大きさに並べて gui に渡す）
+//! デスクトップの背景の画像（BMP を読んで 32 ビットにし、並べ方と一緒に gui に渡す。並べるのは gui が 1 行ずつ）
 //!
 //! BOOT.CFG の `wallpaper=PATH [tile|center]` で起動時に、シェルの `wallpaper` でその場で変える。
 
@@ -17,17 +17,18 @@ pub fn load(path: &str, fit: Fit) -> Result<(), String> {
     }
     let data = crate::fs::read_file(path).map_err(|e| format!("{e}"))?;
     let bmp = Bmp::parse(&data).map_err(|e| format!("{e}"))?;
-    let pixels = bmp.to_standard_palette();
-    let (sw, sh) = SCREEN.lock().wallpaper_size();
-    let (iw, ih) = (bmp.width as usize, bmp.height as usize);
-    let out = wallpaper::compose(&pixels, iw, ih, sw, sh, fit, gui::DESKTOP_BG);
+    if bmp.width * bmp.height > vibe_abi::WALLPAPER_MAX_PIXELS {
+        return Err(String::from("too large"));
+    }
+    let pixels = bmp.to_rgb32().into_boxed_slice();
+    let (w, h) = (bmp.width as usize, bmp.height as usize);
     let mut s = SCREEN.lock();
-    s.set_wallpaper(Some(out.into_boxed_slice()));
+    s.set_wallpaper(Some(gui::Wallpaper { w, h, fit, pixels }));
     s.present();
     Ok(())
 }
 
-/// 背景を単色に戻す
+/// 背景をグラデーションに戻す
 pub fn clear() {
     let mut s = SCREEN.lock();
     s.set_wallpaper(None);

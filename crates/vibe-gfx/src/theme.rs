@@ -24,6 +24,27 @@ pub const BAR: Color = rgb(244, 245, 248);
 /// 背景のグラデーション（上 → 下）
 pub const DESKTOP_TOP: Color = rgb(64, 112, 196);
 pub const DESKTOP_BOTTOM: Color = rgb(146, 104, 184);
+/// デスクトップの端末の 16 色（CGA の並び: 黒 青 緑 水 赤 紫 茶 明るい灰 / 濃い灰 明るい青 …）。
+/// 0 番（黒）は端末の地、7 番（明るい灰）は文字の色
+pub const TERMINAL: [Color; 16] = [
+    rgb(26, 28, 34),
+    rgb(64, 126, 240),
+    rgb(78, 186, 96),
+    rgb(56, 178, 196),
+    rgb(226, 82, 82),
+    rgb(176, 104, 214),
+    rgb(212, 160, 52),
+    rgb(208, 211, 218),
+    rgb(112, 118, 130),
+    rgb(120, 168, 255),
+    rgb(130, 222, 140),
+    rgb(110, 218, 230),
+    rgb(255, 120, 116),
+    rgb(222, 150, 240),
+    rgb(244, 214, 96),
+    rgb(246, 247, 250),
+];
+
 /// 角の半径（ウィンドウ・パネル）と、小さな部品の角の半径
 pub const RADIUS: usize = 8;
 pub const RADIUS_SMALL: usize = 4;

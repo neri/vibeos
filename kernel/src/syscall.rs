@@ -248,21 +248,19 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
                 crate::gfx::wallpaper::clear();
                 return Ok(0);
             }
-            let (w, h) = {
-                let s = SCREEN.lock();
-                if s.mode() != gui::Mode::Desktop {
-                    return Err(err::EPERM);
-                }
-                s.wallpaper_size()
-            };
-            if b as usize != w * h {
+            if SCREEN.lock().mode() != gui::Mode::Desktop {
+                return Err(err::EPERM);
+            }
+            let fit = vibe_gfx::wallpaper::fit_from_code(d).ok_or(err::EINVAL)?;
+            let n = b.checked_mul(c).filter(|&n| n > 0 && n <= vibe_abi::WALLPAPER_MAX_PIXELS).ok_or(err::EINVAL)?;
+            if a % 4 != 0 {
                 return Err(err::EINVAL);
             }
-            check_user(user, a, b, false)?;
-            // SAFETY: 上で今のプロセスが読めるページだと確かめた
-            let pixels = unsafe { core::slice::from_raw_parts(a as *const u8, b as usize) }.to_vec();
+            check_user(user, a, n * 4, false)?;
+            // SAFETY: 上で今のプロセスが読めるページだと確かめた（4 バイトにそろっている）
+            let pixels = unsafe { core::slice::from_raw_parts(a as *const u32, n as usize) }.to_vec().into_boxed_slice();
             let mut s = SCREEN.lock();
-            s.set_wallpaper(Some(pixels.into_boxed_slice()));
+            s.set_wallpaper(Some(gui::Wallpaper { w: b as usize, h: c as usize, fit, pixels }));
             s.present();
             Ok(0)
         }

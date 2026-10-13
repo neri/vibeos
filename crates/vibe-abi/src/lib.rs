@@ -39,6 +39,8 @@ pub const FONT_BOLD: u32 = 1;
 pub const FONT_MONO: u32 = 2;
 /// icon_data のアイコンの 1 辺
 pub const ICON_SIZE: usize = 16;
+/// wallpaper_set の画像の画素の数の上限
+pub const WALLPAPER_MAX_PIXELS: u32 = 4 * 1024 * 1024;
 
 /// 画面の大きさ（モード 13h）
 pub const SCREEN_WIDTH: usize = 320;
@@ -179,7 +181,8 @@ pub mod nr {
     pub const REBOOT: u32 = 65;
     /// wallpaper_size() -> (幅 << 16) | 高さ。デスクトップの背景の画像の大きさ（デスクトップでなければ -EPERM）
     pub const WALLPAPER_SIZE: u32 = 66;
-    /// wallpaper_set(pixels, len) -> 0。背景の画像（標準のパレットの番号、幅 × 高さ）。len = 0 なら単色に戻す
+    /// wallpaper_set(pixels: *const u32, w, h, fit) -> 0。背景の画像（w × h の 0x00RRGGBB、WALLPAPER_MAX_PIXELS まで）
+    /// と並べ方（0 = 敷き詰める, 1 = 真ん中）。カーネルが 1 行ずつ並べる。w = 0 なら背景の画像をやめる
     pub const WALLPAPER_SET: u32 = 67;
     /// cmos_time(&mut [u8; 6]) -> 1970 年からの秒。CMOS の時計を読み直す。読めない値なら -EIO
     /// （buf には読んだままの 秒・分・時・日・月・年）

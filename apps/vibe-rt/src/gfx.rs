@@ -193,6 +193,36 @@ pub fn font(kind: u32) -> Option<&'static VFont<'static>> {
     Some(font)
 }
 
+/// 文字の幅（フォント kind が無ければ 8x8）
+pub fn text_width(kind: u32, s: &str) -> i32 {
+    match font(kind) {
+        Some(f) => f.measure(s),
+        None => (s.chars().count() * vibe_font::FONT_8X8.width) as i32,
+    }
+}
+
+/// 文字の行の高さ（フォント kind が無ければ 8x8 の 8）
+pub fn text_height(kind: u32) -> i32 {
+    font(kind).map_or(vibe_font::FONT_8X8.height as i32, |f| f.line_height as i32)
+}
+
+/// 文字を描く（`top` は行の上端。フォント kind が無ければ 8x8 を行の縦の真ん中に）。描いた幅を返す
+pub fn draw_text(c: &mut Canvas, kind: u32, x: i32, top: i32, s: &str, color: u32) -> i32 {
+    match font(kind) {
+        Some(f) => c.draw_vtext(f, x, top, s, color),
+        None => {
+            let h = text_height(vibe_abi::FONT_UI).max(8);
+            c.draw_text(&vibe_font::FONT_8X8, x, top + (h - 8) / 2, s, color, None)
+        }
+    }
+}
+
+/// 文字を `x`〜`x + w` の真ん中に描く
+pub fn draw_text_centered(c: &mut Canvas, kind: u32, x: i32, w: i32, top: i32, s: &str, color: u32) {
+    let tw = text_width(kind, s);
+    draw_text(c, kind, x + (w - tw) / 2, top, s, color);
+}
+
 /// 16x16 のアイコン（事前に掛けたアルファの 0xAARRGGBB）。無ければ None
 pub fn icon(name: &str) -> Option<Vec<u32>> {
     let mut buf = [0u32; vibe_abi::ICON_SIZE * vibe_abi::ICON_SIZE];
