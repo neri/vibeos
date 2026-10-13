@@ -11,6 +11,7 @@ pub mod bmp;
 pub mod canvas;
 pub mod icons;
 pub mod palette;
+pub mod panel;
 pub mod theme;
 pub mod wallpaper;
 

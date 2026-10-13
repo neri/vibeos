@@ -1,6 +1,7 @@
 //! デスクトップの見た目（色・角の丸み・影）。カーネルの gui とアプリの部品（vibe-ui）で同じものを使う
 //!
-//! 明るい地に強調色 1 色（青）。文字は黒ではなく濃い灰色（DECISIONS.md D-047）
+//! 明るい地に強調色 1 色（青）。文字は黒ではなく濃い灰色（DECISIONS.md D-047）。
+//! ウィンドウ・メニューは縁を描かず、2 層の影で背景と分ける。灰色は少し温かい色（D-057、Aster のモックアップ）
 
 use crate::canvas::{Color, rgb};
 
@@ -8,17 +9,22 @@ use crate::canvas::{Color, rgb};
 pub const ACCENT: Color = rgb(37, 99, 235);
 pub const ACCENT_LIGHT: Color = rgb(219, 230, 252);
 /// 文字と、薄い文字（フォーカスの無いウィンドウの題名・最小化したウィンドウ）
-pub const TEXT: Color = rgb(32, 33, 36);
-pub const TEXT_DIM: Color = rgb(128, 131, 138);
-/// ウィンドウ・パネルの地（フォーカスのあるタイトルバーも）と、フォーカスの無いタイトルバー
-pub const FACE: Color = rgb(250, 250, 251);
-pub const FACE_INACTIVE: Color = rgb(232, 233, 237);
-/// ウィンドウの 1 ピクセルの縁と、区切りの線
-pub const BORDER: Color = rgb(176, 179, 186);
+pub const TEXT: Color = rgb(44, 44, 42);
+pub const TEXT_DIM: Color = rgb(136, 135, 128);
+/// ウィンドウ・パネルの地（タイトルバーも。フォーカスの有無で変えない）
+pub const FACE: Color = rgb(255, 255, 255);
+/// 薄い灰色の地（タイトルバーのボタン）
+pub const SUBTLE: Color = rgb(241, 239, 232);
+/// 区切りの線（上端のバー）
 pub const SEPARATOR: Color = rgb(218, 220, 225);
 /// マウスを乗せたボタンの地と、閉じるボタンの地
-pub const HOVER: Color = rgb(222, 224, 230);
+pub const HOVER: Color = rgb(211, 209, 199);
 pub const CLOSE_HOVER: Color = rgb(226, 67, 72);
+/// 端末の暗いタイトルバーの文字（フォーカスの有無）とボタンの地（ふつう・乗せたとき）
+pub const DARK_TEXT: Color = rgb(222, 221, 214);
+pub const DARK_TEXT_DIM: Color = rgb(128, 128, 122);
+pub const DARK_BUTTON: Color = rgb(68, 68, 65);
+pub const DARK_HOVER: Color = rgb(95, 94, 90);
 /// 上端のバー
 pub const BAR: Color = rgb(244, 245, 248);
 /// 背景のグラデーション（上 → 下）
@@ -46,10 +52,16 @@ pub const TERMINAL: [Color; 16] = [
 ];
 
 /// 角の半径（ウィンドウ・パネル）と、小さな部品の角の半径
-pub const RADIUS: usize = 8;
+pub const RADIUS: usize = 14;
 pub const RADIUS_SMALL: usize = 4;
-/// 影のぼかしの幅・下へのずれ・濃さ（フォーカスのあるウィンドウとそれ以外）
-pub const SHADOW_BLUR: usize = 12;
-pub const SHADOW_DY: i32 = 4;
-pub const SHADOW_ALPHA: u8 = 100;
-pub const SHADOW_ALPHA_INACTIVE: u8 = 55;
+/// 影は 2 層: 近い影（小さくぼかして少し下へ）と遠い影（大きくぼかして下へ）。色は黒でなく背景の暗い色
+pub const SHADOW_COLOR: Color = rgb(4, 0, 30);
+pub const SHADOW_NEAR_BLUR: usize = 3;
+pub const SHADOW_NEAR_DY: i32 = 1;
+pub const SHADOW_FAR_BLUR: usize = 20;
+pub const SHADOW_FAR_DY: i32 = 10;
+/// フォーカスの無いウィンドウの遠い影は下へのずれが小さい（低く浮いて見える）
+pub const SHADOW_FAR_DY_INACTIVE: i32 = 6;
+/// 影の濃さ（近い影, 遠い影）。フォーカスのあるウィンドウ・メニューと、フォーカスの無いウィンドウ
+pub const SHADOW_ALPHA: (u8, u8) = (64, 128);
+pub const SHADOW_ALPHA_INACTIVE: (u8, u8) = (50, 72);

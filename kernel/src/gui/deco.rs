@@ -1,13 +1,14 @@
-//! デスクトップの飾り: 角の丸いウィンドウ・パネル（メニュー）の縁と影、アルファ付きのマウスカーソル
+//! デスクトップの飾り: 角の丸いウィンドウ・パネル（メニュー）の影、アルファ付きのマウスカーソル
 //!
-//! 重ね合わせは 1 行ずつなので、ここも 1 行ずつ描く（その行だけの高さ 1 の `Canvas` に、
-//! y をずらした座標で描くと、範囲の切り詰めがその行だけを残す）。角の丸みと影の表（`Corner`・`Shadow`）は
+//! パネルは縁を描かず、2 層の影（近い影と遠い大きな影）で背景と分ける。1 行ずつ重ねるのは
+//! `vibe_gfx::panel`（ホストでテストする）。角の丸みと影の表（`Corner`・`Shadow`）は
 //! デスクトップにするときに 1 回だけ作る。
 
 use alloc::vec;
 use alloc::vec::Vec;
 
 use vibe_gfx::canvas::{Canvas, Corner, Shadow, blend, premultiply, rgb};
+use vibe_gfx::panel::{self, PanelStyle, ShadowLayer};
 use vibe_gfx::theme;
 
 /// マウスカーソルの画像の大きさ（矢印の先が左上 (0, 0)）
@@ -17,7 +18,11 @@ pub(super) const CURSOR_H: usize = 23;
 pub(super) struct Deco {
     pub(super) corner: Corner,
     pub(super) corner_small: Corner,
-    pub(super) shadow: Shadow,
+    /// タイトルバーのボタンの丸（直径 BUTTON_W）
+    pub(super) button: Corner,
+    /// 影の近い層と遠い層
+    pub(super) near: Shadow,
+    pub(super) far: Shadow,
     /// 事前に掛けたアルファの 0xAARRGGBB（CURSOR_W × CURSOR_H）
     pub(super) cursor: Vec<u32>,
 }
@@ -27,80 +32,41 @@ impl Deco {
         Deco {
             corner: Corner::new(theme::RADIUS),
             corner_small: Corner::new(theme::RADIUS_SMALL),
-            shadow: Shadow::new(theme::SHADOW_BLUR),
+            button: Corner::new(super::BUTTON_W / 2),
+            near: Shadow::new(theme::SHADOW_NEAR_BLUR),
+            far: Shadow::new(theme::SHADOW_FAR_BLUR),
             cursor: build_cursor(),
         }
     }
+
+    /// 2 層の影（遠い → 近い）。`focused` ならフォーカスのあるウィンドウ・メニューの濃さ
+    pub(super) fn shadows(&self, focused: bool) -> [ShadowLayer<'_>; 2] {
+        let ((near, far), far_dy) = if focused {
+            (theme::SHADOW_ALPHA, theme::SHADOW_FAR_DY)
+        } else {
+            (theme::SHADOW_ALPHA_INACTIVE, theme::SHADOW_FAR_DY_INACTIVE)
+        };
+        [
+            ShadowLayer { shadow: &self.far, dy: far_dy, alpha: far },
+            ShadowLayer { shadow: &self.near, dy: theme::SHADOW_NEAR_DY, alpha: near },
+        ]
+    }
 }
 
-/// 影がウィンドウの外へはみ出す幅（描き直す行を広げるのに使う）
-pub(super) const SHADOW_MARGIN: i32 = theme::SHADOW_BLUR as i32 + theme::SHADOW_DY;
+/// 影がパネルの外へはみ出す幅（描き直す行を広げるのに使う）。遠い影の「ぼかし + 下へ」
+pub(super) const SHADOW_MARGIN: i32 = theme::SHADOW_FAR_BLUR as i32 + theme::SHADOW_FAR_DY;
 
-/// 角の丸いパネル（ウィンドウの枠を含む矩形 `rect` = (x, y, w, h)）の `y` 行目を `row` に重ねる。
-/// `shadow` があれば先に影を描く。`fill` は中身（枠の内側）を `row` の範囲 `[x0, x1)` に書く
-/// （引数は x0 と、その範囲の行）。1 ピクセルの縁は `border` で、角は覆う割合で下と混ぜる
+/// 縁の無い角の丸いパネル（ウィンドウ・メニュー）の `y` 行目を `row` に重ねる（`vibe_gfx::panel`）
 pub(super) fn panel_row(
     row: &mut [u32],
     y: i32,
     rect: (i32, i32, i32, i32),
     corner: &Corner,
-    shadow: Option<(&Shadow, u8)>,
-    border: u32,
+    shadows: &[ShadowLayer],
     fill: impl FnOnce(i32, &mut [u32]),
 ) {
-    let (px, py, pw, ph) = rect;
-    let width = row.len() as i32;
-    if let Some((s, a)) = shadow {
-        let mut c = Canvas::new(row, width as usize, 1);
-        c.shadow_round(px, py - y, pw, ph, theme::SHADOW_DY, s, corner, rgb(0, 0, 0), a);
-    }
-    if y < py || y >= py + ph || pw <= 0 {
-        return;
-    }
-    let (x0, x1) = (px.max(0), (px + pw).min(width));
-    if x0 >= x1 {
-        return;
-    }
-    let dy = y - py;
-    let r = (corner.r as i32).min(pw / 2).min(ph / 2);
-    let corner_row = dy < r || dy >= ph - r;
-    // 角の所の下の色を取っておく（左右それぞれ r ピクセルまで）
-    let mut below = [0u32; 2 * theme::RADIUS];
-    let zone = |i: i32| -> Option<i32> {
-        // 角の i 番目のピクセルの x（左の r 個、右の r 個）
-        let x = if i < r { px + i } else { px + pw - 2 * r + i };
-        (x >= x0 && x < x1).then_some(x)
-    };
-    if corner_row {
-        for i in 0..2 * r {
-            if let Some(x) = zone(i) {
-                below[i as usize] = row[x as usize];
-            }
-        }
-    }
-    fill(x0, &mut row[x0 as usize..x1 as usize]);
-    // 縁
-    if dy == 0 || dy == ph - 1 {
-        row[x0 as usize..x1 as usize].fill(border);
-    } else {
-        for x in [px, px + pw - 1] {
-            if x >= x0 && x < x1 {
-                row[x as usize] = border;
-            }
-        }
-    }
-    if !corner_row {
-        return;
-    }
-    for i in 0..2 * r {
-        let Some(x) = zone(i) else { continue };
-        let dx = x - px;
-        let outer = corner.at(dx, dy, pw, ph);
-        let inner = if dx >= 1 && dy >= 1 { corner.at(dx - 1, dy - 1, pw - 2, ph - 2) } else { 0 };
-        let inside = row[x as usize];
-        let c = blend(border, inside, inner);
-        row[x as usize] = blend(below[i as usize], c, outer);
-    }
+    let style = PanelStyle { corner, shadows, shadow_color: theme::SHADOW_COLOR, border: None };
+    panel::panel_row(row, y, rect, &style, fill);
 }
 
 /// マウスカーソルを `row`（画面の `y` 行目）に重ねる

@@ -791,9 +791,10 @@ impl Screen {
         }
         let focused = self.focused();
         let hover = self.hover;
+        let Some(deco) = self.deco.as_deref() else { return };
         for (&id, win) in self.windows.iter_mut() {
             let part = hover.filter(|h| h.0 == id).map(|h| h.1);
-            render_titlebar(win, Some(id) == focused, part);
+            render_titlebar(win, Some(id) == focused, part, deco);
         }
     }
 
@@ -957,11 +958,15 @@ impl Screen {
         }
         let old = core::mem::replace(&mut self.hover, hover);
         let focused = self.focused();
-        for (id, _) in [old, hover].into_iter().flatten() {
+        let Some(deco) = self.deco.as_deref() else { return };
+        let mut rows = [None; 2];
+        for (slot, (id, _)) in rows.iter_mut().zip([old, hover].into_iter().flatten()) {
             let Some(w) = self.windows.get_mut(&id) else { continue };
             let part = hover.filter(|h| h.0 == id).map(|h| h.1);
-            render_titlebar(w, focused == Some(id), part);
-            let (top, bottom) = ((w.y - TITLE_H as i32).max(0) as usize, w.y.max(0) as usize);
+            render_titlebar(w, focused == Some(id), part, deco);
+            *slot = Some(((w.y - TITLE_H as i32).max(0) as usize, w.y.max(0) as usize));
+        }
+        for (top, bottom) in rows.into_iter().flatten() {
             self.mark_rows(top, bottom);
         }
     }
@@ -1155,13 +1160,12 @@ impl Screen {
         if w.minimized {
             return;
         }
-        // 枠を含む矩形
-        let rect = (w.x - 1, w.y - TITLE_H as i32 - 1, w.w as i32 + 2, w.h as i32 + TITLE_H as i32 + 2);
+        // タイトルバーと中身の矩形（縁は描かない。当たり判定と描き直す行は 1 ピクセル広い矩形のまま）
+        let rect = (w.x, w.y - TITLE_H as i32, w.w as i32, w.h as i32 + TITLE_H as i32);
         let m = deco::SHADOW_MARGIN;
         if y < rect.1 - m || y >= rect.1 + rect.3 + m {
             return;
         }
-        let alpha = if focused { theme::SHADOW_ALPHA } else { theme::SHADOW_ALPHA_INACTIVE };
         let fill = |x0: i32, span: &mut [u32]| {
             // 中身（タイトルバーか、ウィンドウの中身）の行と、その左端の x
             let src = if y >= w.y - TITLE_H as i32 && y < w.y {
@@ -1183,7 +1187,7 @@ impl Screen {
                 Row::P32(r) => d.copy_from_slice(&r[s0..s1]),
             }
         };
-        deco::panel_row(row, y, rect, &deco.corner, Some((&deco.shadow, alpha)), theme::BORDER, fill);
+        deco::panel_row(row, y, rect, &deco.corner, &deco.shadows(focused), fill);
     }
 
     fn draw_cursor_row32(&self, y: usize, row: &mut [u32]) {
@@ -1302,47 +1306,52 @@ pub(crate) fn draw_label(c: &mut Canvas, face: Face, x: i32, top: i32, h: i32, t
     }
 }
 
-/// タイトルバーを描く: 左にアイコンと題名（太字）、右端に [_] と、閉じられるなら [x]（線の記号。マウスが乗ると
-/// 地に色が付き、[x] は赤）。フォーカスがあれば明るい地に濃い文字、無ければ灰色の地に薄い文字
-fn render_titlebar(w: &mut Window, focused: bool, hover: Option<Part>) {
+/// タイトルバーを描く: 左にアイコンと題名（太字）、右端に [_] と、閉じられるなら [x]（薄い地の丸に線の記号。
+/// マウスが乗ると丸が濃くなり、[x] は赤に白）。地は中身と同じで区切りの線は無い。フォーカスが無ければ
+/// 地はそのままで、題名・記号を薄い色に、アイコンを半分の濃さにする。端末は中身と同じ暗い地
+fn render_titlebar(w: &mut Window, focused: bool, hover: Option<Part>, deco: &deco::Deco) {
     let close_x = w.close_box_x();
     let min_x = w.minimize_box_x();
     w.titlebar.resize(w.w * TITLE_H, 0);
     let mut c = Canvas::new(&mut w.titlebar, w.w, TITLE_H);
     let h = TITLE_H as i32;
-    let (bg, fg) = if focused { (theme::FACE, theme::TEXT) } else { (theme::FACE_INACTIVE, theme::TEXT_DIM) };
+    let (bg, fg, fg_dim, button_bg, button_hover) = if w.terminal {
+        (theme::TERMINAL[0], theme::DARK_TEXT, theme::DARK_TEXT_DIM, theme::DARK_BUTTON, theme::DARK_HOVER)
+    } else {
+        (theme::FACE, theme::TEXT, theme::TEXT_DIM, theme::SUBTLE, theme::HOVER)
+    };
+    let ink = if focused { fg } else { fg_dim };
     c.clear(bg);
-    c.hline(0, h - 1, w.w as i32, theme::SEPARATOR);
     let mut tx = 8;
     if let Some(icon) = w.icon {
         let s = crate::gfx::icons::SIZE as i32;
-        c.blit_alpha(6, (h - s) / 2, icon, s as usize);
+        c.blit_alpha_faded(6, (h - s) / 2, icon, s as usize, if focused { 255 } else { 128 });
         tx = 6 + s + 6;
     }
     let n = label_fit(Face::Bold, &w.title, min_x - tx - 4);
     let title: String = w.title.chars().take(n).collect();
-    draw_label(&mut c, Face::Bold, tx, 0, h - 1, &title, fg);
-    // ボタン: 押せる所（幅 BUTTON_W）の中に 2 ピクセル空けた角の丸い地と、真ん中に 10x10 の記号
-    let corner = canvas::Corner::new(theme::RADIUS_SMALL);
-    let ink = if focused { theme::TEXT } else { theme::TEXT_DIM };
+    draw_label(&mut c, Face::Bold, tx, 0, h, &title, ink);
+    // ボタン: 押せる所（幅 BUTTON_W）の真ん中に直径 BUTTON_W の丸と、その真ん中に 8x8 の記号
+    let d = BUTTON_W as i32;
+    let by = (h - d) / 2;
     let button = |c: &mut Canvas, x: i32, part: Part| -> canvas::Color {
-        if hover == Some(part) {
-            let bgc = if part == Part::Close { theme::CLOSE_HOVER } else { theme::HOVER };
-            c.fill_round_rect(x, 2, BUTTON_W as i32, h - 5, &corner, bgc, 255);
-            if part == Part::Close { canvas::rgb(255, 255, 255) } else { ink }
-        } else {
-            ink
-        }
+        let (fill, col) = match hover {
+            Some(p) if p == part && part == Part::Close => (theme::CLOSE_HOVER, canvas::rgb(255, 255, 255)),
+            Some(p) if p == part => (button_hover, ink),
+            _ => (button_bg, ink),
+        };
+        c.fill_round_rect(x, by, d, d, &deco.button, fill, 255);
+        col
     };
-    let (gx, gy) = ((BUTTON_W as i32 - 10) / 2, (h - 1 - 10) / 2);
+    let (gx, gy) = ((d - 8) / 2, by + (d - 8) / 2);
     let col = button(&mut c, min_x, Part::Minimize);
-    c.fill_rect(min_x + gx, gy + 5, 10, 1, col);
-    c.fill_rect(min_x + gx, gy + 6, 10, 1, canvas::blend(bg, col, 90));
+    c.fill_rect(min_x + gx, gy + 4, 8, 1, col);
+    c.fill_rect_alpha(min_x + gx, gy + 5, 8, 1, col, 90);
     if let Some(x) = close_x {
         let col = button(&mut c, x, Part::Close);
         // ×: 2 本の斜めの線（隣のピクセルを薄く重ねて太さとなめらかさを出す）
-        for d in 0..10 {
-            for (px, py) in [(x + gx + d, gy + d), (x + gx + 9 - d, gy + d)] {
+        for d in 0..8 {
+            for (px, py) in [(x + gx + d, gy + d), (x + gx + 7 - d, gy + d)] {
                 c.blend_pixel(px, py, col, 255);
                 c.blend_pixel(px + 1, py, col, 110);
                 c.blend_pixel(px - 1, py, col, 50);

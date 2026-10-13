@@ -6,7 +6,7 @@
 //! 32 ビットで `Screen::bar` に描く（文字は UI のフォント。状態の表示は数が変わっても位置が動かないよう固定幅）。
 //!
 //! メニュー: 「VibeOS」を押すとバーの下に開く。項目は "Terminal" と /BIN のアプリ（開くたびに読む）。
-//! 角の丸いパネルに影を付けて出し、項目はアイコンと名前。乗せた項目は強調色の地。
+//! 縁の無い角の丸いパネルに 2 層の影を付けて出し、項目はアイコンと名前。乗せた項目は強調色の地。
 //! 画面の高さに入りきらなければ、何列かに分けて並べる（上から下、左から右の順）。
 //! 項目を押すと起動する（ロックの外で。`super::launch`）。どこを押してもメニューは閉じる。
 
@@ -35,7 +35,6 @@ const MENU_PAD: usize = 2;
 /// メニューの項目のアイコンと名前の位置（列の左端から）
 const ITEM_ICON_X: i32 = 10;
 const ITEM_TEXT_X: i32 = 34;
-const MENU_SHADOW_ALPHA: u8 = 90;
 
 pub(super) struct Menu {
     pub(super) items: Vec<String>,
@@ -220,6 +219,6 @@ impl Screen {
             let n = span.len().min(m.w - s0);
             span[..n].copy_from_slice(&m.buf[r * m.w + s0..r * m.w + s0 + n]);
         };
-        deco::panel_row(row, y as i32, rect, &deco.corner, Some((&deco.shadow, MENU_SHADOW_ALPHA)), theme::BORDER, fill);
+        deco::panel_row(row, y as i32, rect, &deco.corner, &deco.shadows(true), fill);
     }
 }

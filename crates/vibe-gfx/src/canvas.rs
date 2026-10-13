@@ -55,11 +55,16 @@ pub fn lerp(a: Color, b: Color, t: u32, n: u32) -> Color {
     mix(16) << 16 | mix(8) << 8 | mix(0)
 }
 
-/// 32 ビットの色を標準のパレットの近い色の番号に（グレーはグレースケールの 16 段階、ほかはカラーキューブ）
+/// グレーとみなす色の成分の差（テーマの少し温かい灰色と、それを白に混ぜたなめらかな文字の縁も含める）
+const NEAR_GRAY: u8 = 12;
+
+/// 32 ビットの色を標準のパレットの近い色の番号に（グレーに近い色はグレースケールの 16 段階、ほかはカラーキューブ）。
+/// 少し色の付いた灰色をカラーキューブにすると、成分ごとの段階の境目で黄色や青に寄ってしまう
 pub fn to_palette8(c: Color) -> u8 {
     let (r, g, b) = ((c >> 16) as u8, (c >> 8) as u8, c as u8);
-    if r == g && g == b {
-        return palette::GRAY_BASE + ((r as u32 * 15 + 127) / 255) as u8;
+    if r.max(g).max(b) - r.min(g).min(b) <= NEAR_GRAY {
+        let v = (r as u32 + g as u32 + b as u32 + 1) / 3;
+        return palette::GRAY_BASE + ((v * 15 + 127) / 255) as u8;
     }
     palette::rgb(r, g, b)
 }
@@ -441,18 +446,30 @@ impl<'a> Canvas<'a> {
         let b = shadow.blur as i32;
         let (sx, sy, sw, sh) = (x - b, y + dy - b, w + 2 * b, h + 2 * b);
         let Some((x0, y0, x1, y1)) = self.clip(sx, sy, sw, sh) else { return };
+        let r = (corner.r as i32).min(w / 2).min(h / 2);
         for row in y0..y1 {
             let py = row as i32;
-            let inside_y = py >= y && py < y + h;
+            let ay = shadow.span(py - (y + dy), h);
+            if ay == 0 {
+                continue;
+            }
+            // 矩形が覆う列 [c0, c1)（角の行では角の間だけ）はまとめて飛ばす。残りの矩形の中は角の外だけ描く
+            let ry = py - y;
+            let (c0, c1) = match ry {
+                _ if ry < 0 || ry >= h => (x0 as i32, x0 as i32),
+                _ if ry >= r && ry < h - r => (x, x + w),
+                _ => (x + r, x + w - r),
+            };
+            let (c0, c1) = (c0.clamp(x0 as i32, x1 as i32), c1.clamp(x0 as i32, x1 as i32));
+            let c1 = c1.max(c0);
             let s = row * self.width;
-            for col in x0..x1 {
-                let px = col as i32;
-                if inside_y && px >= x && px < x + w && corner.at(px - x, py - y, w, h) == 255 {
+            for col in (x0 as i32..c0).chain(c1..x1 as i32) {
+                if ry >= 0 && ry < h && col >= x && col < x + w && corner.at(col - x, ry, w, h) == 255 {
                     continue;
                 }
-                let k = shadow.alpha_at(px, py, x, y, w, h, dy) as u32 * a as u32 / 255;
+                let k = shadow.span(col - x, w) * ay / 255 * a as u32 / 255;
                 if k > 0 {
-                    let p = &mut self.pixels[s + col];
+                    let p = &mut self.pixels[s + col as usize];
                     *p = blend(*p, c, k as u8);
                 }
             }
@@ -506,6 +523,29 @@ impl<'a> Canvas<'a> {
                     255 => s & 0x00FF_FFFF,
                     _ => (s & 0x00FF_FFFF) + scale(*p, 255 - a),
                 };
+            }
+        }
+    }
+
+    /// `blit_alpha` と同じだが、画像全体の濃さを `fade / 255` にして重ねる（フォーカスの無いウィンドウのアイコン）
+    pub fn blit_alpha_faded(&mut self, x: i32, y: i32, src: &[u32], src_w: usize, fade: u8) {
+        if fade == 255 {
+            return self.blit_alpha(x, y, src, src_w);
+        }
+        if src_w == 0 {
+            return;
+        }
+        let src_h = src.len() / src_w;
+        let Some((x0, y0, x1, y1)) = self.clip(x, y, src_w as i32, src_h as i32) else { return };
+        for row in y0..y1 {
+            let sr = (row as i32 - y) as usize * src_w + (x0 as i32 - x) as usize;
+            let d = row * self.width;
+            for (p, &s) in self.pixels[d + x0..d + x1].iter_mut().zip(&src[sr..sr + (x1 - x0)]) {
+                // 事前に掛けたアルファの色ごと薄くする
+                let a = ((s >> 24) * fade as u32 + 127) / 255;
+                if a != 0 {
+                    *p = scale(s & 0x00FF_FFFF, fade as u32) + scale(*p, 255 - a);
+                }
             }
         }
     }
@@ -720,6 +760,59 @@ mod tests {
         assert_eq!(c.get(8, 15), c.get(21, 15));
     }
 
+    /// 前の `shadow_round`（1 ピクセルずつ矩形の中かを調べる）
+    #[allow(clippy::too_many_arguments)]
+    fn shadow_round_reference(
+        c: &mut Canvas, x: i32, y: i32, w: i32, h: i32, dy: i32, shadow: &Shadow, corner: &Corner, col: Color, a: u8,
+    ) {
+        let b = shadow.blur as i32;
+        let Some((x0, y0, x1, y1)) = c.clip(x - b, y + dy - b, w + 2 * b, h + 2 * b) else { return };
+        for row in y0..y1 {
+            let py = row as i32;
+            let inside_y = py >= y && py < y + h;
+            for px in x0 as i32..x1 as i32 {
+                if inside_y && px >= x && px < x + w && corner.at(px - x, py - y, w, h) == 255 {
+                    continue;
+                }
+                let k = shadow.alpha_at(px, py, x, y, w, h, dy) as u32 * a as u32 / 255;
+                if k > 0 {
+                    c.blend_pixel(px, py, col, k as u8);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shadow_round_skips_columns_without_changing_pixels() {
+        let corner = Corner::new(6);
+        for blur in [1, 3, 10] {
+            let s = Shadow::new(blur);
+            // 画面の中・端からはみ出す・半径より小さい矩形・平たい矩形
+            for (x, y, w, h, dy) in
+                [(10, 10, 30, 20, 4), (-5, -8, 25, 30, 1), (30, 25, 8, 6, 0), (2, 15, 50, 3, 2), (45, 5, 20, 40, -3)]
+            {
+                let (mut a, mut b) = ([rgb(200, 210, 220); 60 * 50], [rgb(200, 210, 220); 60 * 50]);
+                Canvas::new(&mut a, 60, 50).shadow_round(x, y, w, h, dy, &s, &corner, rgb(4, 0, 30), 180);
+                shadow_round_reference(&mut Canvas::new(&mut b, 60, 50), x, y, w, h, dy, &s, &corner, rgb(4, 0, 30), 180);
+                assert!(a == b, "blur {blur} rect ({x},{y},{w},{h}) dy {dy}");
+            }
+        }
+    }
+
+    #[test]
+    fn blit_alpha_faded_halves_the_icon() {
+        let mut buf = [K; 3];
+        let mut c = Canvas::new(&mut buf, 3, 1);
+        let src = [premultiply(W, 255), premultiply(W, 128), premultiply(W, 0)];
+        c.blit_alpha_faded(0, 0, &src, 3, 128);
+        assert_eq!(c.get(0, 0), Some(rgb(128, 128, 128)));
+        assert_eq!(c.get(1, 0), Some(rgb(64, 64, 64)));
+        assert_eq!(c.get(2, 0), Some(K));
+        // 255 なら blit_alpha と同じ
+        c.blit_alpha_faded(0, 0, &src, 3, 255);
+        assert_eq!(c.get(0, 0), Some(W));
+    }
+
     #[test]
     fn shadow_ramp_rises() {
         let s = Shadow::new(5);
@@ -757,6 +850,10 @@ mod tests {
         assert_eq!(p[to_palette8(rgb(255, 0, 0)) as usize], [63, 0, 0]);
         let g = p[to_palette8(rgb(128, 128, 128)) as usize];
         assert!(g[0] == g[1] && (30..=34).contains(&g[0]), "{g:?}");
+        // 少し温かい灰色もグレー（黄色に寄らない）
+        let w = p[to_palette8(rgb(128, 128, 120)) as usize];
+        assert!(w[0] == w[1] && w[1] == w[2], "{w:?}");
+        assert_eq!(to_palette8(rgb(44, 44, 42)), to_palette8(rgb(43, 43, 43)));
     }
 
     #[test]
