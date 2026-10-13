@@ -585,3 +585,55 @@
 ## 2026-10-13 README のスクリーンショットを今風の見た目に（ブランチ `modern-look`）
 
 - オーナーの指示で、README のスクリーンショット（`docs/images/desktop.png`）をこのブランチの見た目で撮り直した。`tools/screenshots/desktop.scn` を 1024x768 の配置に書き直した（上の段にファイルマネージャ・電卓・時計・マインスイーパ・落ち物パズル、左下に端末、右下にタスクマネージャ。時計は 10 時 10 分）。README の画像の説明を「1024×768 のデスクトップ」にした
+
+## 2026-10-13 Aster に近づける A1: ウィンドウの見た目（ブランチ `aster-look`）
+
+- Aster はオーナーが別の場で作ったデスクトップのデザインのモックアップの名前（リポジトリには無い。見た目は [計画書](plans/aster-look.md) に言葉と色の値で書いた。DECISIONS.md D-056）
+
+- `vibe_gfx::panel`（新）: 角の丸いパネルを 1 行ずつ重ねる `panel_row` をカーネルの `gui/deco.rs` から移した（ホストでテストするため）。影は層の並び（`ShadowLayer`: ぼかしの表・下へ・濃さ）、縁は `Option`（None なら描かず、角は中身と下の色だけで混ぜる）。角の所の下の色を取っておく配列は `MAX_RADIUS`（24。A4 のドックの半径 20 も入る）
+- テーマ: 地 `FACE` を白に、`FACE_INACTIVE`・`BORDER` を無くし、`SUBTLE`（ボタンの丸の地）・端末の暗いタイトルバーの色を足した。文字・薄い文字・乗せた色は少し温かい灰色。角の半径 14。影は 2 層（近い: ぼかし 3・下へ 1、遠い: ぼかし 20・下へ 10。濃さ 64/128、フォーカスの無いものは 50/72 で遠い影を下へ 6）、色は 4, 0, 30。`SHADOW_MARGIN` は 30
+- ウィンドウ・メニュー: 縁を描かず、描く矩形はタイトルバーと中身そのもの。当たり判定と描き直す行は 1 ピクセル広いまま
+- タイトルバー: 地はいつも中身と同じで区切りの線なし。フォーカスが無いと題名・記号が薄く、アイコンは半分の濃さ（`Canvas::blit_alpha_faded`）。ボタンは押せる所の真ん中に直径 20 の丸（`SUBTLE`、乗せると `HOVER`、[x] は赤に白）と 8x8 の記号。端末は暗い地（`TERMINAL[0]`）に明るい灰色の文字・暗い丸
+- 速さ: `Canvas::shadow_round` は、矩形が覆う列（角の行では角の間）をまとめて飛ばし、行ごとの縦の濃さが 0 の行も飛ばすようにした。前の 1 ピクセルずつ調べるものと同じピクセルになることをホストのテストで確かめた
+- ktest `gfx_compose_speed` を、デスクトップと同じ 1 行ずつの合成（背景 → `panel_row` で影・タイトルバー・8 ビットの中身）に書き直した。前の見た目（半径 8・1 層の影・縁）を前のコードで測ると 1 枚 11〜15ms、新しい見た目（半径 14・2 層の影・縁なし）を新しいコードで測ると 8〜9ms（QEMU。何回か流した幅）。M2 の時の全画面に描く測り方では 11ms
+- `to_palette8`: 灰色に近い色（成分の差 12 以下）をグレースケールに。温かい灰色の文字の縁がレトロの電卓で黄色っぽくなったため（D-060）
+- シナリオ: タイトルバーの地でフォーカスを見ていた所（28・29・46）は、[x] の記号の真ん中（アプリ）・[_] の線（端末）の色で見るようにした。66 はボタンの丸の左寄りの点で見る
+- ホストのテスト: 縁なしの角が中身と下の色だけで混ざる、縁を渡せば描く、2 層の影が外へ向かって薄くなり中身の下に描かない・左右対称、`shadow_round` の列の飛ばし方を変えても前と同じピクセル、`blit_alpha_faded`、温かい灰色の `to_palette8`
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, blocks-bottom, calc-46, calc-cleared, calc-retro, desktop-moved, desktop-terminal, files-images, fonts-fallback, mines-counter, mines-flag, mines-lost, mines-open, mines-sad, net-statusbar-ip, paint-window, tasks-header, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-tile（バーと部品はテーマの灰色・文字の色が変わった分だけ）
+- 気づいたこと: 端末どうしが重なると、暗い地どうしで影がほとんど見えない（terminals-two）。計画書 §7 の「影が見えない」の端末の場合
+
+## 2026-10-13 Aster に近づける A2: 部品と強調色（ブランチ `aster-look`）
+
+- オーナーが A1 の仮のスクリーンショットを見て「A2 に進んで」（D-061）
+- テーマ: 強調色を紫（83, 74, 183）、薄い強調色（206, 203, 246）、薄い強調色の地の上の文字 `ACCENT_TEXT`（38, 33, 92）、既定のボタンの乗せた・押した色、押したボタンの `PRESSED`。小さな部品の角の半径 6
+- `vibe-ui`: 枠（`draw::frame`・`LINE`）をやめ、ボタン・テキスト欄・一覧・表示欄を `SUBTLE` の角の丸い塗り（`draw::fill`）に。ボタンは乗せる・押すと一段ずつ濃く。`Button::primary`（強調色の地に白い文字）を足し、ダイアログの最初のボタンに使う。一覧の選んだ行は薄い強調色の地に濃い強調色の文字（一覧にフォーカスが無いと灰色）。テキスト欄の全体の選択も薄い強調色。フォーカスの輪とチェックの付いたチェックボックスは強調色（`FOCUS`）、付いていないチェックボックスは灰色の塗り。スクロールバーのつまみは今までどおり幅 6 の丸で、色を温かい灰色に。部品の配置は変えていない
+- アプリ: `mines`（マスと盤面の地・顔のボタン）、`clock`（文字盤・細い目盛り）、`blocks`（帯の小さな文字）の色をテーマに合わせた（D-061）。`tasks` の下のボタンは角の丸み（半径 14）にかからないことを画面で確かめた
+- ホストのテスト: 枠を描かない（辺の一番外のピクセルも塗りの色）、選んだ行の文字が濃い強調色・フォーカスを外すと灰色の地、既定のボタン、ダイアログの最初のボタンが既定のボタン（`vibe-ui` は 20 本）
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three（強調色が変わった分）, blocks-paused, calc-46, calc-cleared, calc-retro, files-images, mines-counter, mines-flag, mines-lost, mines-open, mines-sad
+
+## 2026-10-13 Aster に近づける A3: バーと背景（ブランチ `aster-look`）
+
+- オーナーが A2 の仮のスクリーンショットを見て「A3 に進んで」（D-062）
+- `vibe_gfx::backdrop`（新）: 地の色に、画面に対する割合で置いた円を重ねた 1 行を描く `fill_row`。1 行を 4 本の細い行に分け、それぞれの範囲（1/16 ピクセル、整数の平方根）が各ピクセルを覆う長さで縁を混ぜる。どの細い行でも覆う所はまとめて塗る。平方根は 32 ビットに収まれば割り算を使わない 1 桁ずつの方法（`isqrt32`。64 ビットの割り算の Newton 法だと ktest の合成が 1 枚 18ms になった）
+- テーマ: `BAR`・`SEPARATOR`・`DESKTOP_TOP/BOTTOM` を無くし、`BAR_TEXT`・`BAR_TEXT_DIM`・`BAR_PILL_ALPHA`（白 20%）・`BAR_SHADE_ALPHA`（黒 35%）・`DESKTOP`・`DESKTOP_CIRCLES` を足した
+- 上端のバー: `render_bar` で背景の行（`Screen::background_row`）を先に描き、背景の画像なら黒を 35% 重ね、白い文字とアイコンを描く。フォーカスのあるウィンドウ・開いているメニューのボタンは白 20% の角の丸い地。最小化したものは薄い文字と半分の濃さのアイコン。`set_wallpaper` でバーも描き直す
+- メニュー: 乗せた項目は薄い強調色の地に濃い強調色の文字
+- 背景の画像: 画面全体に並べる（D-062）。`wallpaper::fill_row` は真ん中に置いたときの画像の無い所を書かない（先に既定の背景を描く）。敷き詰めのときは既定の背景を描かない
+- ktest `gfx_compose_speed` の背景をグラデーションから既定の背景に替えた: 1 枚 13〜16ms（A1 の後のグラデーションでは 8〜9ms。円の縁の計算と、地を塗ってから円を塗る分）
+- シナリオ: 背景の色を見ていた所（10・25・28・29・44・46・49・52・60〜63）を紫の地か右上の円の色に。60〜63 には「右の真ん中が右上の円の中」（円が画面の大きさに対する割合で置かれる）を足した。52 は真ん中に置いた画像の位置（240,190）と、画像の上のバーの期待画像 `wallpaper-bar` を足した
+- ホストのテスト: 円の中は塗り・縁はなめらか・上下左右で対称・面積がおよそ π r²、画面の大きさを変えても割合で置かれる、後ろの円が手前・画面の外は切る、`isqrt32`、真ん中に置いたときに画像の無い所は書かない
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, bar-minimized, bar-three, calc-46, desktop-moved, desktop-terminal, files-images, fonts-fallback, net-statusbar-ip, paint-window, terminals-edit, terminals-two, view-window-gradient, view-window-plasma, wallpaper-center, wallpaper-tile。新しく wallpaper-bar
+
+## 2026-10-13 Aster に近づける A4: ドックと README のスクリーンショット（ブランチ `aster-look`）
+
+- オーナーの質問「レトロモードの存在は重荷になってる？」に答え、レトロの扱いを決めた（D-063）。オーナーが「A4 に進んで」（D-064）
+- `vibe_gfx::dock`（新）: `parse_config`（コメント・空行・同じ名前・大文字）、`Layout`（項目の数と画面の大きさから真ん中の下に置く。入りきらない分は出さない。タイル・パネルの当たり判定）、`work_bottom`（作業領域）。ホストのテスト 5 本
+- `gui/dock.rs`（新）: 起動時に `DOCK.CFG` と `/BIN` を読み（ロックの外で）、パネルとツールチップをバッファに描いて `panel_row` で重ねる。ウィンドウより手前・メニューより奥。`Window::app`（作ったプロセスのプログラムの名前。端末は "terminal"）で開いているアプリを決め、重なりの順・フォーカスが変わるたびに点を直す。押すと一番手前のウィンドウを前に出すか起動する。ドックのパネルの中はウィンドウに当たらない
+- 詰まったこと: 起動したアプリの点が付かなかった。ウィンドウを足したとき（`focus_changed`）にはまだ `app` を入れていなかった。`create_window`・`create_terminal` で名前を入れた後にも点を直すようにした
+- 作業領域: 新しいウィンドウの置き場所と端末の大きさの上限・最初の端末の位置を、ドックの分（66）を除いて決める
+- アイコン: `vibe-icongen --size N`。`make icons` で `DOCK_APPS` の分の 32x32 を `assets/icons/ICONS32.VIA`（45,196 バイト、gzip で 2,745 バイト）に。カーネルの `gfx::icons` は `ICONS32.VIA` も読む（`get32`）
+- Makefile: `DOCK_APPS`、`tools/dock-cfg.sh`（`DOCK.CFG` を作る。SVG の無い名前があれば止まる）、`make test-dock-cfg`（止まることを確かめる。`make test` に入れた）
+- シナリオ: 新しく `68-dock`（押すと起動・乗せると名前・開いている点・もう一度押すと前に出すだけ・最小化した電卓が戻る）、`69-dock-missing`（DOCK.CFG が無ければドック無しで、端末は下まで）、`70-dock-icons16`（ICONS32.VIA が無ければ 16x16）。端末の位置が変わったシナリオ（25・28・44・46・52・53・65）の座標を直した（D-064）。ほかのシナリオのクリックがドックに当たっていないことは、全部のシナリオが通ることで確かめた
+- ktest `gfx_compose_speed`: 1 枚 16ms（ドックは測っていない）
+- 期待画像を作り直したもの（目で確かめた）: bar-menu, desktop-moved, desktop-terminal, files-images, fonts-fallback, terminals-edit, terminals-two, view-window-plasma, wallpaper-tile（大きさも変えた）。新しく dock-start, dock-hover, dock-open, dock-icons16
+- README のスクリーンショット: `tools/screenshots/desktop.scn` の並びを直し（ウィンドウの間を 16 ピクセル以上、ドックが見えるように）、`make screenshots` で撮り直した。D-055 のとおり、オーナーが確認するまでコミットしない

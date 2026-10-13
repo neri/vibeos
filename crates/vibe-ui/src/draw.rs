@@ -1,6 +1,7 @@
-//! 描画の共通部分（色・文字・角の丸い枠）
+//! 描画の共通部分（色・文字・角の丸い塗り）
 //!
-//! 部品は 32 ビットの `Canvas` に、`vibe_gfx::theme` の色で描く（明るい地・強調色の青・角の丸い枠）。
+//! 部品は 32 ビットの `Canvas` に、`vibe_gfx::theme` の色で描く（白い地に、枠の無い薄い灰色の角の丸い塗り。
+//! フォーカスは強調色の輪、選んだものは薄い強調色の地に濃い強調色の文字）。
 //! 文字はなめらかなフォント（`set_fonts` でアプリが 1 回渡す。カーネルが読み込んだものを vibe_rt で取る）。
 //! 渡されていなければ 8x8 のビットマップのフォント（ホストのテストもこちら）。
 
@@ -14,21 +15,27 @@ use crate::{Align, Rect};
 
 /// ウィンドウの地
 pub const FACE: Color = theme::FACE;
-/// テキスト欄・一覧・表示欄・ボタンの地
-pub const FIELD: Color = rgb(255, 255, 255);
-/// 枠の線
-pub const LINE: Color = rgb(198, 201, 208);
+/// テキスト欄・一覧・表示欄・ボタンの地（枠は描かない）
+pub const FIELD: Color = theme::SUBTLE;
 pub const TEXT: Color = theme::TEXT;
 pub const TEXT_DISABLED: Color = theme::TEXT_DIM;
-/// マウスが乗ったボタン・押したボタンの地
-pub const BUTTON_HOVER: Color = rgb(240, 242, 246);
-pub const BUTTON_PRESSED: Color = rgb(222, 225, 232);
-/// 選んだもの（フォーカスがあるとき・無いとき）
-pub const SELECT: Color = theme::ACCENT;
-pub const SELECT_TEXT: Color = rgb(255, 255, 255);
-pub const SELECT_INACTIVE: Color = theme::ACCENT_LIGHT;
-/// スクロールバーのつまみ
-pub const THUMB: Color = rgb(192, 196, 204);
+/// マウスが乗ったボタン・押したボタンの地。チェックの付いていないチェックボックスの地も `BUTTON_HOVER`
+pub const BUTTON_HOVER: Color = theme::HOVER;
+pub const BUTTON_PRESSED: Color = theme::PRESSED;
+/// 既定のボタン（強調色の地に白い文字）
+pub const PRIMARY: Color = theme::ACCENT;
+pub const PRIMARY_HOVER: Color = theme::ACCENT_HOVER;
+pub const PRIMARY_PRESSED: Color = theme::ACCENT_PRESSED;
+pub const PRIMARY_TEXT: Color = rgb(255, 255, 255);
+/// フォーカスの輪・チェックの付いたチェックボックスの地
+pub const FOCUS: Color = theme::ACCENT;
+/// 選んだもの（一覧の行・テキスト欄の全体の選択）: 薄い強調色の地に濃い強調色の文字。
+/// 一覧にフォーカスが無ければ灰色の地にふつうの文字
+pub const SELECT: Color = theme::ACCENT_LIGHT;
+pub const SELECT_TEXT: Color = theme::ACCENT_TEXT;
+pub const SELECT_INACTIVE: Color = theme::HOVER;
+/// スクロールバーのつまみ（幅 6 の丸）
+pub const THUMB: Color = rgb(192, 189, 178);
 /// 角の半径
 pub const RADIUS: usize = theme::RADIUS_SMALL;
 
@@ -129,15 +136,14 @@ impl Text {
     }
 }
 
-/// 角の丸い枠の表（描くたびに作る。小さいので軽い）
+/// 角の丸みの表（描くたびに作る。小さいので軽い）
 pub struct Corners {
     pub outer: Corner,
-    pub inner: Corner,
 }
 
 impl Corners {
     pub fn new() -> Corners {
-        Corners { outer: Corner::new(RADIUS), inner: Corner::new(RADIUS - 1) }
+        Corners { outer: Corner::new(RADIUS) }
     }
 }
 
@@ -147,16 +153,14 @@ impl Default for Corners {
     }
 }
 
-/// 角の丸い、1 ピクセルの枠 `border` の付いた矩形を `fill` で塗る
-pub fn frame(c: &mut Canvas, r: Rect, k: &Corners, fill: Color, border: Color) {
-    c.fill_round_rect(r.x, r.y, r.w, r.h, &k.outer, border, 255);
-    let i = r.inset(1);
-    c.fill_round_rect(i.x, i.y, i.w, i.h, &k.inner, fill, 255);
+/// 角の丸い矩形を `fill` で塗る（枠は描かない）
+pub fn fill(c: &mut Canvas, r: Rect, k: &Corners, fill: Color) {
+    c.fill_round_rect(r.x, r.y, r.w, r.h, &k.outer, fill, 255);
 }
 
 /// フォーカスの輪（強調色の 2 ピクセルの枠。`r` の外側 1 ピクセルと内側 1 ピクセル）
 pub fn focus_ring(c: &mut Canvas, r: Rect, k: &Corners) {
     let o = Rect::new(r.x - 1, r.y - 1, r.w + 2, r.h + 2);
-    c.round_rect(o.x, o.y, o.w, o.h, &k.outer, SELECT);
-    c.round_rect(r.x, r.y, r.w, r.h, &k.outer, SELECT);
+    c.round_rect(o.x, o.y, o.w, o.h, &k.outer, FOCUS);
+    c.round_rect(r.x, r.y, r.w, r.h, &k.outer, FOCUS);
 }

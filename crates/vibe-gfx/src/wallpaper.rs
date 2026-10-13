@@ -26,13 +26,11 @@ pub fn from_config(text: &str) -> Option<&str> {
 }
 
 /// 画面の `y` 行目（背景の画像の領域の中の行）に、`iw` × `ih` の画像（0x00RRGGBB）を並べた 1 行を書く。
-/// `row` の長さが画面の幅 `sw`、背景の領域の高さが `sh`。真ん中に置くときに画像の無い所は `bg`
-/// （画面の大きさの画素を作らずに 1 行ずつ並べるので、大きな画面でもメモリを使わない）
-#[allow(clippy::too_many_arguments)]
-pub fn fill_row(row: &mut [u32], y: usize, img: &[u32], iw: usize, ih: usize, sh: usize, fit: Fit, bg: u32) {
+/// `row` の長さが画面の幅 `sw`、背景の領域の高さが `sh`。真ん中に置くときに画像の無い所は書かない
+/// （先に既定の背景を描いておく）。画面の大きさの画素を作らずに 1 行ずつ並べるので、大きな画面でもメモリを使わない
+pub fn fill_row(row: &mut [u32], y: usize, img: &[u32], iw: usize, ih: usize, sh: usize, fit: Fit) {
     let sw = row.len();
     if iw == 0 || ih == 0 || img.len() < iw * ih {
-        row.fill(bg);
         return;
     }
     match fit {
@@ -48,7 +46,6 @@ pub fn fill_row(row: &mut [u32], y: usize, img: &[u32], iw: usize, ih: usize, sh
             let (dx, sx) = if ox >= 0 { (ox as usize / 2, 0) } else { (0, (-ox) as usize / 2) };
             let (dy, sy) = if oy >= 0 { (oy as usize / 2, 0) } else { (0, (-oy) as usize / 2) };
             let (w, h) = (iw.min(sw), ih.min(sh));
-            row.fill(bg);
             if y >= dy && y < dy + h {
                 let r = sy + y - dy;
                 row[dx..dx + w].copy_from_slice(&img[r * iw + sx..r * iw + sx + w]);
@@ -92,9 +89,9 @@ mod tests {
     }
 
     fn compose(img: &[u32], iw: usize, ih: usize, sw: usize, sh: usize, fit: Fit, bg: u32) -> Vec<u32> {
-        let mut out = vec![0; sw * sh];
+        let mut out = vec![bg; sw * sh];
         for (y, row) in out.chunks_mut(sw).enumerate() {
-            fill_row(row, y, img, iw, ih, sh, fit, bg);
+            fill_row(row, y, img, iw, ih, sh, fit);
         }
         out
     }
@@ -114,7 +111,7 @@ mod tests {
         // 4x4 の画像を 2x2 に: 真ん中を切り出す
         let big: Vec<u32> = (0..16).collect();
         assert_eq!(compose(&big, 4, 4, 2, 2, Fit::Center, 0), [5, 6, 9, 10]);
-        // 壊れた大きさなら背景だけ
+        // 壊れた大きさなら何も書かない（背景のまま）
         assert_eq!(compose(&[1], 2, 2, 2, 1, Fit::Tile, 3), [3, 3]);
     }
 

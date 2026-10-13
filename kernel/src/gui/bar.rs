@@ -2,11 +2,14 @@
 //!
 //! バー: 左に「VibeOS」（メニューのボタン）、続けて開いているウィンドウのボタン（作った順）、
 //! 右に状態の表示（ステータスバーのスレッドが `set_status_text` で渡す文字列）。
-//! ウィンドウのボタンはアイコンと題名で、フォーカスのあるものは薄い強調色の角の丸い地、最小化したものは薄い文字。
+//! 地は塗らず、背景（既定の背景か背景の画像）の上に白い文字とアイコンを描く。背景の画像のときだけ、
+//! 明るい画像でも読めるようバーの範囲に黒を重ねる。ウィンドウのボタンはアイコンと題名で、フォーカスのあるものと
+//! 開いているメニューのボタンは白を薄く重ねた角の丸い地、最小化したものは薄い文字と薄いアイコン。
 //! 32 ビットで `Screen::bar` に描く（文字は UI のフォント。状態の表示は数が変わっても位置が動かないよう固定幅）。
+//! 背景が変わったら描き直す（`set_wallpaper` が `bar_dirty` にする）。
 //!
 //! メニュー: 「VibeOS」を押すとバーの下に開く。項目は "Terminal" と /BIN のアプリ（開くたびに読む）。
-//! 角の丸いパネルに影を付けて出し、項目はアイコンと名前。乗せた項目は強調色の地。
+//! 縁の無い角の丸いパネルに 2 層の影を付けて出し、項目はアイコンと名前。乗せた項目は薄い強調色の地に濃い強調色の文字。
 //! 画面の高さに入りきらなければ、何列かに分けて並べる（上から下、左から右の順）。
 //! 項目を押すと起動する（ロックの外で。`super::launch`）。どこを押してもメニューは閉じる。
 
@@ -35,7 +38,6 @@ const MENU_PAD: usize = 2;
 /// メニューの項目のアイコンと名前の位置（列の左端から）
 const ITEM_ICON_X: i32 = 10;
 const ITEM_TEXT_X: i32 = 34;
-const MENU_SHADOW_ALPHA: u8 = 90;
 
 pub(super) struct Menu {
     pub(super) items: Vec<String>,
@@ -103,38 +105,38 @@ impl Screen {
         let buttons = self.bar_buttons();
         let h = BAR_H as i32;
         let mut bar = core::mem::take(&mut self.bar);
-        let mut c = Canvas::new(&mut bar, w, BAR_H);
-        c.clear(theme::BAR);
-        c.hline(0, h - 1, w as i32, theme::SEPARATOR);
-        let pill = &deco.corner_small;
-        if self.menu.is_some() {
-            c.fill_round_rect(2, 3, MENU_BUTTON_W - BUTTON_GAP - 2, h - 7, pill, theme::HOVER, 255);
+        // 地: 背景の行そのもの（背景の画像なら黒を重ねる）
+        for (y, row) in bar.chunks_exact_mut(w).enumerate() {
+            self.background_row(y, row);
         }
-        draw_label(&mut c, Face::Bold, 10, 0, h - 1, "VibeOS", theme::ACCENT);
+        let mut c = Canvas::new(&mut bar, w, BAR_H);
+        if self.wallpaper.is_some() {
+            c.fill_rect_alpha(0, 0, w as i32, h, rgb(0, 0, 0), theme::BAR_SHADE_ALPHA);
+        }
+        let pill = &deco.corner_small;
+        let white = rgb(255, 255, 255);
+        if self.menu.is_some() {
+            c.fill_round_rect(2, 3, MENU_BUTTON_W - BUTTON_GAP - 2, h - 6, pill, white, theme::BAR_PILL_ALPHA);
+        }
+        draw_label(&mut c, Face::Bold, 10, 0, h, "VibeOS", theme::BAR_TEXT);
         for (id, x, bw) in buttons {
             let win = &self.windows[&id];
-            let (bg, fg) = if win.minimized {
-                (None, theme::TEXT_DIM)
-            } else if Some(id) == focused {
-                (Some(theme::ACCENT_LIGHT), theme::TEXT)
-            } else {
-                (None, theme::TEXT)
-            };
-            if let Some(bg) = bg {
-                c.fill_round_rect(x, 3, bw - BUTTON_GAP, h - 7, pill, bg, 255);
+            if !win.minimized && Some(id) == focused {
+                c.fill_round_rect(x, 3, bw - BUTTON_GAP, h - 6, pill, white, theme::BAR_PILL_ALPHA);
             }
+            let (fg, fade) = if win.minimized { (theme::BAR_TEXT_DIM, 128) } else { (theme::BAR_TEXT, 255) };
             let mut tx = x + 6;
             if let Some(icon) = win.icon {
                 let s = crate::gfx::icons::SIZE as i32;
-                c.blit_alpha(x + 5, (h - 1 - s) / 2, icon, s as usize);
+                c.blit_alpha_faded(x + 5, (h - s) / 2, icon, s as usize, fade);
                 tx = x + 5 + s + 5;
             }
             let n = label_fit(Face::Ui, &win.title, x + bw - BUTTON_GAP - 6 - tx);
             let title: String = win.title.chars().take(n).collect();
-            draw_label(&mut c, Face::Ui, tx, 0, h - 1, &title, fg);
+            draw_label(&mut c, Face::Ui, tx, 0, h, &title, fg);
         }
         let x = w as i32 - label_width(Face::Mono, &self.status_text) - STATUS_PAD;
-        draw_label(&mut c, Face::Mono, x, 0, h - 1, &self.status_text, theme::TEXT);
+        draw_label(&mut c, Face::Mono, x, 0, h, &self.status_text, theme::BAR_TEXT);
         self.bar = bar;
         self.mark_rows(0, BAR_H);
     }
@@ -169,8 +171,8 @@ impl Screen {
             let x = (i / m.rows * m.col_w) as i32;
             let y = (MENU_PAD + i % m.rows * ITEM_H) as i32;
             let fg = if m.hover == Some(i) {
-                c.fill_round_rect(x + 4, y + 1, m.col_w as i32 - 8, ITEM_H as i32 - 2, &deco.corner_small, theme::ACCENT, 255);
-                rgb(255, 255, 255)
+                c.fill_round_rect(x + 4, y + 1, m.col_w as i32 - 8, ITEM_H as i32 - 2, &deco.corner_small, theme::ACCENT_LIGHT, 255);
+                theme::ACCENT_TEXT
             } else {
                 theme::TEXT
             };
@@ -220,6 +222,6 @@ impl Screen {
             let n = span.len().min(m.w - s0);
             span[..n].copy_from_slice(&m.buf[r * m.w + s0..r * m.w + s0 + n]);
         };
-        deco::panel_row(row, y as i32, rect, &deco.corner, Some((&deco.shadow, MENU_SHADOW_ALPHA)), theme::BORDER, fill);
+        deco::panel_row(row, y as i32, rect, &deco.corner, &deco.shadows(true), fill);
     }
 }

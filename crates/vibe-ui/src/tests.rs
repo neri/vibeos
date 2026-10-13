@@ -6,7 +6,7 @@ use vibe_gfx::canvas::Canvas;
 
 use crate::dialog::{Dialog, wrap};
 use crate::dialog::{BUTTON_H, FIELD_H, MARGIN, line_h};
-use crate::draw::{FACE, FIELD, SELECT, TEXT};
+use crate::draw::{FACE, FIELD, PRIMARY, PRIMARY_TEXT, SELECT, SELECT_INACTIVE, SELECT_TEXT, TEXT};
 use crate::widget::ROW_H;
 use crate::*;
 
@@ -391,18 +391,57 @@ fn draws_widgets() {
     ui.set_focus(l);
     ui.draw(&mut c);
     let px = |c: &Canvas, x, y| c.get(x, y).unwrap();
-    // ボタンの地（白）・テキスト欄の地・選んだ行（フォーカスがあるので強調色）・表示欄の地
+    // ボタンの地（薄い灰色の塗り）・テキスト欄の地・選んだ行（フォーカスがあるので薄い強調色）・表示欄の地
     assert_eq!(px(&c, 6, 18), FIELD);
     assert_eq!(px(&c, 54, 18), FIELD);
     assert_eq!(px(&c, 60, 40), SELECT);
     assert_eq!(px(&c, 124, 18), FIELD);
+    // 枠を描かない: 辺の真ん中の一番外のピクセルも塗りの色
+    assert_eq!(px(&c, 22, 2), FIELD);
+    assert_eq!(px(&c, 2, 12), FIELD);
+    assert_eq!(px(&c, 2, 80), FIELD);
     // 角の外は地のまま（角が丸い）
     assert_eq!(px(&c, 2, 2), FACE);
     // 文字がどこかに描かれている
     let r = ui.rect(d);
     let dark = (r.x..r.x + r.w).flat_map(|x| (r.y..r.y + r.h).map(move |y| (x, y))).any(|(x, y)| px(&c, x, y) == TEXT);
     assert!(dark, "label text");
-    // 一覧の 2 行目は選んでいないので白地
+    // 選んだ行の文字は濃い強調色
+    let sel = (8..100).flat_map(|x| (33..32 + ROW_H).map(move |y| (x, y))).any(|(x, y)| px(&c, x, y) == SELECT_TEXT);
+    assert!(sel, "selected row text");
+    // 一覧の 2 行目は選んでいないので一覧の地
     assert_eq!(px(&c, 60, 32 + ROW_H + 10), FIELD);
-    let _ = (b, t);
+    // フォーカスを外すと選んだ行は灰色
+    ui.set_focus(b);
+    ui.draw(&mut c);
+    assert_eq!(px(&c, 60, 40), SELECT_INACTIVE);
+    let _ = t;
+}
+
+#[test]
+fn primary_button_is_accent_with_white_text() {
+    let mut buf = vec![FACE; 80 * 30];
+    let mut c = Canvas::new(&mut buf, 80, 30);
+    let mut ui = Ui::new();
+    let b = ui.add(Rect::new(2, 2, 70, 24), Button::new("OK").primary());
+    ui.draw(&mut c);
+    let r = ui.rect(b);
+    assert_eq!(c.get(r.x + 4, r.y + 20), Some(PRIMARY));
+    let white = (r.x..r.x + r.w).flat_map(|x| (r.y..r.y + r.h).map(move |y| (x, y))).any(|(x, y)| c.get(x, y) == Some(PRIMARY_TEXT));
+    assert!(white, "button text");
+}
+
+#[test]
+fn dialog_first_button_is_primary() {
+    let d = Dialog::yes_no(200, "Delete this file?");
+    let (w, h) = d.size();
+    let mut buf = vec![0; w * h];
+    let mut c = Canvas::new(&mut buf, w, h);
+    d.draw(&mut c);
+    // 最初のボタン（左）は強調色、2 つ目（右）は薄い灰色の塗り。ボタンの下の方の行で見る
+    let y = h as i32 - MARGIN - 4;
+    let row: Vec<u32> = (0..w as i32).map(|x| c.get(x, y).unwrap()).collect();
+    let first = row.iter().position(|&p| p == PRIMARY).expect("primary button");
+    let second = row.iter().rposition(|&p| p == FIELD).expect("second button");
+    assert!(first < second);
 }

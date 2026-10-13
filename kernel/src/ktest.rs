@@ -715,25 +715,56 @@ fn fs_write_and_sync() {
 /// QEMU の速さで見るので実機の保証ではない）: グラデーションの背景、影と角の丸い枠の付いたウィンドウ 4 つ
 /// （中身は 8 ビットを表で直す）
 fn gfx_compose_speed() {
-    use vibe_gfx::canvas::{Canvas, Corner, Shadow, rgb};
+    use vibe_gfx::canvas::{Corner, Shadow, rgb};
+    use vibe_gfx::panel::{PanelStyle, ShadowLayer, panel_row};
     const W: usize = 1024;
     const H: usize = 768;
     const FRAMES: u32 = 10;
+    const CW: usize = 400;
+    const CH: usize = 300;
+    const TH: usize = 24;
+    // デスクトップと同じく 1 行ずつ: 既定の背景（紫の地に円） → 4 つのウィンドウ（影・タイトルバー・8 ビットの中身）
     let mut screen = vec![0u32; W * H];
-    let client = vec![7u8; 400 * 300];
+    let client = vec![7u8; CW * CH];
+    let titlebar = vec![rgb(250, 250, 251); CW * TH];
     let lut = vibe_gfx::palette::lut32(&vibe_gfx::palette::standard());
-    let corner = Corner::new(8);
-    let shadow = Shadow::new(10);
+    // デスクトップと同じ角・2 層の影（フォーカスのある濃さ）・縁なし
+    use vibe_gfx::theme;
+    let corner = Corner::new(theme::RADIUS);
+    let (near, far) = (Shadow::new(theme::SHADOW_NEAR_BLUR), Shadow::new(theme::SHADOW_FAR_BLUR));
+    let shadows = [
+        ShadowLayer { shadow: &far, dy: theme::SHADOW_FAR_DY, alpha: theme::SHADOW_ALPHA.1 },
+        ShadowLayer { shadow: &near, dy: theme::SHADOW_NEAR_DY, alpha: theme::SHADOW_ALPHA.0 },
+    ];
+    let style = PanelStyle { corner: &corner, shadows: &shadows, shadow_color: theme::SHADOW_COLOR, border: None };
     let start = pit::ticks();
     for f in 0..FRAMES as i32 {
-        let mut c = Canvas::new(&mut screen, W, H);
-        c.gradient_v(0, 0, W as i32, H as i32, rgb(70, 110, 190), rgb(150, 90, 170));
-        for i in 0..4 {
-            let (x, y) = (60 + i * 150 + f, 60 + i * 100);
-            c.shadow(x, y, 400, 330, 4, &shadow, 0, 110);
-            c.fill_round_rect(x, y, 400, 330, &corner, rgb(246, 246, 248), 255);
-            c.round_rect(x, y, 400, 330, &corner, rgb(200, 200, 205));
-            c.blit8(x, y + 30, &client, 400, &lut);
+        for (y, row) in screen.chunks_exact_mut(W).enumerate() {
+            vibe_gfx::backdrop::fill_row(row, y, H, theme::DESKTOP, &theme::DESKTOP_CIRCLES);
+            for i in 0..4 {
+                let (x, top) = (60 + i * 150 + f, 60 + i * 100);
+                let rect = (x, top, CW as i32, (TH + CH) as i32);
+                panel_row(row, y as i32, rect, &style, |x0, span| {
+                    let r = y as i32 - top;
+                    if r < 0 || r >= (TH + CH) as i32 {
+                        return;
+                    }
+                    let (s0, s1) = ((x0 - x).max(0) as usize, ((x0 + span.len() as i32 - x) as usize).min(CW));
+                    if s0 >= s1 {
+                        return;
+                    }
+                    let d = &mut span[(x + s0 as i32 - x0) as usize..(x + s1 as i32 - x0) as usize];
+                    let r = r as usize;
+                    if r < TH {
+                        d.copy_from_slice(&titlebar[r * CW + s0..r * CW + s1]);
+                    } else {
+                        let r = r - TH;
+                        for (p, &c) in d.iter_mut().zip(&client[r * CW + s0..r * CW + s1]) {
+                            *p = lut[c as usize];
+                        }
+                    }
+                });
+            }
         }
     }
     let ms = pit::ticks().wrapping_sub(start) * 1000 / pit::TICK_HZ / FRAMES;

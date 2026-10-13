@@ -7,14 +7,15 @@ type clock &
 key ret
 wait-serial clock: started
 sleep 300
-expect-pixel 200 70 250 250 251
+# [x] の記号の真ん中（フォーカスのある濃い灰色）
+expect-pixel 243 60 44 44 42
 expect-pixel 125 86 255 255 255
 mouse-move -269 -324
 mouse-button left down
 mouse-button left up
 wait-serial clock: closed
 sleep 300
-expect-pixel 125 86 71 111 195
+expect-pixel 125 86 60 52 137
 # ライフゲーム（2 つ目のウィンドウは中身 144,93 に 192x144）。空いているセル (10,10) をクリックで生かす
 type life &
 key ret

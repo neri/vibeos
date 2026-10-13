@@ -14,5 +14,7 @@ wait-serial VibeOS shell
 type hello
 key ret
 wait-serial primes below 20000: 2262
-expect-pixel 1590 1190 145 104 184
+expect-pixel 1590 1190 60 52 137
+# 右上の大きな円は画面の大きさに対する割合で置く（右の真ん中が円の中）
+expect-pixel 1590 600 83 74 183
 serial-absent PANIC

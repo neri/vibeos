@@ -61,7 +61,7 @@ fn draw(win: &mut Window, now: u32) {
     c.clear(rgb(255, 255, 255));
     let (cx, cy) = (W as i32 / 2, R + 8);
     // 文字盤: 薄い灰色の円に、5 分ごとの太い目盛りと 1 分ごとの細い目盛り（なめらかな線。1/16 ピクセル単位）
-    c.fill_round_rect(cx - R, cy - R, 2 * R, 2 * R, &Corner::new(R as usize), rgb(244, 245, 248), 255);
+    c.fill_round_rect(cx - R, cy - R, 2 * R, 2 * R, &Corner::new(R as usize), theme::SUBTLE, 255);
     let p = |v: i32| v * 16 + 8;
     let at = |pos: i32, len: i32| {
         let (dx, dy) = dir(pos);
@@ -71,7 +71,7 @@ fn draw(win: &mut Window, now: u32) {
         let (major, inner) = if i % 5 == 0 { (true, R - 9) } else { (false, R - 5) };
         let (x0, y0) = at(i, inner);
         let (x1, y1) = at(i, R - 3);
-        let (w, color) = if major { (32, theme::TEXT) } else { (16, rgb(176, 180, 188)) };
+        let (w, color) = if major { (32, theme::TEXT) } else { (16, rgb(186, 183, 172)) };
         c.line_aa(x0, y0, x1, y1, w, color);
     }
     let hand = |c: &mut vibe_rt::gfx_lib::canvas::Canvas, pos: i32, len: i32, width: i32, color| {
