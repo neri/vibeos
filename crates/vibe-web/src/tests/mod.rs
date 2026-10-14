@@ -3,6 +3,7 @@ mod fuzz;
 mod html;
 mod http;
 mod layout;
+mod png;
 mod url;
 
 use crate::layout::{Font, Layout, Metrics, PieceKind};

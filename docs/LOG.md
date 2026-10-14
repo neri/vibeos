@@ -11,6 +11,7 @@
 | 2026-10-11 | font8x8 | 0.3（default-features なし） | 8×8 フォントのデータ | DESIGN.md §3.4 で可としたもの。描画は自作 |
 | 2026-10-12 | miniz_oxide | 0.9（default-features なし） | アプリ（gzip）の deflate の展開（`crates/vibe-pack` 経由でカーネルが使う） | DESIGN.md §3.4 で可としたもの（D-035）。gzip の枠は自作。ホストのテストでは deflate の圧縮にも使う |
 | 2026-10-13 | ab_glyph（ホスト） | 0.2.32 | `tools/vibe-fontgen` で TrueType をラスタライズする | ホスト側ツール（ブランチ `modern-look`、M3）。カーネル・アプリには入れない |
+| 2026-10-14 | miniz_oxide（使う所を足した） | 0.9（default-features なし） | `crates/vibe-web` の PNG の zlib の展開（ブラウザ `browse`） | 新しいクレートではなく、上の行のものを `vibe-web` からも使う（ブランチ `browser`、B4）。PNG の塊・フィルタ・色の読み方は自作 |
 
 ---
 
@@ -692,3 +693,17 @@
 - `make test-wan` に `tests/wan/03-wan-browse.scn`（example.com だけ。D-030 で許可された宛先）を足して流した。タイトルの「Example Domain」が出た。今の example.com は `<h1>` が無く `<p>` が 1 つと `<script src>` だけのページだった（VibeOS の `get` で取ってイメージから読んで確かめた）。`make test-wan` の 01・02 は流していない
 - `BROWSE.ELF` は gzip で 97,499 バイト（名前解決と TCP の分が増えた）
 - `make test` が全部通った
+
+## 2026-10-14 ブラウザ B4: 画像（ブランチ `browser`）
+
+- `vibe_web::png`（新、自作）: 塊（CRC32 は `vibe-pack`）・IHDR・PLTE・tRNS・IDAT（つなげる）・IEND。グレー 1〜16 ビット・RGB 8/16・パレット 1〜8・グレー + アルファ 8/16・RGBA 8/16、フィルタ 5 種、Adam7。zlib の展開は `miniz_oxide`（出力の大きさは IHDR から決まるので先に取り、状態はヒープ）。アルファは地の色に重ねて 0x00RRGGBB に
+- ホストのテスト 12 本: PIL で作った PNG 6 つ（`crates/vibe-web/testdata/make-png.py`。RGB・RGBA・グレー 16・グレー + アルファ・1 ビット・パレット 4 ビット + tRNS）、テストの中の符号化器で作った PNG（行ごとにフィルタ 0〜4 を順に、Adam7 は 1x1〜31x17、16 ビット、2・4・1 ビット、tRNS、IDAT を 2 つに分ける）、壊れたもの（CRC・大きすぎ・どこで切っても・フィルタの種類・パレットの外・扱えない深さ）、CRC を合わせ直して中身を壊した 3000 通りで panic しない
+- `browse`: ページを出した後に画像を 1 枚ずつ取り、取れたら並べ直して描く（同じ URL は 1 回、Esc で止める）。PNG と BMP（`vibe_gfx::bmp`）を中身の先頭で見分ける。1 枚 1024x1024 まで、全部で空いているメモリの 1/4 まで。width・height（片方なら比を保つ）。画像の URL を直接開くと画像だけのページ（タイトルに大きさ）
+- 詰まったこと:
+  - 画像の読み込みの間に Esc 以外のイベントを捨てていたので、`72-browse-http` で、ページの後の画像（無い画像の 404）を読んでいる間に打った Ctrl+L と URL が消えた。取っておいて、読み終わってから順に処理するようにした（ページの読み込みも同じ）
+  - `71-browse-local` で `files` の `files: opened … with browse` の行に、起動した `browse` の出力が割り込んだ（`println!` は書式の部分ごとに書く）。シナリオは `browse` が開いた行だけを待つようにした。アプリの出力が混ざること自体は直していない
+  - 期待画像のウィンドウの左下の丸い角に、後ろの端末の文字が透けていて、ブラウザが出す行の数で変わった。比べる範囲をタイトルバーから下の行の上の方まで（640x490）にし、下の行の文字は角から離して（左 14 ピクセル）別の範囲で比べる。作り直した 10 枚は前の期待画像を切り詰めたものと画素まで同じことを確かめた
+- テスト用の画像 `tests/web/LOGO.PNG`・`TILE.BMP`・`BAD.PNG`（`tests/web/make-images.py`）とページ `IMG.HTM`。シナリオ `73-browse-images`（期待画像 2 枚、目で確かめた）
+- `BROWSE.ELF` は gzip で 116,639 バイト。フロッピーの空きは 430,080 バイト
+- README のスクリーンショット: ドックに browse が増えたので `make screenshots` で撮り直した（構図は前のまま。シナリオのコメントのドックの位置を直した）。D-055 のとおり、オーナーが確認するまでコミットしない
+- `make test` が全部通った（73 本、飛ばしたもの 1 本）

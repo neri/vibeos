@@ -6,3 +6,11 @@ license.workspace = true
 description = "簡易ブラウザの中身（URL・文字コード・HTML の字句解析・文書の形・レイアウト・HTTP の返事の読み方）"
 
 [dependencies]
+# PNG の展開（zlib）。DESIGN.md §3.4 で可としたもの。FPU/SSE を使う feature は入れない
+miniz_oxide = { version = "0.9", default-features = false }
+# CRC32（PNG の塊を確かめる）
+vibe-pack = { path = "../vibe-pack", default-features = false }
+
+[dev-dependencies]
+# テストの PNG を作るため（deflate の圧縮）
+miniz_oxide = "0.9"

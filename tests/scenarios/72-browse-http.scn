@@ -19,7 +19,7 @@ type browse http://www.vibeos.test/INDEX.HTM &
 key ret
 wait-serial browse: loaded http://www.vibeos.test/INDEX.HTM (32 lines) "Browse test page"
 sleep 500
-expect-screen browse-http-index 120 49 640 504
+expect-screen browse-http-index 120 49 640 490
 # 相対のリンクで同じサーバの 2 ページ目へ（カーソル 512,384 → 480,167）
 mouse-move -32 -217
 mouse-button left down
@@ -37,7 +37,7 @@ type http://www.vibeos.test/CHUNKED.HTM
 key ret
 wait-serial browse: loaded http://www.vibeos.test/CHUNKED.HTM (2 lines) "Chunked page"
 sleep 300
-expect-screen browse-chunked 120 49 640 504
+expect-screen browse-chunked 120 49 640 490
 # https への移動は開かずにエラーのページ
 key ctrl+l
 type http://www.vibeos.test/SECURE.HTM
@@ -45,7 +45,8 @@ key ret
 wait-serial browse: http://www.vibeos.test/SECURE.HTM: The page moved to https://www.vibeos.test/, but HTTPS is not supported.
 wait-serial browse: loaded http://www.vibeos.test/SECURE.HTM (
 sleep 300
-expect-screen browse-https-redirect 120 49 640 504
+expect-screen browse-https-redirect 120 49 640 490
+expect-screen browse-https-redirect-status 134 535 500 17
 # 404
 key ctrl+l
 type http://www.vibeos.test/MISSING.HTM

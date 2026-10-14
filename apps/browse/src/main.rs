@@ -10,7 +10,9 @@
 //! - リンクを押すと移動。`#…` だけ違うリンクは同じページの中でその場所へ動く
 //! - キー: ↑↓・PageUp/PageDown・Space・Home/End でスクロール、Alt+←/→ で戻る・進む、F5 で読み直し、
 //!   Ctrl+L でアドレス欄へ、Esc で読み込みを止める
-//! - 読み込んだら `browse: loaded URL (N lines) "タイトル"` を標準出力に出す（テストで待つ）
+//! - 画像（PNG・BMP）はページを出した後に 1 枚ずつ取ってきて、取れたものから並べ直す（Esc で止める）
+//! - 読み込んだら `browse: loaded URL (N lines) "タイトル"`、画像は `browse: image URL (幅x高さ)` と
+//!   `browse: images 取れた数/全部` を標準出力に出す（テストで待つ）
 
 #![no_std]
 #![no_main]
@@ -18,6 +20,7 @@
 extern crate alloc;
 
 mod fetch;
+mod images;
 mod pages;
 mod view;
 
@@ -35,12 +38,15 @@ use vibe_web::doc::{self, Document};
 use vibe_web::layout::{self, Layout};
 use vibe_web::url::{Scheme, Url, UrlError};
 
+use crate::images::Picture;
 use crate::view::Fonts;
 
 vibe_rt::entry!(main);
 
 const TOOLBAR_H: i32 = 36;
 const STATUS_H: i32 = 20;
+/// 下の行の文字の左端（ウィンドウの丸い角から離す）
+const STATUS_X: i32 = 14;
 const SCROLLBAR_W: i32 = 12;
 const BUTTON_W: i32 = 30;
 const GAP: i32 = 4;
@@ -62,6 +68,22 @@ struct Page {
     base: Url,
     doc: Document,
     layout: Layout,
+    /// 読み込んだ画像（同じ URL の画像は 1 つ）
+    pictures: Vec<Picture>,
+    /// 文書の画像ごとの `pictures` の番号（まだ・取れなければ None）
+    slots: Vec<Option<usize>>,
+}
+
+impl Page {
+    /// 画像の大きさを入れて並べ直す
+    fn relayout(&mut self, width: i32, fonts: &Fonts) {
+        let (doc, pictures, slots) = (&self.doc, &self.pictures, &self.slots);
+        let size = |i: u32| {
+            let k = (*slots.get(i as usize)?)?;
+            Some(images::display_size(&doc.images[i as usize], &pictures[k]))
+        };
+        self.layout = layout::layout(doc, width, fonts, &size);
+    }
 }
 
 struct Visit {
@@ -101,6 +123,8 @@ struct App {
     pressed: Option<u32>,
     buttons: u32,
     status: String,
+    /// 読み込みの間に届いたイベント（読み終わってから順に処理する）
+    pending: Vec<Event>,
 }
 
 fn main() -> i32 {
@@ -137,7 +161,9 @@ fn main() -> i32 {
         if dirty {
             app.draw(&mut win);
         }
-        dirty = match win.event(None) {
+        // 読み込みの間に届いたイベントを先に
+        let ev = if app.pending.is_empty() { win.event(None) } else { Some(app.pending.remove(0)) };
+        dirty = match ev {
             Some(Event::Close) | None => break,
             Some(Event::Key(k)) => app.key(&mut win, k),
             Some(Event::Mouse { x, y, buttons }) => app.mouse(&mut win, x, y, buttons),
@@ -195,6 +221,7 @@ impl App {
             pressed: None,
             buttons: 0,
             status: String::new(),
+            pending: Vec::new(),
         }
     }
 
@@ -215,7 +242,14 @@ impl App {
         let (w, h) = (self.w, self.h);
         let mut c = win.canvas();
         match &self.page {
-            Some(p) => view::draw_page(&mut c, &self.fonts, &p.layout, content, self.sb.pos, self.hover, &|_| None),
+            Some(p) => {
+                let image = |i: u32| {
+                    let k = (*p.slots.get(i as usize)?)?;
+                    let pic = &p.pictures[k];
+                    Some((pic.pixels.as_slice(), pic.w, pic.h))
+                };
+                view::draw_page(&mut c, &self.fonts, &p.layout, content, self.sb.pos, self.hover, &image)
+            }
             None => c.fill_rect(content.x, content.y, content.w, content.h, view::PAGE_BG),
         }
         c.fill_rect(track.x, track.y, track.w, track.h, view::PAGE_BG);
@@ -230,7 +264,7 @@ impl App {
             (Some(l), Some(p)) => p.link_text(l),
             _ => self.status.clone(),
         };
-        vibe_rt::gfx::draw_text(&mut c, vibe_rt::abi::FONT_UI, 6, sy + 2, &status, theme::TEXT_DIM);
+        vibe_rt::gfx::draw_text(&mut c, vibe_rt::abi::FONT_UI, STATUS_X, sy + 2, &status, theme::TEXT_DIM);
         self.ui.draw(&mut c);
         win.present();
     }
@@ -442,21 +476,16 @@ impl App {
         self.status = format!("Opening {url} ...");
         self.draw(win);
         let mut stop = false;
+        let mut later = Vec::new();
         let result = {
             let mut progress = |msg: &str| {
-                // Esc で止める（ほかのイベントは捨てる）
-                while let Some(ev) = win.event(Some(0)) {
-                    match ev {
-                        Event::Key(k) if k.pressed() && k.key() == key::ESCAPE => stop = true,
-                        Event::Close => stop = true,
-                        _ => {}
-                    }
-                }
+                stop |= poll_events(win, &mut later);
                 draw_status(win, msg);
                 !stop
             };
             fetch::fetch(&url, &mut progress)
         };
+        self.pending.extend(later);
         match result {
             Ok(r) => {
                 let truncated = r.truncated;
@@ -468,8 +497,19 @@ impl App {
                     }
                     _ => None,
                 };
+                let mut picture = None;
                 let doc = match (html, r.mime.as_str()) {
                     (Some(h), _) => doc::parse(&h),
+                    (None, mime) if mime.starts_with("image/") => match images::decode(&r.body) {
+                        Ok(p) => {
+                            let name = pages::escape(&file_name(&page_url));
+                            let src = pages::escape(&page_url.without_fragment().to_string());
+                            let html = format!("<title>{name} ({}x{})</title><img src=\"{src}\" alt=\"{name}\">", p.w, p.h);
+                            picture = Some(p);
+                            doc::parse(&html)
+                        }
+                        Err(e) => doc::parse(&pages::error(&page_url.to_string(), e)),
+                    },
                     (None, "text/plain") => {
                         let cs = charset::detect(&r.body, r.charset.as_deref());
                         let mut d = doc::plain(&charset::decode(&r.body, cs));
@@ -486,10 +526,12 @@ impl App {
                 } else if let Some(v) = self.history.get_mut(self.current) {
                     v.url = page_url.clone();
                 }
-                self.set_page(win, page_url, doc, nav);
+                let pictures: Vec<Picture> = picture.into_iter().collect();
+                self.set_page_with(win, page_url, doc, nav, pictures);
                 if truncated {
                     self.status = format!("The page is too large; showing the first {} KB.", fetch::MAX_BODY / 1024);
                 }
+                self.load_images(win);
             }
             Err(msg) => {
                 let msg = if stop { String::from(fetch::STOPPED) } else { msg };
@@ -523,18 +565,107 @@ impl App {
     }
 
     fn set_page(&mut self, win: &mut Window, url: Url, doc: Document, nav: Nav) {
+        self.set_page_with(win, url, doc, nav, Vec::new());
+    }
+
+    /// ページを出す。`pictures` があれば文書の最初の画像にする（画像だけのページ）
+    fn set_page_with(&mut self, win: &mut Window, url: Url, doc: Document, nav: Nav, pictures: Vec<Picture>) {
         let content = self.content();
-        let layout = layout::layout(&doc, content.w, &self.fonts, &|_| None);
         let base = doc.base.as_deref().and_then(|b| url.join(b).ok()).unwrap_or_else(|| url.clone());
         let title = if doc.title.is_empty() { file_name(&url) } else { doc.title.clone() };
         win.set_title(&title);
-        println!("browse: loaded {url} ({} lines) \"{title}\"", layout.lines.len());
-        self.sb.set_size(layout.height, content.h);
-        self.page = Some(Page { url: url.clone(), base, doc, layout });
+        let mut slots = alloc::vec![None; doc.images.len()];
+        if !pictures.is_empty() && !slots.is_empty() {
+            slots[0] = Some(0);
+        }
+        let mut page = Page { url: url.clone(), base, doc, layout: Layout::default(), pictures, slots };
+        page.relayout(content.w, &self.fonts);
+        println!("browse: loaded {url} ({} lines) \"{title}\"", page.layout.lines.len());
+        self.sb.set_size(page.layout.height, content.h);
+        self.page = Some(page);
         let y = self.target_scroll(&url, nav);
         self.sb.pos = 0;
         self.sb.set_pos(y);
         self.ui.set_text(self.address, &url.to_string());
+        self.status = String::from("Done.");
+    }
+
+    /// まだ読んでいない画像を 1 枚ずつ取ってきて、取れたら並べ直して描く。Esc で止める
+    fn load_images(&mut self, win: &mut Window) {
+        let Some(p) = &self.page else { return };
+        let todo: Vec<(usize, Url)> = p
+            .doc
+            .images
+            .iter()
+            .enumerate()
+            .filter(|(i, img)| p.slots[*i].is_none() && !img.src.is_empty())
+            .filter_map(|(i, img)| p.base.join(&img.src).ok().map(|u| (i, u.without_fragment())))
+            .collect();
+        if todo.is_empty() {
+            return;
+        }
+        // 画像に使ってよい画素の数（空いているメモリの 1/4）
+        let mut budget = (sys::sys_info().free_kb as usize * 1024 / 4) / 4;
+        let n = todo.len();
+        let mut tried: Vec<(String, Option<usize>)> = Vec::new();
+        let mut loaded = 0;
+        for (k, (i, url)) in todo.into_iter().enumerate() {
+            let key = url.to_string();
+            let pic = match tried.iter().find(|(u, _)| *u == key) {
+                Some(&(_, v)) => v,
+                None => {
+                    let mut stop = false;
+                    let mut later = Vec::new();
+                    let result = {
+                        let mut progress = |msg: &str| {
+                            stop |= poll_events(win, &mut later);
+                            draw_status(win, &format!("Image {} of {n}: {msg}", k + 1));
+                            !stop
+                        };
+                        fetch::fetch(&url, &mut progress)
+                    };
+                    self.pending.extend(later);
+                    if stop {
+                        println!("browse: images stopped");
+                        self.status = String::from(fetch::STOPPED);
+                        return;
+                    }
+                    let decoded = result.and_then(|r| images::decode(&r.body).map_err(String::from));
+                    let v = match decoded {
+                        Ok(pic) if pic.w * pic.h <= budget => {
+                            println!("browse: image {key} ({}x{})", pic.w, pic.h);
+                            budget -= pic.w * pic.h;
+                            let Some(page) = &mut self.page else { return };
+                            page.pictures.push(pic);
+                            Some(page.pictures.len() - 1)
+                        }
+                        Ok(_) => {
+                            println!("browse: image {key}: not enough memory");
+                            None
+                        }
+                        Err(e) => {
+                            println!("browse: image {key}: {e}");
+                            None
+                        }
+                    };
+                    tried.push((key, v));
+                    v
+                }
+            };
+            if let Some(v) = pic {
+                loaded += 1;
+                let content = self.content();
+                if let Some(page) = &mut self.page {
+                    page.slots[i] = Some(v);
+                    page.relayout(content.w, &self.fonts);
+                    let pos = self.sb.pos;
+                    self.sb.set_size(page.layout.height, content.h);
+                    self.sb.set_pos(pos);
+                }
+                self.draw(win);
+            }
+        }
+        println!("browse: images {loaded}/{n}");
         self.status = String::from("Done.");
     }
 
@@ -566,13 +697,30 @@ impl Page {
     }
 }
 
+/// 読み込みの途中に届いたイベントを見る。Esc か [x] なら true（止める）。Esc のほかは `later` に取っておく
+/// （[x] も、止めた後に閉じるために取っておく）
+fn poll_events(win: &Window, later: &mut Vec<Event>) -> bool {
+    let mut stop = false;
+    while let Some(ev) = win.event(Some(0)) {
+        match ev {
+            Event::Key(k) if k.key() == key::ESCAPE => stop |= k.pressed(),
+            Event::Close => {
+                stop = true;
+                later.push(ev);
+            }
+            ev => later.push(ev),
+        }
+    }
+    stop
+}
+
 /// 下の行だけを描き直す（読み込みの途中）
 fn draw_status(win: &mut Window, msg: &str) {
     let (w, h) = (win.width() as i32, win.height() as i32);
     let mut c = win.canvas();
     let sy = h - STATUS_H;
     c.fill_rect(0, sy + 1, w, STATUS_H - 1, theme::SUBTLE);
-    vibe_rt::gfx::draw_text(&mut c, vibe_rt::abi::FONT_UI, 6, sy + 2, msg, theme::TEXT_DIM);
+    vibe_rt::gfx::draw_text(&mut c, vibe_rt::abi::FONT_UI, STATUS_X, sy + 2, msg, theme::TEXT_DIM);
     win.present();
 }
 

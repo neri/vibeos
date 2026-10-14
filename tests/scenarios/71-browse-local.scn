@@ -1,6 +1,8 @@
 # Phase 46（ブラウザ B2）: フロッピーのページを browse で表示する。テスト用のページ（tests/web）はイメージの写しの
 # /DOCS/WEB に入れる（普通のイメージには入れない。DECISIONS.md D-068）。
-# ウィンドウは中身 120,73 に 640x480（上の道具の並び 36、下の行 20）。リンクの位置（画面の座標）:
+# ウィンドウは中身 120,73 に 640x480（上の道具の並び 36、下の行 20）。画面はタイトルバーから下の行の上の方まで
+# （120,49 から 640x490）で比べる。その下の丸い角には後ろの端末の文字が透けるので比べない。下の行の文字は
+# 134,535 から 500x17 で比べる。リンクの位置（画面の座標）:
 # INDEX.HTM の "a link to page 2" 480,167・"the lists below" 650,167、
 # PAGE2.HTM の "a text file" 478,167・"secure page" 193,198。[x] は 747,61
 disk-put tests/web/INDEX.HTM /DOCS/WEB/INDEX.HTM
@@ -13,18 +15,19 @@ key ret
 wait-serial browse: loaded file:///DOCS/WEB/INDEX.HTM (
 sleep 500
 # 見出し・段落・太字・等幅・リンク・文字参照・長い単語・引用・pre・水平線・リスト。script と style の中身は出ない
-expect-screen browse-index 120 49 640 504
+expect-screen browse-index 120 49 640 490
 serial-absent must not be shown
 # キーでスクロール（PageDown）
 key pgdn
 sleep 300
-expect-screen browse-scrolled 120 49 640 504
+expect-screen browse-scrolled 120 49 640 490
 key home
 sleep 300
 # リンクに乗せると下の行に行き先が出る（カーソル 512,384 → 480,167）
 mouse-move -32 -217
 sleep 300
-expect-screen browse-hover 120 49 640 504
+expect-screen browse-hover 120 49 640 490
+expect-screen browse-hover-status 134 535 500 17
 # 押すと 2 ページ目へ。タイトルが変わる
 mouse-button left down
 mouse-button left up
@@ -38,14 +41,15 @@ mouse-button left down
 mouse-button left up
 wait-serial browse: https://example.com/: HTTPS is not supported
 sleep 300
-expect-screen browse-https 120 49 640 504
+expect-screen browse-https 120 49 640 490
+expect-screen browse-https-status 134 535 500 17
 # テキストのファイルは等幅でそのまま（→ 478,167）
 mouse-move 285 -31
 mouse-button left down
 mouse-button left up
 wait-serial browse: loaded file:///DOCS/README.TXT (
 sleep 300
-expect-screen browse-text 120 49 640 504
+expect-screen browse-text 120 49 640 490
 # 戻る・進む（Alt+← / Alt+→）
 key alt+left
 wait-serial browse: loaded file:///DOCS/WEB/PAGE2.HTM (
@@ -62,14 +66,14 @@ mouse-button left down
 mouse-button left up
 wait-serial browse: moved to file:///DOCS/WEB/INDEX.HTM#lists
 sleep 300
-expect-screen browse-lists 120 49 640 504
+expect-screen browse-lists 120 49 640 490
 # Ctrl+L でアドレス欄へ。フォルダは一覧のページになる
 key ctrl+l
 type /DOCS/
 key ret
 wait-serial browse: loaded file:///DOCS/ (
 sleep 300
-expect-screen browse-dir 120 49 640 504
+expect-screen browse-dir 120 49 640 490
 # [x] で閉じる（→ 747,61）
 mouse-move 97 -106
 mouse-button left down
@@ -86,6 +90,7 @@ mouse-button left down
 mouse-button left up
 mouse-button left down
 mouse-button left up
-wait-serial files: opened /DOCS/WEB/INDEX.HTM with browse
+# files の "files: opened … with browse" の行は、起動した browse の出力が途中に割り込むことがある
+# （println! は書式の部分ごとに書く）ので、browse が開いたことだけを待つ
 wait-serial browse: loaded file:///DOCS/WEB/INDEX.HTM (
 serial-absent PANIC
