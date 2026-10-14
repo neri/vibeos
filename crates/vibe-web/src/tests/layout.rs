@@ -161,3 +161,27 @@ fn line_lookup() {
     assert_eq!(l.line_at(1000), None);
     assert_eq!(l.first_visible(MARGIN + 20), 1);
 }
+
+/// 等幅の文字だけ 1 文字 10 ピクセル
+struct WideMono;
+
+impl crate::layout::Metrics for WideMono {
+    fn text_width(&self, font: Font, s: &str) -> i32 {
+        s.chars().count() as i32 * if font == Font::Mono { 10 } else { 8 }
+    }
+    fn line_height(&self, _: Font) -> i32 {
+        16
+    }
+    fn ascent(&self, _: Font) -> i32 {
+        12
+    }
+}
+
+#[test]
+fn space_before_a_style_change_uses_the_previous_font() {
+    let doc = parse("ab <code>cd</code> ef");
+    let l = layout(&doc, 400, &WideMono, &|_| None);
+    let xs: Vec<i32> = l.lines[0].pieces.iter().map(|p| p.x).collect();
+    // "ab" の後の空白はふつうの幅（8）、"cd" の後の空白は等幅の幅（10）
+    assert_eq!(xs, [MARGIN, MARGIN + 16 + 8, MARGIN + 16 + 8 + 20 + 10]);
+}

@@ -144,6 +144,11 @@ impl Window32 {
         Canvas::new(&mut self.buf, self.w, self.h)
     }
 
+    /// タイトルを変える
+    pub fn set_title(&self, title: &str) {
+        sys::win_title(self.id, title);
+    }
+
     pub fn present(&self) {
         sys::win_blit32(self.id, &self.buf);
     }
@@ -167,8 +172,7 @@ impl Drop for Window32 {
     }
 }
 
-static FONTS: [AtomicPtr<VFont<'static>>; 3] =
-    [AtomicPtr::new(core::ptr::null_mut()), AtomicPtr::new(core::ptr::null_mut()), AtomicPtr::new(core::ptr::null_mut())];
+static FONTS: [AtomicPtr<VFont<'static>>; 4] = [const { AtomicPtr::new(core::ptr::null_mut()) }; 4];
 
 /// カーネルが読み込んだフォント（kind は vibe_abi::FONT_*）。最初に使うときにカーネルから写し、ずっと持つ。
 /// 無ければ None（8x8 のビットマップのフォントで描く）

@@ -33,10 +33,12 @@ pub const GFX_CURSOR: u32 = 1;
 /// 320x200 の全画面では標準のパレットの近い色で出る
 pub const WIN_RGB32: u32 = 1;
 
-/// font_data の種類: UI の文字・太字・固定幅（`.VFN`。vibe_font::vfn）
+/// font_data の種類: UI の文字・太字・固定幅・見出し（`.VFN`。vibe_font::vfn）
 pub const FONT_UI: u32 = 0;
 pub const FONT_BOLD: u32 = 1;
 pub const FONT_MONO: u32 = 2;
+/// 見出しの大きい太字（20px。ブラウザの h1・h2）
+pub const FONT_HEADING: u32 = 3;
 /// icon_data のアイコンの 1 辺
 pub const ICON_SIZE: usize = 16;
 /// wallpaper_set の画像の画素の数の上限
@@ -199,6 +201,8 @@ pub mod nr {
     /// icon_data(name, name_len, buf: *mut [u32; 256]) -> 0。16x16 のアイコン（事前に掛けたアルファの
     /// 0xAARRGGBB）。無ければ -ENOENT
     pub const ICON_DATA: u32 = 72;
+    /// win_title(win, title, title_len) -> 0。ウィンドウのタイトルを変える（タイトルバーと上端のバーのボタン）
+    pub const WIN_TITLE: u32 = 73;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;

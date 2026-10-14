@@ -24,7 +24,7 @@ expect-pixel 330 223 0 0 0
 expect-pixel 310 236 255 255 255
 # ウィンドウの外（背景）には描かれない
 # （ドックの右・端末の下の空いている所は既定の背景の地の色）
-expect-pixel 620 450 60 52 137
+expect-pixel 630 450 60 52 137
 key esc
 wait-serial paint: closed
 serial-absent PANIC

@@ -1,0 +1,15 @@
+[package]
+name = "browse"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "browse"
+test = false
+bench = false
+
+[dependencies]
+vibe-rt = { path = "../vibe-rt" }
+vibe-ui = { path = "../../crates/vibe-ui" }
+vibe-web = { path = "../../crates/vibe-web" }

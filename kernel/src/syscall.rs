@@ -136,6 +136,14 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             copy_to_user(user, a, as_bytes(&info))?;
             Ok(0)
         }
+        nr::WIN_TITLE => {
+            let id = own_window(user, a)?;
+            let title = user_str(user, b, c)?;
+            let mut s = SCREEN.lock();
+            s.set_window_title(id, &title);
+            s.present();
+            Ok(0)
+        }
         nr::WIN_PALETTE => {
             let id = own_window(user, a)?;
             let (start, count) = (b as usize, c as usize);

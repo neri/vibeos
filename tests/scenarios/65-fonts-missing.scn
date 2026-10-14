@@ -3,9 +3,11 @@
 disk-delete /SYSTEM/FONTS/UI.VFN
 disk-delete /SYSTEM/FONTS/UIBOLD.VFN
 disk-delete /SYSTEM/FONTS/MONO.VFN
+disk-delete /SYSTEM/FONTS/HEAD.VFN
 timeout 30
 wait-serial fonts: UI.VFN is not available
 wait-serial fonts: MONO.VFN is not available
+wait-serial fonts: HEAD.VFN is not available
 wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
 type echo fallback "font"

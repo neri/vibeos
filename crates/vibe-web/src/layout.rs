@@ -381,7 +381,7 @@ impl Builder<'_> {
 
     /// 単語を 1 つ置く（前にまとめた空白があれば空白をはさむ）
     fn word(&mut self, word: &str, font: Font, link: Option<u32>) {
-        let mut sw = if self.space { self.m.text_width(font, " ") } else { 0 };
+        let mut sw = self.space_width(font);
         let w = self.m.text_width(font, word);
         if self.started && self.x + sw + w > self.right {
             self.finish_line();
@@ -400,7 +400,7 @@ impl Builder<'_> {
                     self.finish_line();
                     continue;
                 }
-                self.place(&rest[..n], font, link, false);
+                self.place(&rest[..n], font, link, 0);
                 rest = &rest[n..];
                 if !rest.is_empty() {
                     self.finish_line();
@@ -409,19 +409,31 @@ impl Builder<'_> {
             self.space = false;
             return;
         }
-        self.place(word, font, link, sw > 0);
+        self.place(word, font, link, sw);
         self.space = false;
     }
 
-    /// 文字を今の行に足す。同じ文字の種類・リンクの部品が直前にあればつなげる
-    fn place(&mut self, s: &str, font: Font, link: Option<u32>, space_before: bool) {
+    /// まとめた空白の幅（前に空白があれば）。空白は前の文字の種類で測る（等幅の前の空白が広くならないように）
+    fn space_width(&self, font: Font) -> i32 {
+        if !self.space {
+            return 0;
+        }
+        let prev = self.cur.iter().rev().find_map(|p| match &p.kind {
+            PieceKind::Text { font, .. } => Some(*font),
+            _ => None,
+        });
+        self.m.text_width(prev.unwrap_or(font), " ")
+    }
+
+    /// 文字を今の行に足す（前に幅 `space` の空白をはさむ）。同じ文字の種類・リンクの部品が直前にあればつなげる
+    fn place(&mut self, s: &str, font: Font, link: Option<u32>, space: i32) {
         if let Some(Piece { x, w, kind: PieceKind::Text { text, font: f, link: l }, .. }) = self.cur.last_mut()
             && *f == font
             && *l == link
             && *x + *w == self.x
             && self.started
         {
-            if space_before {
+            if space > 0 {
                 text.push(' ');
             }
             text.push_str(s);
@@ -430,9 +442,7 @@ impl Builder<'_> {
             self.started = true;
             return;
         }
-        if space_before {
-            self.x += self.m.text_width(font, " ");
-        }
+        self.x += space;
         let w = self.m.text_width(font, s);
         self.cur.push(Piece { x: self.x, w, h: 0, kind: PieceKind::Text { text: String::from(s), font, link } });
         self.x += w;
@@ -487,7 +497,7 @@ impl Builder<'_> {
                 continue;
             }
             self.col += rest[..n].chars().count();
-            self.place(&rest[..n], font, link, false);
+            self.place(&rest[..n], font, link, 0);
             rest = &rest[n..];
             if !rest.is_empty() {
                 self.finish_line();
@@ -514,7 +524,7 @@ impl Builder<'_> {
         let avail = (self.right - self.left).max(1);
         let (w, h) =
             if w > avail { (avail, (h as i64 * avail as i64 / w.max(1) as i64).max(1) as i32) } else { (w, h) };
-        let sw = if self.space { self.m.text_width(Font::Normal, " ") } else { 0 };
+        let sw = self.space_width(Font::Normal);
         if self.started && self.x + sw + w > self.right {
             self.finish_line();
         } else {

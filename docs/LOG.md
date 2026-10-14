@@ -662,3 +662,23 @@
 - ホストのテスト 39 本（RFC 3986 §5.4 の例、字句・文字参照・文字コード、文書の形、レイアウトの位置、でたらめなバイト列とタグの切れ端 3000 通りずつ・深い入れ子で panic しない）
 - 詰まったこと: `id` の y を、その時点の y と間で決めると、後に開く見出しの大きい間が入らずずれた。次に終える行の y にするようにした
 - 整形: リポジトリのコードは `rustfmt` の `max_width=120, use_small_heuristics=Max` にそろっている（設定ファイルは無い）。それで整形した
+
+## 2026-10-14 ブラウザ B2: `apps/browse`（ブランチ `browser`）
+
+- `apps/browse`（新）: 32 ビットのウィンドウ（中身は画面に合わせて最大 640x480。`win_open` の上限）。上に戻る・進む・読み直し・アドレス欄、右にスクロールバー、下に 1 行。フロッピーのファイル（`file:`）を開き、フォルダは一覧のページを作る。リンクを押して同じリンクの上で離すと移動、`#…` は読み直さずに印へ。履歴 50 件。キー（↑↓・PageUp/Down・Space・Home/End・Alt+←/→・F5・Ctrl+L・Esc）。引数が無ければ始めのページ。320x200 では起動しない
+  - 文書の形とレイアウトは `vibe-web`、描くのは見えている行だけ。フォントの寸法は `Fonts`（カーネルから写した `.VFN`、無ければ 8x8）で `Metrics` を実装した
+- 見出しのフォント: `make fonts-fetch`（D-052 で許可された GitHub の Noto）で TrueType を取ってきて、`HEAD.VFN`（Noto Sans Bold 20px、9,009 バイト、gzip で 5,076）を作った。`FONT_HEADING`（3）。カーネルは読み込んでアプリに渡すだけ。ktest `fonts_loaded` と `65-fonts-missing` に足した。ほかの `.VFN` は同じ版から作り直しても同じになることを確かめた
+- システムコール `win_title`（73）: ウィンドウのタイトルを変え、タイトルバーと上端のバーを描き直す
+- `vibe-ui`: `ScrollBar`（ピクセル単位のスクロールバー。見た目は一覧と同じ）、`Ui::clear_focus`。ホストのテスト 2 本
+- `vibe-web` のレイアウト: スタイルが変わる所の空白を前の文字の種類の幅にした（`It has <code>` の空白が等幅の幅で広すぎた）。テスト 1 本
+- `files`: `.HTM` は `browse` で開く（前は `edit`）。一覧のアイコンも地球に
+- ドック・メニュー: `browse` を足した（`DOCK_APPS` の files の次。`assets/icons/browse.svg`、`make icons`）
+- `vibe-run`: `disk-put` が親のフォルダを作る（`mmd`）
+- テスト用のページ `tests/web/INDEX.HTM`・`PAGE2.HTM`。シナリオ `71-browse-local`: 表示・PageDown・リンクに乗せると行き先・押して 2 ページ目（タイトルも）・https のリンクは開かない・テキストのファイル・Alt+←/→・`#lists`・Ctrl+L で `/DOCS/` の一覧・[x]・`files` で `.HTM` をダブルクリック。期待画像 7 枚（目で確かめた）
+- 詰まったこと:
+  - 最初に `browse` が "not an executable" になった。アプリの `build.rs`（`targets/app.ld` を渡す）を忘れていて、0x400000 にリンクされていた
+  - 起動直後に「<」ボタンにフォーカスの輪が出た。`Ui` は最初の部品にフォーカスを置くので外した
+- アプリとドックの項目が 1 つずつ増えたので直したシナリオ: `55-pipe-builtins`（41 → 42 本）、`68-dock`・`70-dock-icons16`（11 → 12 個、パネルは 221 から 582 幅、電卓は 3 番目）、`46-desktop-bar`（メニューの clock が 1 行下）、`25-video-640`・`52-wallpaper`（640x480 でドックの右の空いている所が 630 より右に）。作り直した期待画像（目で確かめた。違いはドックとメニューの browse と `ls` の `BROWSE.ELF` だけ）: bar-menu, dock-start, dock-hover, dock-open, dock-icons16, more-ls, terminals-two, wallpaper-tile
+- `BROWSE.ELF` は gzip で 86,362 バイト。フロッピーの空きは 552,960 → 460,288 バイト
+- README のスクリーンショットは、アプリが増えたので撮り直しの対象（D-055）。画像を読み込む B4 の後にまとめて撮り直す
+- `make test` が全部通った

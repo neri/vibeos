@@ -150,7 +150,7 @@ ROOTFS := $(shell find rootfs -type f)
 # ユーザアプリ（apps/ の中のバイナリ）。ディスクの /BIN/名前.ELF に入れる
 APPS := hello fault view paint mandel snake more fstest edit clock life ping host ntp get httpd calc files tasks mines blocks \
 	hexdump ps mem df date uptime pci net arp grep wc head tail sort tee sh \
-	reboot beep hwclock demo
+	reboot beep hwclock demo browse
 APPS_DIR := $(BUILD)/rootfs-apps
 APPS_STAMP := $(APPS_DIR)/.stamp
 
@@ -201,7 +201,7 @@ endif
 # ウィンドウを開く GUI のアプリ。GUI かどうかは ELF から分からないのでここに並べる。SVG の無い名前があれば
 # ビルドを止める（tools/dock-cfg.sh）。新しい GUI のアプリにアイコンを足したらここにも足し、make icons で
 # ICONS32.VIA を作り直す（DECISIONS.md D-058・D-059）
-DOCK_APPS := terminal files calc clock tasks mines blocks paint life snake mandel
+DOCK_APPS := terminal files browse calc clock tasks mines blocks paint life snake mandel
 
 # ビルド時に生成してディスクに入れるもの（tools/mkassets）と、/SYSTEM/FONTS のフォント（assets/fonts。
 # フォントは COMPRESS に関係なくいつも gzip で入れる。DECISIONS.md D-047。許諾の OFL.TXT はそのまま）
@@ -238,6 +238,7 @@ fonts: fonts-fetch
 	$(CARGO) build -q --release -p vibe-fontgen
 	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Regular.ttf 13 assets/fonts/UI.VFN
 	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Bold.ttf 13 assets/fonts/UIBOLD.VFN
+	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Bold.ttf 20 assets/fonts/HEAD.VFN
 	target/release/vibe-fontgen $(NOTO_DIR)/NotoSansMono-Regular.ttf 13 assets/fonts/MONO.VFN 8x16 12
 
 $(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(KERNEL_FILE) $(COMPRESS_STAMP) $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)

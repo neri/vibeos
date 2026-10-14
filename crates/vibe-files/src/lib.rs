@@ -31,7 +31,7 @@ pub const ASSOCIATIONS: &[(&str, Opener)] = &[
     ("INI", Opener::Terminal("edit")),
     ("LOG", Opener::Terminal("edit")),
     ("MD", Opener::Terminal("edit")),
-    ("HTM", Opener::Terminal("edit")),
+    ("HTM", Opener::App("browse")),
     ("ELF", Opener::Run),
     // スクリプト: 新しい端末で動かし、終わった後もその端末で打てるようにする（sh -i）
     ("SH", Opener::Terminal("sh -i")),
@@ -120,6 +120,7 @@ pub fn icon_name(e: &Entry) -> &'static str {
         Some("BMP") => "image",
         Some("SH") => "script",
         Some("ELF") => "app",
+        Some("HTM") => "browse",
         _ => "file",
     }
 }
@@ -157,6 +158,7 @@ mod tests {
     #[test]
     fn openers() {
         assert_eq!(opener_for("PLASMA.BMP"), Some(Opener::App("view")));
+        assert_eq!(opener_for("/DOCS/WEB/INDEX.HTM"), Some(Opener::App("browse")));
         assert_eq!(opener_for("/DOCS/guide.txt"), Some(Opener::Terminal("edit")));
         assert_eq!(opener_for("/BIN/CALC.ELF"), Some(Opener::Run));
         assert_eq!(opener_for("/DOCS/HI.SH"), Some(Opener::Terminal("sh -i")));

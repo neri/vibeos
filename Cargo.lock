@@ -53,6 +53,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "browse"
+version = "0.1.0"
+dependencies = [
+ "vibe-rt",
+ "vibe-ui",
+ "vibe-web",
+]
+
+[[package]]
 name = "calc"
 version = "0.1.0"
 dependencies = [

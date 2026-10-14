@@ -44,6 +44,7 @@ members = [
     "apps/beep",
     "apps/hwclock",
     "apps/demo",
+    "apps/browse",
     "crates/vibe-abi",
     "crates/vibe-alloc",
     "crates/vibe-calc",

@@ -15,8 +15,8 @@
 | 項目 | 状態 |
 |---|---|
 | 設計 | ドラフト完了（DESIGN.md） |
-| 現在の Phase | **Phase 46（ブラウザ B2、ブランチ `browser`）**（2026-10-14）。それまでの計画書はすべて完了（2026-10-13 時点）。今のアプリは 41 本、フロッピーの空き（圧縮したイメージ）は 552,960 バイト。完了した計画（新しい順）: aster-look の A1〜A4（見た目を Aster のモックアップに近づける [計画書](plans/aster-look.md)。Aster はオーナーが別の場で作ったデスクトップのデザイン案の名前で、リポジトリには無い。ブランチ `aster-look` で作業し main に合流, DECISIONS.md D-056・D-066）・modern-look の M1〜M6（見た目を今風に [計画書](plans/modern-look.md)。ブランチ `modern-look` で作業し main に合流, D-046・D-067）・Phase 38〜44（パイプとリダイレクト [計画書](plans/pipe.md) → ユーザ空間のシェル [計画書](plans/user-shell.md)）・Phase 32〜37（デスクトップの改良 [計画書](plans/desktop.md)。D1〜D6。ウィンドウの大きさの変更は見送り, D-038）・Phase 30〜31（アプリの圧縮 [計画書](plans/app-compress.md)。その時点でアプリは gzip で元の 43.1%）・Phase 27〜29（カーネルの圧縮、LZSA2 + BCJ）・Phase 22〜26（LZSA の自作）・Phase 16〜21（ネットワーク。LAN・WAN とも制限なく使える, D-032。WAN のテストで試す宛先はオーナーの許可制） |
-| 次にやること | 簡易ウェブブラウザ（[計画書](plans/browser.md)、ブランチ `browser`, D-068）の B2（B1 は完了）。実機で使うネットワークカードは近い将来は決めない（D-067）。WAN で新しい宛先を試すときは許可を得てから。main は origin より先に進んでいる（push はしていない） |
+| 現在の Phase | **Phase 47（ブラウザ B3、ブランチ `browser`）**（2026-10-14）。それまでの計画書はすべて完了（2026-10-13 時点）。今のアプリは 41 本、フロッピーの空き（圧縮したイメージ）は 552,960 バイト。完了した計画（新しい順）: aster-look の A1〜A4（見た目を Aster のモックアップに近づける [計画書](plans/aster-look.md)。Aster はオーナーが別の場で作ったデスクトップのデザイン案の名前で、リポジトリには無い。ブランチ `aster-look` で作業し main に合流, DECISIONS.md D-056・D-066）・modern-look の M1〜M6（見た目を今風に [計画書](plans/modern-look.md)。ブランチ `modern-look` で作業し main に合流, D-046・D-067）・Phase 38〜44（パイプとリダイレクト [計画書](plans/pipe.md) → ユーザ空間のシェル [計画書](plans/user-shell.md)）・Phase 32〜37（デスクトップの改良 [計画書](plans/desktop.md)。D1〜D6。ウィンドウの大きさの変更は見送り, D-038）・Phase 30〜31（アプリの圧縮 [計画書](plans/app-compress.md)。その時点でアプリは gzip で元の 43.1%）・Phase 27〜29（カーネルの圧縮、LZSA2 + BCJ）・Phase 22〜26（LZSA の自作）・Phase 16〜21（ネットワーク。LAN・WAN とも制限なく使える, D-032。WAN のテストで試す宛先はオーナーの許可制） |
+| 次にやること | 簡易ウェブブラウザ（[計画書](plans/browser.md)、ブランチ `browser`, D-068）の B3（B1・B2 は完了）。実機で使うネットワークカードは近い将来は決めない（D-067）。WAN で新しい宛先を試すときは許可を得てから。main は origin より先に進んでいる（push はしていない） |
 
 ## 3. Phase 一覧
 
@@ -70,8 +70,8 @@
 | 43 | S3: 残りの内蔵コマンドの片付け, カーネルの `shell/commands.rs` を消す | Rust | 移したコマンドのシナリオ。`sh` の内蔵コマンドがパイプの中で動く。カーネルに残るのは予備のシェルだけ | 完了 |
 | 44 | S4: `/AUTORUN.SH`, `files` から `.SH` を実行, `$(...)`（任意） | Rust | `AUTORUN.SH` の出力がシリアルに出る。`files` で `.SH` をダブルクリックすると新しい端末で動く | 完了 |
 | 45 | ブラウザ B1: `crates/vibe-web`（URL・HTML の字句解析・文書の形・レイアウト）（ブランチ `browser`, [計画書](plans/browser.md)） | Rust | ホストの `cargo test`: 相対 URL の解決、タグ・属性・コメント・文字参照、壊れた HTML とでたらめなバイト列で panic しない、折り返し・`<pre>`・リスト・字下げ・表の行、ASCII の外の文字の置き換え | 完了 |
-| 46 | B2: `apps/browse`（フロッピーのページの表示・スクロール・リンク・戻る）, `files` の `.HTM`, 見出しのフォント, ドック | Rust | `71-browse-local`: 画面の比較、スクロール、リンクで次のページ、戻る、`files` から開く | 作業中 |
-| 47 | B3: HTTP（移動・chunked・上限・Content-Type・Esc で止める）, アドレス欄, エラーのページ | Rust | `72-browse-http`: テストランナーのページ、相対リンク、301、`https://` への移動の表示、404・つながらない宛先、Esc。`make test-wan` に example.com | 未着手 |
+| 46 | B2: `apps/browse`（フロッピーのページの表示・スクロール・リンク・戻る）, `files` の `.HTM`, 見出しのフォント, ドック | Rust | `71-browse-local`: 画面の比較、スクロール、リンクで次のページ、戻る、`files` から開く | 完了 |
+| 47 | B3: HTTP（移動・chunked・上限・Content-Type・Esc で止める）, アドレス欄, エラーのページ | Rust | `72-browse-http`: テストランナーのページ、相対リンク、301、`https://` への移動の表示、404・つながらない宛先、Esc。`make test-wan` に example.com | 作業中 |
 | 48 | B4: 画像（BMP・PNG） | Rust | ホストのテスト（PNG のフィルタ・色の種類・壊れた PNG）。ページの中の BMP と PNG が期待画像どおり | 未着手 |
 | 49〜 | 候補: 日本語表示 | | | — |
 | M1 | （ブランチ `modern-look`）32 ビットの画面: ローダのモードの選び方（32 ビットのみ・大きい順・メモリと EDID の上限・`video=`）・ブート情報・画面の大きさの決め打ちをやめる・32 ビットの重ね合わせ（[計画書](plans/modern-look.md)） | NASM + Rust | 今あるシナリオが `video=640x480` の 32 ビットの画面で今の期待画像のまま通る（独自のパレットのウィンドウを除く）。EDID 無しで 1024x768・EDID で 1600x1200・メモリで抑える・1920x1200・cirrus でレトロ（`60`〜`64`）。8MB で 640x480（`20`） | 完了 |

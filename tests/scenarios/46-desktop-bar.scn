@@ -14,8 +14,8 @@ mouse-button left up
 sleep 300
 # 時計の写る右側は除く
 expect-screen bar-menu 0 0 260 768
-# clock を押す（→ 30,148）
-mouse-move 10 138
+# clock を押す（→ 30,170。メニューは 1 行 22 ピクセルで、browse の分だけ下）
+mouse-move 10 160
 mouse-button left down
 mouse-button left up
 wait-serial menu: started clock
@@ -26,7 +26,7 @@ sleep 300
 expect-pixel 125 86 255 255 255
 expect-pixel 243 60 44 44 42
 # [_] で最小化する（→ 222,60）。ウィンドウは消えてバーのボタンだけになる
-mouse-move 192 -88
+mouse-move 192 -110
 mouse-button left down
 mouse-button left up
 sleep 300

@@ -11,7 +11,8 @@
 //!                         画面の大きさをそろえるため、BOOT.CFG に video= を書かないシナリオは
 //!                         video=1024x768 で起動する（DEFAULT_VIDEO。イメージの BOOT.CFG の video= も置き換える）
 //!   disk-delete PATH      イメージの写しからファイル PATH を消してから起動する（例: /BIN/SH.ELF）
-//!   disk-put FILE PATH    ホストのファイル FILE をイメージの写しの PATH に入れてから起動する（テスト用のスクリプトなど）
+//!   disk-put FILE PATH    ホストのファイル FILE をイメージの写しの PATH に入れてから起動する（テスト用のスクリプトなど）。
+//!                         親のフォルダが無ければ作る
 //!   key-hold KEY / key-release KEY  キーを押したまま / 離す（起動中に Shift を押しておくなど）
 //!   expect-disk-file PATH TEXT  ディスクのファイル PATH に TEXT が含まれる（mtools で読む。writable のとき）
 //!   expect-disk-clean     ディスクに FAT の不整合が無い（fsck.fat -n。writable のとき）
@@ -311,6 +312,16 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
         }
     }
     for (file, path) in &puts {
+        // 親のフォルダが無ければ作る（あれば mmd は失敗するが構わない）
+        let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+        for i in 1..parts.len() {
+            let _ = Command::new("mmd")
+                .arg("-i")
+                .arg(&img)
+                .arg(format!("::{}", parts[..i].join("/")))
+                .stderr(Stdio::null())
+                .status();
+        }
         let st = Command::new("mcopy")
             .args(["-o", "-i"])
             .arg(&img)
