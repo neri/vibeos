@@ -682,3 +682,13 @@
 - `BROWSE.ELF` は gzip で 86,362 バイト。フロッピーの空きは 552,960 → 460,288 バイト
 - README のスクリーンショットは、アプリが増えたので撮り直しの対象（D-055）。画像を読み込む B4 の後にまとめて撮り直す
 - `make test` が全部通った
+
+## 2026-10-14 ブラウザ B3: HTTP（ブランチ `browser`）
+
+- `vibe_web::http`（新）: GET の要求（HTTP/1.0、`User-Agent: VibeOS-browse/1.0`、`Accept`、`Connection: close`。80 番でなければ `Host` にポート）と、返事を届いた順に読む `Reader`（見出し: ステータス・理由・`Content-Type` の形式と charset・`Content-Length`・`Location`・`Transfer-Encoding: chunked`。本文: `Content-Length` まで・chunked は塊の大きさ（拡張は捨てる）・最後の塊の後ろの見出しを読み飛ばす・どちらも無ければ閉じるまで。上限を越えた分は捨てて `truncated`）。見出しは 16KB まで。ホストのテスト 7 本（1 バイトずつを含むどの区切りでも同じ結果、壊れた塊、途中で閉じた、上限、移動の見分け）
+- `browse` の HTTP（`fetch.rs`）: 名前を引いてつなぎ、200ms ごとに読んで下の行に受け取った量を出し、Esc を見る。移動は 5 回までたどり（`browse: redirect URL` を出す）、https への移動は止める。200 以外・名前が無い・つながらない・15 秒なにも届かないときはエラーのページ。`Content-Type` が無ければ拡張子と中身から決める
+- テストランナー: `serve-http` の `Content-Type` を拡張子から決める（前は全部 `application/octet-stream`。`get` は見ていないので今のシナリオは変わらない）。`www-put FILE NAME`（ホストのファイルを写す）、`www-raw NAME TEXT`（見出しごと決めた返事。`\r`・`\n`・`\\`、`\w` で 20 秒待つ）
+- シナリオ `72-browse-http`: HTTP のページ（期待画像）、相対リンク、301、アドレス欄にホストの名前だけ（`http://` を補う）、chunked（期待画像）、https への移動（期待画像）、404、無い名前（偽の DNS が NXDOMAIN）、つながらないポート（81 番は slirp が RST）、途中で止まる返事を Esc で止めて前のページのまま、LAN の外へ出ない。期待画像 3 枚（目で確かめた）
+- `make test-wan` に `tests/wan/03-wan-browse.scn`（example.com だけ。D-030 で許可された宛先）を足して流した。タイトルの「Example Domain」が出た。今の example.com は `<h1>` が無く `<p>` が 1 つと `<script src>` だけのページだった（VibeOS の `get` で取ってイメージから読んで確かめた）。`make test-wan` の 01・02 は流していない
+- `BROWSE.ELF` は gzip で 97,499 バイト（名前解決と TCP の分が増えた）
+- `make test` が全部通った

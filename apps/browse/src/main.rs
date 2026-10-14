@@ -492,7 +492,7 @@ impl App {
                 }
             }
             Err(msg) => {
-                let msg = if stop { String::from("Stopped.") } else { msg };
+                let msg = if stop { String::from(fetch::STOPPED) } else { msg };
                 println!("browse: {url}: {msg}");
                 if stop && self.page.is_some() {
                     // 止めたら今のページのまま

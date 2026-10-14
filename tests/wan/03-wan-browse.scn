@@ -1,0 +1,11 @@
+# インターネットのページを browse で表示する（make test-wan。make test には含めない）。
+# 宛先はオーナーが許可した example.com の HTTP だけ（DECISIONS.md D-030）。名前は slirp の DNS の中継（10.0.2.3）で引く
+net-lan
+qemu-only
+timeout 60
+wait-serial net: address 10.0.2.15/24 gateway 10.0.2.2 dns 10.0.2.3 (dhcp)
+wait-serial VibeOS shell
+type browse http://example.com/ &
+key ret
+wait-serial "Example Domain"
+serial-absent PANIC

@@ -635,6 +635,7 @@ pub trait BlockDevice {
 - **画面**: 中身はいちばん大きくて 640x480（`win_open` の上限）の 32 ビットのウィンドウ。上に戻る・進む・読み直しのボタンとアドレス欄、右にスクロールバー（`vibe_ui::ScrollBar`。ピクセル単位）、下に 1 行（乗せたリンクの行き先・読み込みの様子・エラー）。タイトルバーと上端のバーのボタンには `<title>` を出す（`win_title`）
 - **流れ**: 取ってくる（`fetch`）→ 文字コードを決めて文字にする（`charset`）→ 字句解析（`html`）→ 文書の形（`doc`）→ ウィンドウの幅に並べる（`layout`）→ 見えている行だけ描く。`vibe-web` は画面にもシステムコールにも触らないのでホストでテストする
 - **URL**（`vibe_web::url`）: `http:` と `file:`、`/` で始まるパス。相対 URL は RFC 3986 §5.2 のとおりに解決する（`<base href>` があればそれが元）。`https:` などは開かずに下の行に知らせる。アドレス欄の文字は、形式の名前が無ければ `/` で始まるならファイル、8.3 の名前でない `.` を含む名前ならホスト（`http://` を付ける）、ほかはカレントディレクトリからのファイル
+- **HTTP**: `http:` は名前を引いて（`net::resolve`）TCP でつなぎ、HTTP/1.0 の GET（`User-Agent: VibeOS-browse/1.0`、`Connection: close`）を送る。返事は `vibe_web::http::Reader` で届いた順に読む（見出し、本文は `Content-Length` まで・chunked なら 0 の塊まで・どちらも無ければ閉じるまで）。200ms ごとに下の行に受け取った量を出し、Esc を見る（止めたら前のページのまま）。移動（301・302・303・307・308）は 5 回までたどり、先が https なら止める。200 以外・名前が無い・つながらない・15 秒なにも届かないときはエラーのページ。形式は `Content-Type`（無ければ拡張子と中身から）
 - **ファイル**: `file:` はフロッピーのファイル。形式は拡張子で決める（HTM → HTML、TXT など → 等幅の文字、ほかは中身に 0 が無ければ文字）。フォルダは一覧のページを作る（URL の後ろに `/` を足す）。本文は 1MB まで
 - **文字コード**: UTF-8 と Windows-1252（ISO-8859-1 もこれで読む）。HTTP の charset → 先頭 1024 バイトの `<meta>` → UTF-8 として正しいか、の順で決める。フォントは ASCII だけなので、よく使う記号は置き換え（“” → "、— → -、© → (c) など）、ほかの文字は `?`（D-068）
 - **HTML**（`vibe_web::html`・`doc`）: 木は作らず、開いている要素の積み上げから「ブロックの開閉・スタイル付きの文字・改行・水平線・画像・印（`id`）」の列を作る。HTML5 の閉じ忘れの補いのうち、`<p>` を次のブロックで閉じる・`li`／`dt`・`dd`／`tr`／`td`・`th` が前のものを閉じる、などをまねる。対応の無い終了タグは捨てる。`script`・`style`・`select` などの中身は捨て、`noscript` の中身は出す。入れ子は 256 段まで
@@ -861,6 +862,7 @@ drivers/nic: カード 1 枚（ne2000.rs: ISA / PCI, rtl8139.rs: PCI。pci.rs �
 | `host 名前 [サーバ]` | DNS で A レコードを引く |
 | `ntp [サーバ]` | SNTP で時刻を合わせ、CMOS にも書く |
 | `get URL [ファイル]` | HTTP/1.0 の GET。進み具合を出し、保存してフロッピーに書き戻す |
+| `browse [URL]` | 簡易ウェブブラウザ（ウィンドウ。§8.13） |
 | `httpd [ポート] [ディレクトリ]` | ファイルを HTTP で返す（ディレクトリは一覧の HTML）。poll で 4 本まで同時に受け付ける。Ctrl+C で止まる |
 
 ステータスバーは IP アドレスが決まると "VibeOS" の右に出す（320x200 では日付を省いて時刻だけにする）。
@@ -868,7 +870,7 @@ drivers/nic: カード 1 枚（ne2000.rs: ISA / PCI, rtl8139.rs: PCI。pci.rs �
 ### 12.6 テスト
 
 - QEMU の中にハブを作り、ゲストのカード・slirp（restrict=on）・テストランナーをつなぐ（D-025）。テストランナーはフレームをすべて記録して（OUT/NAME.pcap）自分で解析し（`expect-packet`）、10.0.2.50 の偽のホストとして ARP・ping・DNS・NTP に答える
-- HTTP: ゲスト → ホストは guestfwd（10.0.2.100:80 への接続ごとにテストランナーが `http-serve` で答える）、ホスト → ゲストの httpd は hostfwd
-- シナリオ: `32-net-arp`〜`41-net-rtl8139`（Bochs は `37-net-bochs` で DHCP・ARP・ping）。`expect-lan-only` でゲストがテストの中で LAN の外へ送ろうとしていないことを確かめる
-- `make test-wan`: インターネットの決まった相手（1.1.1.1 への ping・DNS、slirp の DNS の中継、ntp.nict.jp、example.com の HTTP、httpbin.org からの 100KB、www.github.com の CNAME、無い名前、github.com の https への移動）と通信する（`tests/wan/`）。宛先はオーナーが許可したものだけ（D-030, D-031）。slirp がホストで TCP を終端するので、本物の回線の損失は VibeOS の TCP まで届かない（ホストのテストの「落とす回線」で確かめている）。`make test` には含めない
+- HTTP: ゲスト → ホストは guestfwd（10.0.2.100:80 への接続ごとにテストランナーが `http-serve` で答える。`Content-Type` は拡張子から。`www-raw` で見出しごと決めた返事（移動・chunked・途中で 20 秒止まる）も返せる）、ホスト → ゲストの httpd は hostfwd
+- シナリオ: `32-net-arp`〜`41-net-rtl8139`（Bochs は `37-net-bochs` で DHCP・ARP・ping）、`72-browse-http`（ブラウザ）。`expect-lan-only` でゲストがテストの中で LAN の外へ送ろうとしていないことを確かめる
+- `make test-wan`: インターネットの決まった相手（1.1.1.1 への ping・DNS、slirp の DNS の中継、ntp.nict.jp、example.com の HTTP、httpbin.org からの 100KB、www.github.com の CNAME、無い名前、github.com の https への移動、`browse` で example.com）と通信する（`tests/wan/`）。宛先はオーナーが許可したものだけ（D-030, D-031）。slirp がホストで TCP を終端するので、本物の回線の損失は VibeOS の TCP まで届かない（ホストのテストの「落とす回線」で確かめている）。`make test` には含めない
 - `make test-lan`: ホストの LAN の機器（`LAN_HOST`, 既定はデフォルトゲートウェイ）と HTTP で通信する（`tests/lan/`, slirp の restrict=on を外す `net-lan`）。環境によるので `make test` には含めない。LAN の外の宛先は試さない。ping（`02-lan-ping`）は slirp がホストの ping のソケットで中継するので、ホストの `net.ipv4.ping_group_range` が自分のグループを含んでいること（例: `sudo sysctl -w net.ipv4.ping_group_range="$(id -g) $(id -g)"`）

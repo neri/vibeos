@@ -51,6 +51,11 @@
 //!   www-file NAME SIZE    OUT/NAME-www/NAME に SIZE バイトの決まった中身を作る
 //!   www-text NAME TEXT    OUT/NAME-www/NAME に TEXT（と改行）を書く
 //!   www-repeat NAME SIZE TEXT  OUT/NAME-www/NAME に TEXT を SIZE バイトになるまで繰り返して書く（期待するファイル用）
+//!   www-put FILE NAME     ホストのファイル FILE を OUT/NAME-www/NAME に写す（ブラウザのテストのページなど）
+//!   www-raw NAME TEXT     NAME を求められたら、見出しも含めて TEXT をそのまま返す（\r・\n・\\ を戻す。
+//!                         \w の所で 20 秒待つ。移動・chunked・決まったステータス・遅い返事を作る）
+//!                         ふつうのファイルの Content-Type は拡張子から（htm → text/html, txt → text/plain,
+//!                         png・bmp → 画像、ほかは application/octet-stream）
 //!   expect-packet KIND SRC DST  記録したフレームに合うものがある（例: arp-reply 10.0.2.2 10.0.2.15）。
 //!                         壊れたフレーム（チェックサムの誤りなど）が 1 つでもあれば失敗。
 //!                         SRC・DST の * はどれでもよい
@@ -249,6 +254,21 @@ fn run_scenario(path: &Path, name: &str, default_img: &Path, out: &Path, use_boc
                     _ => n.hostfwd = true,
                 }
             }
+            "www-put" => {
+                fs::create_dir_all(&www).map_err(|e| at(e.to_string()))?;
+                let (file, name) = s.arg.split_once(' ').ok_or_else(|| at("expected FILE NAME".into()))?;
+                fs::copy(file, www.join(name.trim())).map_err(|e| at(format!("{file}: {e}")))?;
+            }
+            "www-raw" => {
+                fs::create_dir_all(&www).map_err(|e| at(e.to_string()))?;
+                let (name, text) = s.arg.split_once(' ').ok_or_else(|| at("expected NAME TEXT".into()))?;
+                let text = text
+                    .replace("\\r", "\r")
+                    .replace("\\n", "\n")
+                    .replace("\\w", net::RAW_WAIT)
+                    .replace("\\\\", "\\");
+                fs::write(www.join(format!("{name}{}", net::RAW_SUFFIX)), text).map_err(|e| at(e.to_string()))?;
+            }
             "www-file" | "www-text" | "www-repeat" => {
                 fs::create_dir_all(&www).map_err(|e| at(e.to_string()))?;
                 let (file, rest) = s.arg.split_once(' ').ok_or_else(|| at("expected NAME ...".into()))?;
@@ -380,7 +400,7 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
         }
         match s.cmd.as_str() {
             "image" | "qemu-arg" | "writable" | "disk-delete" | "disk-put" | "qemu-only" | "bochs-only" | "boot-config" | "net" | "net-lan" | "serve-dns" | "serve-ntp"
-            | "serve-http" | "www-file" | "www-text" | "www-repeat" => {}
+            | "serve-http" | "www-file" | "www-text" | "www-repeat" | "www-put" | "www-raw" => {}
             "expect-packet" => vm.net.as_ref().ok_or_else(|| at("needs `net`".into()))?.expect_packet(&s.arg).map_err(at)?,
             "expect-lan-only" => vm.net.as_ref().ok_or_else(|| at("needs `net`".into()))?.expect_lan_only().map_err(at)?,
             "fake-send" => {

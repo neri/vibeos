@@ -543,6 +543,11 @@ fn write_pcap(path: &Path, frames: &[(SystemTime, Vec<u8>)]) -> std::io::Result<
 
 /// guestfwd から接続ごとに起動される: 標準入力から要求を読み、DIR のファイルを標準出力に返す。
 /// 標準入出力と標準エラー出力のどれもがゲストへの接続になっている
+/// www-raw の返事を置くファイルの名前の後ろ
+pub const RAW_SUFFIX: &str = ".http-raw";
+/// www-raw の返事の中の、20 秒待つ所の印
+pub const RAW_WAIT: &str = "\u{0}WAIT\u{0}";
+
 pub fn http_serve(dir: &Path) -> std::process::ExitCode {
     let mut req = Vec::new();
     let mut buf = [0u8; 1024];
@@ -563,6 +568,27 @@ pub fn http_serve(dir: &Path) -> std::process::ExitCode {
     let mut parts = line.split_whitespace();
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let file = path.trim_start_matches('/');
+    if method == "GET" && !file.is_empty() && !file.contains("..") {
+        if let Ok(raw) = fs::read_to_string(dir.join(format!("{file}{RAW_SUFFIX}"))) {
+            let mut out = std::io::stdout().lock();
+            for (i, part) in raw.split(RAW_WAIT).enumerate() {
+                if i > 0 {
+                    std::thread::sleep(Duration::from_secs(20));
+                }
+                let _ = out.write_all(part.as_bytes());
+                let _ = out.flush();
+            }
+            return std::process::ExitCode::SUCCESS;
+        }
+    }
+    let ext = file.rsplit_once('.').map_or("", |(_, e)| e).to_ascii_lowercase();
+    let content_type = match ext.as_str() {
+        "htm" | "html" => "text/html",
+        "txt" => "text/plain",
+        "png" => "image/png",
+        "bmp" => "image/bmp",
+        _ => "application/octet-stream",
+    };
     let (status, body) = if method != "GET" {
         ("405 Method Not Allowed", b"method not allowed\n".to_vec())
     } else if file.is_empty() || file.contains("..") {
@@ -575,7 +601,7 @@ pub fn http_serve(dir: &Path) -> std::process::ExitCode {
     };
     let mut out = std::io::stdout().lock();
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     let _ = out.write_all(head.as_bytes());

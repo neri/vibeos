@@ -1,6 +1,7 @@
 mod doc;
 mod fuzz;
 mod html;
+mod http;
 mod layout;
 mod url;
 
