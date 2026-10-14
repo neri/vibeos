@@ -663,6 +663,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "vibe-web"
+version = "0.1.0"
+
+[[package]]
 name = "view"
 version = "0.1.0"
 dependencies = [
