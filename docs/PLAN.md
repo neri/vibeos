@@ -15,8 +15,8 @@
 | 項目 | 状態 |
 |---|---|
 | 設計 | ドラフト完了（DESIGN.md） |
-| 現在の Phase | **簡易ウェブブラウザの計画（Phase 45〜48）が完了**（2026-10-14、ブランチ `browser`。[計画書](plans/browser.md) §9）。アプリは 42 本、フロッピーの空きは 430,080 バイト。それまでの計画書もすべて完了（2026-10-13 時点）。完了した計画（新しい順）: browser の B1〜B4（簡易ウェブブラウザ [計画書](plans/browser.md)。ブランチ `browser` で作業中, D-068）・aster-look の A1〜A4（見た目を Aster のモックアップに近づける [計画書](plans/aster-look.md)。Aster はオーナーが別の場で作ったデスクトップのデザイン案の名前で、リポジトリには無い。ブランチ `aster-look` で作業し main に合流, DECISIONS.md D-056・D-066）・modern-look の M1〜M6（見た目を今風に [計画書](plans/modern-look.md)。ブランチ `modern-look` で作業し main に合流, D-046・D-067）・Phase 38〜44（パイプとリダイレクト [計画書](plans/pipe.md) → ユーザ空間のシェル [計画書](plans/user-shell.md)）・Phase 32〜37（デスクトップの改良 [計画書](plans/desktop.md)。D1〜D6。ウィンドウの大きさの変更は見送り, D-038）・Phase 30〜31（アプリの圧縮 [計画書](plans/app-compress.md)。その時点でアプリは gzip で元の 43.1%）・Phase 27〜29（カーネルの圧縮、LZSA2 + BCJ）・Phase 22〜26（LZSA の自作）・Phase 16〜21（ネットワーク。LAN・WAN とも制限なく使える, D-032。WAN のテストで試す宛先はオーナーの許可制） |
-| 次にやること | オーナーの確認待ち: 撮り直した README のスクリーンショット（D-055）と、ブランチ `browser` を main に合流するか。実機で使うネットワークカードは近い将来は決めない（D-067）。WAN で新しい宛先を試すときは許可を得てから。main は origin より先に進んでいる（push はしていない） |
+| 現在の Phase | **計画書はすべて完了**（2026-10-15。最後は簡易ウェブブラウザの Phase 45〜48、[計画書](plans/browser.md) §9）。アプリは 42 本、フロッピーの空きは 430,080 バイト。それまでの計画書もすべて完了（2026-10-13 時点）。完了した計画（新しい順）: browser の B1〜B4（簡易ウェブブラウザ [計画書](plans/browser.md)。ブランチ `browser` で作業し main に合流, D-068・D-070）・aster-look の A1〜A4（見た目を Aster のモックアップに近づける [計画書](plans/aster-look.md)。Aster はオーナーが別の場で作ったデスクトップのデザイン案の名前で、リポジトリには無い。ブランチ `aster-look` で作業し main に合流, DECISIONS.md D-056・D-066）・modern-look の M1〜M6（見た目を今風に [計画書](plans/modern-look.md)。ブランチ `modern-look` で作業し main に合流, D-046・D-067）・Phase 38〜44（パイプとリダイレクト [計画書](plans/pipe.md) → ユーザ空間のシェル [計画書](plans/user-shell.md)）・Phase 32〜37（デスクトップの改良 [計画書](plans/desktop.md)。D1〜D6。ウィンドウの大きさの変更は見送り, D-038）・Phase 30〜31（アプリの圧縮 [計画書](plans/app-compress.md)。その時点でアプリは gzip で元の 43.1%）・Phase 27〜29（カーネルの圧縮、LZSA2 + BCJ）・Phase 22〜26（LZSA の自作）・Phase 16〜21（ネットワーク。LAN・WAN とも制限なく使える, D-032。WAN のテストで試す宛先はオーナーの許可制） |
+| 次にやること | オーナーの指示待ち（次に取り組む計画は未定）。実機で使うネットワークカードは近い将来は決めない（D-067）。WAN で新しい宛先を試すときは許可を得てから。main は origin より先に進んでいる（push はしていない） |
 
 ## 3. Phase 一覧
 
