@@ -1,111 +1,92 @@
-# README 用のスクリーンショット: 1024x768 のデスクトップ（端末・ファイルマネージャ・電卓・時計・マインスイーパ・
-# 落ち物パズル・タスクマネージャ・ドック）
+# README 用のスクリーンショット: 1024x768 のデスクトップ。いちばん手前にブラウザ（紹介のページ）、上の段に電卓・時計・
+# マインスイーパ・落ち物パズル・ファイルマネージャ、左下に端末、下にドック。ウィンドウは少しずつ重ねて自然に見せる
+# （DECISIONS.md D-069。前は重ならないように並べていた）
 # マウスは相対移動なので、各行の末尾にカーソルの絶対位置を書いておく（初めは真ん中 512,384）
 # 新しいウィンドウは中身 (120 + 24n, 73 + 20n) に出る（n は起動してから開いた順）。タイトルバー（中身の上 24 ピクセル）を
 # つかんで動かす。端末は作業領域（ドックの上）の左下で、中身 8,294 から 640x400（タイトルバー y=270〜293）。
 # ドックは画面の下の真ん中（221〜803, 702〜756）
-# ウィンドウの影が見えるよう、ウィンドウの間を 16 ピクセル以上空ける（DECISIONS.md D-055・docs/plans/aster-look.md §3.9）:
-# 上の段に左から電卓（中身 16,60）・時計（188,60）・マインスイーパ（340,60）・落ち物パズル（512,60）、
-# 右の列にファイルマネージャ（688,60）とタスクマネージャ（688,324）
+# 置く所（中身の左上）: 電卓 16,52・時計 166,96（電卓の右の端にかぶる）・マインスイーパ 312,48・落ち物パズル 492,48・
+# ファイルマネージャ 668,48、ブラウザ 368,214（640x480。上の段の下の方と端末の右にかぶる）
+# 端末に打つためにその都度端末を押すので、端末より手前に出したいブラウザは最後に開く
+# ブラウザのページ（tools/screenshots/ABOUT.HTM）はイメージの写しにだけ入れる
+disk-put tools/screenshots/ABOUT.HTM /DOCS/ABOUT.HTM
 # 時計が見栄えのよい 10 時 10 分を指すように、QEMU の時計を決めておく
 qemu-arg -rtc
 qemu-arg base=2026-10-12T10:09:50
 timeout 60
 wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
-type ls
-key ret
-# ファイルマネージャ（中身 120,73 に 320x224）を中身 688,60 へ
-type files &
-key ret
-wait-serial files: started
-sleep 500
-mouse-move -312 -324
-# → 200,60（タイトルバー）
-mouse-button left down
-sleep 100
-mouse-move 284 -6
-mouse-move 284 -7
-# → 768,47
-mouse-button left up
-sleep 300
-# 端末の見えているところをクリック
-mouse-move -668 553
-# → 100,600
-mouse-button left down
-mouse-button left up
-sleep 300
-# 電卓（中身 144,93 に 156x172）で 12.5*8= を計算してから、中身 16,60 へ
+# 電卓（中身 120,73 に 156x172）で 12.5*8= を計算してから、中身 16,52 へ
 type calc &
 key ret
 wait-serial calc: started
 sleep 500
 type 12.5*8=
 wait-serial calc: = 100
-mouse-move 124 -520
-# → 224,80（タイトルバー）
+mouse-move -312 -323
+# → 200,61（タイトルバー）
 mouse-button left down
 sleep 100
-mouse-move -64 -16
-mouse-move -64 -17
-# → 96,47
+mouse-move -52 -10
+mouse-move -52 -11
+# → 96,40
 mouse-button left up
 sleep 300
-mouse-move 4 553
+mouse-move 4 560
 # → 100,600（端末）
 mouse-button left down
 mouse-button left up
 sleep 300
-# 時計（中身 168,113 に 136x170）を中身 188,60 へ
+# 時計（中身 144,93 に 136x170）を中身 166,96 へ
 type clock &
 key ret
 wait-serial clock: started
 sleep 500
-mouse-move 148 -500
-# → 248,100（タイトルバー）
+mouse-move 124 -519
+# → 224,81（タイトルバー）
 mouse-button left down
 sleep 100
-mouse-move 10 -26
-mouse-move 10 -27
-# → 268,47
+mouse-move 11 1
+mouse-move 11 2
+# → 246,84
 mouse-button left up
 sleep 300
-mouse-move -168 553
+mouse-move -146 516
 # → 100,600（端末）
 mouse-button left down
 mouse-button left up
 sleep 300
-# マインスイーパ（中身 192,133 に 156x186）。種 5 で真ん中のマス (4,4) を開き、地雷 (6,1) に旗を立ててから、
-# 中身 340,60 へ
+# マインスイーパ（中身 168,113 に 156x186）。種 5 で真ん中のマス (4,4) を開き、地雷 (6,1) に旗を立ててから、
+# 中身 312,48 へ
 type mines 5 &
 key ret
 wait-serial mines: started
 sleep 500
-mouse-move 170 -359
-# → 270,241（マス 4,4）
+mouse-move 146 -379
+# → 246,221（マス 4,4）
 mouse-button left down
 mouse-button left up
 sleep 200
 mouse-move 32 -48
-# → 302,193（マス 6,1）
+# → 278,173（マス 6,1）
 mouse-button right down
 mouse-button right up
 sleep 200
-mouse-move -30 -73
-# → 272,120（タイトルバー）
+mouse-move -30 -72
+# → 248,101（タイトルバー）
 mouse-button left down
 sleep 100
-mouse-move 74 -36
-mouse-move 74 -37
-# → 420,47
+mouse-move 72 -32
+mouse-move 72 -33
+# → 392,36
 mouse-button left up
 sleep 300
-mouse-move -320 553
+mouse-move -292 564
 # → 100,600（端末）
 mouse-button left down
 mouse-button left up
 sleep 300
-# 落ち物パズル（中身 216,153 に 152x176）。種 3 でいくつか落としてから、中身 512,60 へ
+# 落ち物パズル（中身 192,133 に 152x176）。種 3 でいくつか落としてから、中身 492,48 へ
 type blocks 3 &
 key ret
 wait-serial blocks: started
@@ -131,45 +112,60 @@ key up
 key left
 key left
 key spc
-mouse-move 196 -460
-# → 296,140（タイトルバー）
+mouse-move 172 -479
+# → 272,121（タイトルバー）
 mouse-button left down
 sleep 100
-mouse-move 148 -46
-mouse-move 148 -47
-# → 592,47
+mouse-move 150 -42
+mouse-move 150 -43
+# → 572,36
 mouse-button left up
 sleep 300
-mouse-move -492 553
+mouse-move -472 564
 # → 100,600（端末）
 mouse-button left down
 mouse-button left up
 sleep 300
-# タスクマネージャ（中身 240,173 に 320x300）を右の列の下（中身 688,324）へ
-type tasks &
+# ファイルマネージャ（中身 216,153 に 320x224）を中身 668,48 へ
+type files &
 key ret
-wait-serial tasks: started
+wait-serial files: started
 sleep 500
-mouse-move 220 -440
-# → 320,160（タイトルバー）
+mouse-move 196 -459
+# → 296,141（タイトルバー）
 mouse-button left down
 sleep 100
-mouse-move 224 75
-mouse-move 224 76
-# → 768,311
+mouse-move 226 -52
+mouse-move 226 -53
+# → 748,36
 mouse-button left up
 sleep 300
-# 端末に戻って、/BIN のアプリを数える
-mouse-move -668 289
+mouse-move -648 564
 # → 100,600（端末）
 mouse-button left down
 mouse-button left up
 sleep 300
+# /BIN のアプリを数える
 type ls /BIN | wc -l
 key ret
-sleep 1500
+sleep 1000
+# ブラウザ（中身 240,173 に 640x480）で紹介のページを開き、中身 368,214 へ
+type browse /DOCS/ABOUT.HTM &
+key ret
+wait-serial browse: loaded file:///DOCS/ABOUT.HTM (
+wait-serial browse: images 1/1
+sleep 500
+mouse-move 220 -439
+# → 320,161（タイトルバー）
+mouse-button left down
+sleep 100
+mouse-move 64 20
+mouse-move 64 21
+# → 448,202
+mouse-button left up
+sleep 300
 # カーソルは背景へ（ドックとウィンドウの影の外）
-mouse-move 800 80
-# → 900,680
+mouse-move 452 538
+# → 900,740
 sleep 500
 screendump desktop
