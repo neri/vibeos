@@ -1,0 +1,74 @@
+# Phase 47（ブラウザ B3）: HTTP のページを browse で表示する。テストランナーが 10.0.2.100:80 で返し、名前は
+# 偽の DNS（www.vibeos.test）。移動・chunked・https への移動・404・無い名前・つながらないポート・Esc で止める。
+# ウィンドウは中身 120,73 に 640x480。"a link to page 2" は 480,167
+net
+qemu-only
+serve-http
+www-put tests/web/INDEX.HTM INDEX.HTM
+www-put tests/web/PAGE2.HTM PAGE2.HTM
+www-raw OLD.HTM HTTP/1.1 301 Moved Permanently\r\nLocation: /INDEX.HTM\r\nContent-Length: 0\r\nConnection: close\r\n\r\n
+www-raw CHUNKED.HTM HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1b\r\n<title>Chunked page</title>\r\n25\r\n<h1>Chunked</h1><p>This page came in \r\n11\r\nthree chunks.</p>\r\n0\r\n\r\n
+www-raw SECURE.HTM HTTP/1.1 302 Found\r\nLocation: https://www.vibeos.test/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n
+www-raw SLOW.HTM HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100\r\n\r\n<p>slow\w
+serve-dns www.vibeos.test=10.0.2.100
+boot-config dns=10.0.2.50
+timeout 30
+wait-serial net: address 10.0.2.15
+wait-serial VibeOS shell
+type browse http://www.vibeos.test/INDEX.HTM &
+key ret
+wait-serial browse: loaded http://www.vibeos.test/INDEX.HTM (32 lines) "Browse test page"
+sleep 500
+expect-screen browse-http-index 120 49 640 490
+# 相対のリンクで同じサーバの 2 ページ目へ（カーソル 512,384 → 480,167）
+mouse-move -32 -217
+mouse-button left down
+mouse-button left up
+wait-serial browse: loaded http://www.vibeos.test/PAGE2.HTM (
+# 移動（301）をたどる。アドレス欄はホストの名前だけでも http:// を補う
+key ctrl+l
+type www.vibeos.test/OLD.HTM
+key ret
+wait-serial browse: redirect http://www.vibeos.test/INDEX.HTM
+wait-serial browse: loaded http://www.vibeos.test/INDEX.HTM (
+# chunked の本文
+key ctrl+l
+type http://www.vibeos.test/CHUNKED.HTM
+key ret
+wait-serial browse: loaded http://www.vibeos.test/CHUNKED.HTM (2 lines) "Chunked page"
+sleep 300
+expect-screen browse-chunked 120 49 640 490
+# https への移動は開かずにエラーのページ
+key ctrl+l
+type http://www.vibeos.test/SECURE.HTM
+key ret
+wait-serial browse: http://www.vibeos.test/SECURE.HTM: The page moved to https://www.vibeos.test/, but HTTPS is not supported.
+wait-serial browse: loaded http://www.vibeos.test/SECURE.HTM (
+sleep 300
+expect-screen browse-https-redirect 120 49 640 490
+expect-screen browse-https-redirect-status 134 535 500 17
+# 404
+key ctrl+l
+type http://www.vibeos.test/MISSING.HTM
+key ret
+wait-serial browse: http://www.vibeos.test/MISSING.HTM: HTTP 404 Not Found
+# 無い名前
+key ctrl+l
+type http://nosuch.vibeos.test/
+key ret
+wait-serial browse: http://nosuch.vibeos.test/: Cannot find the server nosuch.vibeos.test
+# つながらないポート
+key ctrl+l
+type http://10.0.2.100:81/
+key ret
+wait-serial browse: http://10.0.2.100:81/: Cannot connect to 10.0.2.100 port 81
+# 返事の途中で止まるページは Esc で止める（前のページのまま）
+key ctrl+l
+type http://www.vibeos.test/SLOW.HTM
+key ret
+sleep 2000
+key esc
+wait-serial browse: http://www.vibeos.test/SLOW.HTM: Stopped.
+serial-absent browse: loaded http://www.vibeos.test/SLOW.HTM
+expect-lan-only
+serial-absent PANIC

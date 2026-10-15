@@ -23,10 +23,12 @@ struct Loaded {
 static UI: AtomicPtr<Loaded> = AtomicPtr::new(core::ptr::null_mut());
 static UI_BOLD: AtomicPtr<Loaded> = AtomicPtr::new(core::ptr::null_mut());
 static MONO: AtomicPtr<Loaded> = AtomicPtr::new(core::ptr::null_mut());
+/// 見出し（カーネルは使わず、アプリに渡すだけ）
+static HEADING: AtomicPtr<Loaded> = AtomicPtr::new(core::ptr::null_mut());
 
 /// フォントを読み込む（ファイルシステムの準備の後、デスクトップにする前に 1 回呼ぶ）
 pub fn load() {
-    for (name, slot) in [("UI.VFN", &UI), ("UIBOLD.VFN", &UI_BOLD), ("MONO.VFN", &MONO)] {
+    for (name, slot) in [("UI.VFN", &UI), ("UIBOLD.VFN", &UI_BOLD), ("MONO.VFN", &MONO), ("HEAD.VFN", &HEADING)] {
         match read(name) {
             Some(l) => {
                 klog!("fonts: {name} {}px, {} glyphs", l.font.size, l.font.glyph_count());
@@ -62,6 +64,7 @@ pub fn data(kind: u32) -> Option<&'static [u8]> {
         vibe_abi::FONT_UI => &UI,
         vibe_abi::FONT_BOLD => &UI_BOLD,
         vibe_abi::FONT_MONO => &MONO,
+        vibe_abi::FONT_HEADING => &HEADING,
         _ => return None,
     };
     loaded(slot).map(|l| l.data)

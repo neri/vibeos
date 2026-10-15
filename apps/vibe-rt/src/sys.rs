@@ -259,6 +259,11 @@ pub fn sys_info() -> SysInfo {
     info
 }
 
+/// ウィンドウのタイトルを変える
+pub fn win_title(win: i32, title: &str) -> i32 {
+    syscall(nr::WIN_TITLE, win as u32, title.as_ptr() as u32, title.len() as u32, 0, 0)
+}
+
 /// ウィンドウ独自のパレット（各 6bit）
 pub fn win_palette(win: i32, start: u8, rgb: &[[u8; 3]]) -> i32 {
     syscall(nr::WIN_PALETTE, win as u32, start as u32, rgb.len() as u32, rgb.as_ptr() as u32, 0)

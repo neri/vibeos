@@ -445,8 +445,9 @@ pub struct BootInfo {
 | 68 | `cmos_time(&mut [u8; 6])` | CMOS の時計を読み直す（読めない値なら `-EIO` と読んだままの値） |
 | 69 | `demo()` | 3 つのカーネルスレッドが端末の右上に数を描く（5 秒） |
 | 70 | `fault_test(kind)` | カーネルの中でわざと例外を起こす（`fault-test` 機能のカーネルだけ。パニック画面のシナリオ用） |
-| 71 | `font_data(kind, buf, len)` | カーネルが読み込んだフォント（`.VFN`）を写す。大きさを返す（足りなければ写さない） |
+| 71 | `font_data(kind, buf, len)` | カーネルが読み込んだフォント（`.VFN`。UI・太字・等幅・見出し）を写す。大きさを返す（足りなければ写さない） |
 | 72 | `icon_data(name, len, buf)` | 16x16 のアイコン（事前に掛けたアルファの ARGB）を写す |
+| 73 | `win_title(win, title, len)` | ウィンドウのタイトルを変える（タイトルバーと上端のバーのボタンを描き直す） |
 
 - 待つシステムコール（ネットワーク・パイプ）は、Ctrl+C などで止めるよう頼まれると `-EINTR` で戻る（止める依頼は待っているタスクを直接起こす）
 
@@ -518,7 +519,7 @@ pub trait BlockDevice {
 3. **フォント**: 8×8 ビットマップフォント（ASCII 0x20–0x7E）→ 40 桁 × 25 行。データは `font8x8` クレートを使い、描画は自作
    - 1 文字の幅を固定値にせず、フォント側から取る（将来の 6×8 や全角対応のため）
    - **なめらかなフォント**（`.VFN`、`vibe_font::vfn`）: ホストのツール `tools/vibe-fontgen`（`ab_glyph`）が TrueType を決まった大きさでラスタライズし、1 ピクセル 4 ビットの濃さ（覆う割合の 0.8 乗で少し濃く）で持つ。字ごとに位置・大きさ・送り幅（1/16 ピクセル）。文字コードの表は疎で、後から全角を足せる。描くのは `Canvas::draw_vtext`（濃さをアルファにして合成。ペンは 1/16 ピクセルで進め、字は丸めた位置に置く）
-   - 入れているもの（`assets/fonts`、`make fonts` で作り直す。元の TrueType は `make fonts-fetch` が GitHub の公式の置き場所から版を決めて取ってきて SHA-256 を確かめる。D-052）: `UI.VFN`（Noto Sans 13px）、`UIBOLD.VFN`（Noto Sans Bold 13px）、`MONO.VFN`（Noto Sans Mono 13px を 8x16 の枠、ベースライン 12）。ASCII だけ。フロッピーの `/SYSTEM/FONTS/` に gzip で置き、カーネルが起動時に読み込んでずっと持つ（`gfx::fonts`）。無ければ 8x8 で動く
+   - 入れているもの（`assets/fonts`、`make fonts` で作り直す。元の TrueType は `make fonts-fetch` が GitHub の公式の置き場所から版を決めて取ってきて SHA-256 を確かめる。D-052）: `UI.VFN`（Noto Sans 13px）、`UIBOLD.VFN`（Noto Sans Bold 13px）、`MONO.VFN`（Noto Sans Mono 13px を 8x16 の枠、ベースライン 12）、`HEAD.VFN`（Noto Sans Bold 20px。ブラウザの見出し。カーネルは使わずアプリに渡すだけ）。ASCII だけ。フロッピーの `/SYSTEM/FONTS/` に gzip で置き、カーネルが起動時に読み込んでずっと持つ（`gfx::fonts`）。無ければ 8x8 で動く
 4. **テキストの端末**: 端末のウィンドウの中身（320x200 では画面の 2 行目以降の 40 桁 × 24 行、デスクトップでは 80 桁 × 25 行。デスクトップの端末は 32 ビットのバッファに `MONO.VFN` の 8x16 の文字、全画面とフォントが無いときは 8x8）。デスクトップの端末の 16 色は今風の配色（`theme::TERMINAL`。地は濃い灰色、文字は明るい灰色）で、色番号から 32 ビットの色にする表を端末だけ替えている。いくつでも開ける（§8.8）。カーソル（下線）とスクロール。`kprintln!` マクロは今のタスクの端末に出す（シリアルにはいつも出す）。制御文字と ANSI エスケープシーケンスの一部（カーソル移動・位置指定・行/画面の消去・色）を解釈する（`crates/vibe-term`）。左右の移動は行をまたいで回り込む（行をまたぐ入力行を相対移動だけで編集できるように）
 
 ### 8.3 パレット
@@ -592,7 +593,7 @@ pub trait BlockDevice {
 
 ### 8.10 ファイルマネージャ（`apps/files`）
 - フォルダの中身を一覧（フォルダが先、名前の順。ルート以外は先頭に ".."）にし、ダブルクリックか Enter でフォルダに入る・ファイルを開く。BackSpace で親へ、Delete で削除
-- 開き方は拡張子で決める（`crates/vibe-files` の `ASSOCIATIONS`）: BMP → `view` にパスを渡して起動、テキスト（TXT・CFG など）→ `term_open` で新しい端末を開いて `edit`、SH → 新しい端末で `sh -i`（スクリプトの後も打てる）、ELF → そのまま実行。起動したアプリは待たない（`detach`）
+- 開き方は拡張子で決める（`crates/vibe-files` の `ASSOCIATIONS`）: BMP → `view` にパスを渡して起動、HTM → `browse` にパスを渡して起動、テキスト（TXT・CFG など）→ `term_open` で新しい端末を開いて `edit`、SH → 新しい端末で `sh -i`（スクリプトの後も打てる）、ELF → そのまま実行。起動したアプリは待たない（`detach`）
 - ボタン: 開く・コピー・名前の変更（移動。今のフォルダからの相対か絶対パス）・削除（確かめる）・フォルダを作る。変えたらすぐ `sync` でフロッピーに書き戻す
 - FAT の `rename`（`vibe-fat`）: 同じディレクトリならエントリの名前だけを書き換え、別のディレクトリなら新しい場所に書いてから元を消す。ディレクトリを移すときは中の ".." を新しい親に直す。開いているファイルの表のエントリは直さない
 
@@ -628,6 +629,22 @@ pub trait BlockDevice {
 - `grep [-i] [-v] [-n] [-c] 文字列 [ファイル...]`（部分一致。合う行が無ければ終了コード 1）, `wc [-l] [-w] [-c]`, `head [-n N | -N]`, `tail [-n N | -N]`, `sort [-r] [-n] [-u]`, `tee [-a] ファイル...`
 - ファイルが無ければ標準入力を読む（`vibe_rt::io::for_each_input`）。行の選び方・数え方・並べ方とオプションの読み方は `crates/vibe-text`（ホストでテスト）
 - `more` もファイルが無ければ標準入力を読む（キーは端末から読むので `ls | more` でスペースが使える）。出力が端末でなければ止めずに全部書く
+
+### 8.13 簡易ウェブブラウザ（`apps/browse`・`crates/vibe-web`）
+計画書は [plans/browser.md](plans/browser.md)（D-068）。Lynx や初期の Mosaic くらいの範囲: 文字・見出し・リスト・リンク・表（行ごと）・画像。CSS・JavaScript・HTTPS・フォームの送信・Cookie・キャッシュは扱わない。デスクトップだけで動く（320x200 では起動しない。D-063）。
+- **画面**: 中身はいちばん大きくて 640x480（`win_open` の上限）の 32 ビットのウィンドウ。上に戻る・進む・読み直しのボタンとアドレス欄、右にスクロールバー（`vibe_ui::ScrollBar`。ピクセル単位）、下に 1 行（乗せたリンクの行き先・読み込みの様子・エラー）。タイトルバーと上端のバーのボタンには `<title>` を出す（`win_title`）
+- **流れ**: 取ってくる（`fetch`）→ 文字コードを決めて文字にする（`charset`）→ 字句解析（`html`）→ 文書の形（`doc`）→ ウィンドウの幅に並べる（`layout`）→ 見えている行だけ描く。`vibe-web` は画面にもシステムコールにも触らないのでホストでテストする
+- **URL**（`vibe_web::url`）: `http:` と `file:`、`/` で始まるパス。相対 URL は RFC 3986 §5.2 のとおりに解決する（`<base href>` があればそれが元）。`https:` などは開かずに下の行に知らせる。アドレス欄の文字は、形式の名前が無ければ `/` で始まるならファイル、8.3 の名前でない `.` を含む名前ならホスト（`http://` を付ける）、ほかはカレントディレクトリからのファイル
+- **HTTP**: `http:` は名前を引いて（`net::resolve`）TCP でつなぎ、HTTP/1.0 の GET（`User-Agent: VibeOS-browse/1.0`、`Connection: close`）を送る。返事は `vibe_web::http::Reader` で届いた順に読む（見出し、本文は `Content-Length` まで・chunked なら 0 の塊まで・どちらも無ければ閉じるまで）。200ms ごとに下の行に受け取った量を出し、Esc を見る（止めたら前のページのまま）。移動（301・302・303・307・308）は 5 回までたどり、先が https なら止める。200 以外・名前が無い・つながらない・15 秒なにも届かないときはエラーのページ。形式は `Content-Type`（無ければ拡張子と中身から）
+- **ファイル**: `file:` はフロッピーのファイル。形式は拡張子で決める（HTM → HTML、TXT など → 等幅の文字、ほかは中身に 0 が無ければ文字）。フォルダは一覧のページを作る（URL の後ろに `/` を足す）。本文は 1MB まで
+- **文字コード**: UTF-8 と Windows-1252（ISO-8859-1 もこれで読む）。HTTP の charset → 先頭 1024 バイトの `<meta>` → UTF-8 として正しいか、の順で決める。フォントは ASCII だけなので、よく使う記号は置き換え（“” → "、— → -、© → (c) など）、ほかの文字は `?`（D-068）
+- **HTML**（`vibe_web::html`・`doc`）: 木は作らず、開いている要素の積み上げから「ブロックの開閉・スタイル付きの文字・改行・水平線・画像・印（`id`）」の列を作る。HTML5 の閉じ忘れの補いのうち、`<p>` を次のブロックで閉じる・`li`／`dt`・`dd`／`tr`／`td`・`th` が前のものを閉じる、などをまねる。対応の無い終了タグは捨てる。`script`・`style`・`select` などの中身は捨て、`noscript` の中身は出す。入れ子は 256 段まで
+- **レイアウト**（`vibe_web::layout`）: 空白をまとめて単語の切れ目で折り返す（入らない単語は文字の途中で）。スタイルが変わる所の空白は前の文字の種類の幅。`pre` は空白・改行をそのまま（タブは 8 文字ごと、幅を越えたら折り返す）。段落の前後は行の高さの 3/4 あけ、続いた間は大きい方だけ。リストは 28 ピクセルずつ字下げして左に印（点は入れ子で ●・○・■、番号は `start`・`value` を見る）。表は行ごとにセルを 20 ピクセルあけて並べるだけ（列はそろえない）。画像は大きさが分かれば縮めて置き、分からなければ `[alt]`
+- **画像**（`vibe_web::png`・`vibe_gfx::bmp`）: ページを出した後に `<img>` を 1 枚ずつ取ってきて、取れたものから並べ直す（同じ URL は 1 回だけ。Esc で止める。読み込みの間に届いたほかのイベントは取っておいて後で処理する）。形式は中身の先頭で見分ける: PNG（自作。塊の CRC32・IHDR・PLTE・tRNS・IDAT、グレー 1〜16 ビット・RGB・パレット 1〜8 ビット・グレー + アルファ・RGBA、フィルタ 5 種、Adam7。zlib の展開は `miniz_oxide`。アルファはページの地の色に重ねる）と BMP。1 枚は 1024x1024 まで、全部で空いているメモリの 1/4 まで。表示する大きさは width・height（片方なら縦横の比を保つ）、無ければ画像の大きさで、幅に入らなければ縮める（最も近い画素）。読めなかった画像は `[alt]` のまま。画像の URL を直接開くと、その画像だけのページ（タイトルに大きさ）
+- **フォント**: ふつう（UI）・太字（`b`・`strong`・`th`・h3〜h6）・等幅（`code`・`pre`・text/plain）・見出し（h1・h2。Noto Sans Bold の 20px、`/SYSTEM/FONTS/HEAD.VFN`、`FONT_HEADING`）。リンクは強調色に下線、乗せると少し明るい色
+- **操作**: リンクを押して同じリンクの上で離すと移動。`#…` だけ違うリンクは読み直さずに印へ動く。履歴は 50 件（戻るときは取り直し、スクロールの位置は戻す）。キーは ↑↓（40 ピクセル）・PageUp/PageDown・Space（Shift で上へ）・Home/End でスクロール、Alt+←/→ で戻る・進む、F5 で読み直し、Ctrl+L でアドレス欄、Esc で読み込みを止める。本文を押すとアドレス欄からフォーカスを外す
+- **起動**: `browse [URL]`。引数が無ければ始めのページ（アプリが作る。使い方と、フロッピーのフォルダへのリンク）。`files` で `.HTM` をダブルクリックしても開く（`vibe_files::ASSOCIATIONS`）。ドックとメニューにもある（地球のアイコン）
+- テスト用のページ（`tests/web/`）はシナリオの `disk-put` でイメージの写しにだけ入れる（D-068）
 
 ---
 
@@ -689,7 +706,8 @@ vibeos/
 │   ├── vibe-text/            # テキストのフィルタの中身（grep・wc・head・tail・sort）
 │   ├── vibe-term/            # 制御文字・ANSI エスケープシーケンスの解釈
 │   ├── vibe-time/            # 日付と時刻の計算（1970 年からの秒・FAT の形式）
-│   └── vibe-ui/              # ウィンドウの中の部品（ボタン・テキスト欄・一覧・チェックボックス・ダイアログ）
+│   ├── vibe-ui/              # ウィンドウの中の部品（ボタン・テキスト欄・一覧・チェックボックス・ダイアログ）
+│   └── vibe-web/             # 簡易ブラウザの中身（URL・文字コード・HTML の字句解析・文書の形・レイアウト・HTTP の返事・PNG）
 ├── apps/
 │   ├── .cargo/config.toml    # アプリ用のビルド設定
 │   ├── vibe-rt/              # アプリ用ランタイム（_start, システムコール, ヒープ, パニック, 環境変数, Command, 標準入出力の補助）
@@ -845,6 +863,7 @@ drivers/nic: カード 1 枚（ne2000.rs: ISA / PCI, rtl8139.rs: PCI。pci.rs �
 | `host 名前 [サーバ]` | DNS で A レコードを引く |
 | `ntp [サーバ]` | SNTP で時刻を合わせ、CMOS にも書く |
 | `get URL [ファイル]` | HTTP/1.0 の GET。進み具合を出し、保存してフロッピーに書き戻す |
+| `browse [URL]` | 簡易ウェブブラウザ（ウィンドウ。§8.13） |
 | `httpd [ポート] [ディレクトリ]` | ファイルを HTTP で返す（ディレクトリは一覧の HTML）。poll で 4 本まで同時に受け付ける。Ctrl+C で止まる |
 
 ステータスバーは IP アドレスが決まると "VibeOS" の右に出す（320x200 では日付を省いて時刻だけにする）。
@@ -852,7 +871,7 @@ drivers/nic: カード 1 枚（ne2000.rs: ISA / PCI, rtl8139.rs: PCI。pci.rs �
 ### 12.6 テスト
 
 - QEMU の中にハブを作り、ゲストのカード・slirp（restrict=on）・テストランナーをつなぐ（D-025）。テストランナーはフレームをすべて記録して（OUT/NAME.pcap）自分で解析し（`expect-packet`）、10.0.2.50 の偽のホストとして ARP・ping・DNS・NTP に答える
-- HTTP: ゲスト → ホストは guestfwd（10.0.2.100:80 への接続ごとにテストランナーが `http-serve` で答える）、ホスト → ゲストの httpd は hostfwd
-- シナリオ: `32-net-arp`〜`41-net-rtl8139`（Bochs は `37-net-bochs` で DHCP・ARP・ping）。`expect-lan-only` でゲストがテストの中で LAN の外へ送ろうとしていないことを確かめる
-- `make test-wan`: インターネットの決まった相手（1.1.1.1 への ping・DNS、slirp の DNS の中継、ntp.nict.jp、example.com の HTTP、httpbin.org からの 100KB、www.github.com の CNAME、無い名前、github.com の https への移動）と通信する（`tests/wan/`）。宛先はオーナーが許可したものだけ（D-030, D-031）。slirp がホストで TCP を終端するので、本物の回線の損失は VibeOS の TCP まで届かない（ホストのテストの「落とす回線」で確かめている）。`make test` には含めない
+- HTTP: ゲスト → ホストは guestfwd（10.0.2.100:80 への接続ごとにテストランナーが `http-serve` で答える。`Content-Type` は拡張子から。`www-raw` で見出しごと決めた返事（移動・chunked・途中で 20 秒止まる）も返せる）、ホスト → ゲストの httpd は hostfwd
+- シナリオ: `32-net-arp`〜`41-net-rtl8139`（Bochs は `37-net-bochs` で DHCP・ARP・ping）、`72-browse-http`（ブラウザ）。`expect-lan-only` でゲストがテストの中で LAN の外へ送ろうとしていないことを確かめる
+- `make test-wan`: インターネットの決まった相手（1.1.1.1 への ping・DNS、slirp の DNS の中継、ntp.nict.jp、example.com の HTTP、httpbin.org からの 100KB、www.github.com の CNAME、無い名前、github.com の https への移動、`browse` で example.com）と通信する（`tests/wan/`）。宛先はオーナーが許可したものだけ（D-030, D-031）。slirp がホストで TCP を終端するので、本物の回線の損失は VibeOS の TCP まで届かない（ホストのテストの「落とす回線」で確かめている）。`make test` には含めない
 - `make test-lan`: ホストの LAN の機器（`LAN_HOST`, 既定はデフォルトゲートウェイ）と HTTP で通信する（`tests/lan/`, slirp の restrict=on を外す `net-lan`）。環境によるので `make test` には含めない。LAN の外の宛先は試さない。ping（`02-lan-ping`）は slirp がホストの ping のソケットで中継するので、ホストの `net.ipv4.ping_group_range` が自分のグループを含んでいること（例: `sudo sysctl -w net.ipv4.ping_group_range="$(id -g) $(id -g)"`）

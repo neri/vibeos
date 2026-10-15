@@ -1,7 +1,7 @@
 //! ファイルマネージャ（ウィンドウ）
 //!
 //! フォルダの中身を一覧にし、ダブルクリック（か Enter）でフォルダに入る・ファイルを開く。
-//! 開き方は拡張子で決まる（`vibe_files::ASSOCIATIONS`: BMP → view、テキスト → 新しい端末で edit、
+//! 開き方は拡張子で決まる（`vibe_files::ASSOCIATIONS`: BMP → view、HTM → browse、テキスト → 新しい端末で edit、
 //! ELF → 実行）。下のボタンで開く・コピー・名前の変更（移動）・削除・フォルダを作る。
 //! 変更したらフロッピーにも書き戻す（sync）。BackSpace で親のフォルダへ、Delete で削除。
 //! 起動時の引数でフォルダを指定できる（無ければ "/"）。
@@ -47,7 +47,7 @@ struct App {
 }
 
 /// 一覧に出すアイコン（vibe_files::icon_name が返す名前）
-const ICON_NAMES: [&str; 5] = ["folder", "file", "image", "script", "app"];
+const ICON_NAMES: [&str; 6] = ["folder", "file", "image", "script", "app", "browse"];
 
 fn main() -> i32 {
     let start = vibe_rt::args().nth(1).map(|p| vibe_files::resolve("/", p)).unwrap_or_else(|| String::from("/"));

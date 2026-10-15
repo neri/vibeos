@@ -690,6 +690,19 @@ impl Screen {
         }
     }
 
+    /// ウィンドウのタイトルを変える（タイトルバーと上端のバーを描き直す）
+    pub fn set_window_title(&mut self, id: WinId, title: &str) {
+        let Some(win) = self.windows.get_mut(&id) else { return };
+        if win.title == title {
+            return;
+        }
+        win.title = String::from(title);
+        let y = win.y;
+        self.refresh_titlebars();
+        self.bar_dirty = true;
+        self.mark_rows((y - TITLE_H as i32).max(0) as usize, y.max(0) as usize);
+    }
+
     /// ウィンドウの独自のパレットを設定する（前に出ている間だけ使われる）
     pub fn set_window_palette(&mut self, id: WinId, start: usize, colors: &[[u8; 3]]) {
         let Some(win) = self.windows.get_mut(&id) else { return };

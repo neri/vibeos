@@ -1,40 +1,40 @@
-# A4: ドック。DOCK.CFG の 11 個（terminal files calc clock tasks mines blocks paint life snake mandel）が
-# 画面の下の真ん中に並ぶ。パネルは 245,702 から 534x54、タイル i は x = 252 + 48i, y = 709〜748（40x40）。
-# 電卓は 2 番目（348〜387）。押すと起動し、もう一度押すと新しく起動せずに前に出す。最小化した電卓もドックで戻る。
+# A4: ドック。DOCK.CFG の 12 個（terminal files browse calc clock tasks mines blocks paint life snake mandel）が
+# 画面の下の真ん中に並ぶ。パネルは 221,702 から 582x54、タイル i は x = 228 + 48i, y = 709〜748（40x40）。
+# 電卓は 3 番目（372〜411）。押すと起動し、もう一度押すと新しく起動せずに前に出す。最小化した電卓もドックで戻る。
 # 電卓のウィンドウは中身 120,73 に 156x172（[_] は 232〜251, 49〜72）。カーソルは 512,384 から
 timeout 30
-wait-serial dock: 11 items
+wait-serial dock: 12 items
 wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
 sleep 300
 # 開いているのは端末だけ（端末のタイルの下に点）。影を含めて比べる
-expect-screen dock-start 220 680 584 88
-# 電卓のタイルを押す（→ 368,728）と起動する。乗せたタイルは明るくなり、上に名前が出る
-mouse-move -144 344
+expect-screen dock-start 196 680 632 88
+# 電卓のタイルを押す（→ 392,728）と起動する。乗せたタイルは明るくなり、上に名前が出る
+mouse-move -120 344
 mouse-button left down
 mouse-button left up
 wait-serial dock: launch calc
 wait-serial menu: started calc
 wait-serial calc: started
 sleep 300
-expect-screen dock-hover 220 650 584 118
-# 離れると名前は消え、電卓のタイルの下に点が付く（→ 368,400）
+expect-screen dock-hover 196 650 632 118
+# 離れると名前は消え、電卓のタイルの下に点が付く（→ 392,400）
 mouse-move 0 -328
 sleep 300
-expect-screen dock-open 220 680 584 88
+expect-screen dock-open 196 680 632 88
 # もう一度押すと、新しく起動せずに電卓を前に出す（ウィンドウは 1 つ）
 mouse-move 0 328
 mouse-button left down
 mouse-button left up
 wait-serial dock: raise calc (1 windows)
 # [_] で最小化する（→ 241,60）。電卓の中身の所は背景になる
-mouse-move -127 -668
+mouse-move -151 -668
 mouse-button left down
 mouse-button left up
 sleep 300
 expect-pixel 124 76 60 52 137
-# ドックの電卓で戻る（→ 368,728）
-mouse-move 127 668
+# ドックの電卓で戻る（→ 392,728）
+mouse-move 151 668
 mouse-button left down
 mouse-button left up
 wait-serial dock: raise calc (1 windows)

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Browse test page</title>
+<style>body { color: red; }</style>
+<script>document.write("<p>This must not be shown.</p>");</script>
+</head>
+<body>
+<h1>Browse test page</h1>
+<p>This page is for the <b>browse</b> scenario. It has <code>code</code>,
+<a href="PAGE2.HTM">a link to page 2</a> and a link to <a href="#lists">the lists below</a>.
+Entities: &lt;tag&gt; &amp; &copy; &ldquo;quotes&rdquo; caf&eacute; &mdash; done.</p>
+<p>A long word: Pneumonoultramicroscopicsilicovolcanoconiosis-and-then-some-more-letters-so-that-it-breaks.</p>
+<h2>Text</h2>
+<blockquote>A quoted paragraph is indented on the left side.</blockquote>
+<pre>
+Preformatted	tab
+  two spaces kept
+</pre>
+<hr>
+<h2 id="lists">Lists</h2>
+<ul>
+<li>First item
+<li>Second item
+  <ul><li>Nested item</ul>
+<li>Third item
+</ul>
+<ol><li>One<li>Two<li>Three</ol>
+<h3>Table</h3>
+<table>
+<tr><th>Name<th>Size
+<tr><td>A.TXT<td>12
+<tr><td>B.BMP<td>3400
+</table>
+<p><img src="NOPE.BMP" alt="A missing picture"> <a href="https://example.com/">HTTPS link</a>
+<a href="mailto:someone@example.com">mail link</a></p>
+<p>Line one<br>Line two</p>
+<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et
+dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
+commodo consequat.</p>
+<p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
+<p id="bottom">The end. <a href="#">Back to the top</a></p>
+</body>
+</html>

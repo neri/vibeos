@@ -25,6 +25,7 @@ extern crate alloc;
 
 pub mod dialog;
 pub mod draw;
+mod scroll;
 mod widget;
 
 #[cfg(test)]
@@ -39,6 +40,7 @@ use vibe_abi::key;
 use vibe_gfx::canvas::Canvas;
 
 pub use draw::set_fonts;
+pub use scroll::ScrollBar;
 pub use widget::{Align, Button, Checkbox, Label, List, TextField, Widget};
 
 /// 部品の番号（`Ui::add` が返す）
@@ -274,6 +276,11 @@ impl Ui {
         if self.focusable(id) {
             self.focus = Some(id);
         }
+    }
+
+    /// どの部品にもフォーカスを置かない（キーはすべて `Action::Key` で返る）
+    pub fn clear_focus(&mut self) {
+        self.focus = None;
     }
 
     fn focusable(&self, id: Id) -> bool {

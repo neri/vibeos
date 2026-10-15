@@ -785,4 +785,8 @@ fn fonts_loaded() {
     assert!(bold.measure("VibeOS") >= ui.measure("VibeOS"));
     // ASCII の字はすべてある
     assert!((' '..='~').all(|c| ui.glyph(c).is_some() && mono.glyph(c).is_some()));
+    // 見出し（ブラウザ。アプリに渡すだけ）
+    let head = vibe_font::VFont::parse(fonts::data(vibe_abi::FONT_HEADING).expect("HEAD.VFN")).unwrap();
+    assert_eq!(head.size, 20);
+    assert!(head.measure("VibeOS") > bold.measure("VibeOS"));
 }

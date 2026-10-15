@@ -1,6 +1,6 @@
 # Phase 37（デスクトップ D6）: デスクトップの背景の画像（BOOT.CFG の wallpaper= と、シェルの wallpaper）
 # 640x480 では端末（中身 8,54 から 638x352、タイトルバー y=30〜53）がほぼ全体を覆うので、敷き詰めはドックの右の
-# 空いている所（610〜639, 440〜479。端末とドックの影の外）で見る。
+# 空いている所（626〜639, 440〜479。端末とドックの影の外）で見る。
 # 背景の画像は画面全体に並べ、上端のバーはその上に黒を 35% 重ねて白い文字を描く（A3）
 boot-config video=640x480
 boot-config wallpaper=/IMAGES/PLASMA.BMP tile
@@ -10,7 +10,7 @@ wait-serial gui: wallpaper /IMAGES/PLASMA.BMP
 wait-serial VibeOS shell
 sleep 300
 # ドックの右の空いている所（敷き詰めた plasma）
-expect-screen wallpaper-tile 610 440 30 40
+expect-screen wallpaper-tile 626 440 14 40
 # 画像の上のバー（黒を重ねて文字が読める。右の時計は除く）
 expect-screen wallpaper-bar 0 0 300 24
 # 真ん中に 1 枚（160x100 の gradient を画面の真ん中 240,190 に）。周りは既定の背景
@@ -34,11 +34,11 @@ sleep 300
 type wallpaper /images/plasma.bmp tile
 key ret
 sleep 300
-expect-screen wallpaper-tile 610 440 30 40
+expect-screen wallpaper-tile 626 440 14 40
 type wallpaper none
 key ret
 sleep 300
-expect-pixel 620 450 60 52 137
+expect-pixel 630 450 60 52 137
 type wallpaper /hello.txt
 key ret
 wait-serial wallpaper: /hello.txt: not a BMP file

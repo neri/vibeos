@@ -445,3 +445,46 @@ fn dialog_first_button_is_primary() {
     let second = row.iter().rposition(|&p| p == FIELD).expect("second button");
     assert!(first < second);
 }
+
+#[test]
+fn scrollbar_pages_and_drags() {
+    use crate::ScrollBar;
+    let track = Rect::new(0, 0, 10, 100);
+    let mut sb = ScrollBar::new();
+    sb.set_size(1000, 100);
+    assert!(sb.needed());
+    // つまみは見える割合（1/10）の高さ。上端
+    assert_eq!(sb.thumb(track), (0, 16));
+    // 溝の下を押すと 1 画面下へ、上を押すと戻る
+    assert!(sb.mouse(track, 5, 90, true, true));
+    assert_eq!(sb.pos, 100);
+    sb.mouse(track, 5, 90, false, false);
+    assert!(sb.mouse(track, 5, 2, true, true));
+    assert_eq!(sb.pos, 0);
+    sb.mouse(track, 5, 2, false, false);
+    // つまみをつかんで一番下まで引く
+    assert!(!sb.mouse(track, 5, 5, true, true));
+    assert!(sb.dragging());
+    assert!(sb.mouse(track, 5, 200, false, true));
+    assert_eq!(sb.pos, sb.max_pos());
+    assert_eq!(sb.thumb(track), (84, 16));
+    sb.mouse(track, 5, 200, false, false);
+    assert!(!sb.dragging());
+    // 範囲の外へは動かない。全体が見えていれば何もしない
+    assert!(!sb.set_pos(5000));
+    sb.set_size(50, 100);
+    assert!(!sb.needed());
+    assert_eq!(sb.pos, 0);
+    assert!(!sb.mouse(track, 5, 90, true, true));
+}
+
+#[test]
+fn clear_focus_returns_keys() {
+    let mut ui = Ui::new();
+    let f = ui.add(Rect::new(0, 0, 100, 20), TextField::new(""));
+    ui.set_focus(f);
+    ui.clear_focus();
+    assert_eq!(ui.focus(), None);
+    let k = KeyEvent(KeyEvent::encode(Some(' '), key::SPACE as u16, true, false, false, false));
+    assert_eq!(ui.handle(Input::Key(k), 0), Some(Action::Key(k)));
+}
