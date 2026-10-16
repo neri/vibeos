@@ -1,8 +1,8 @@
 # VibeOS
 
 ```
-私「OSを作って」
-AI「はい」
+Me: "Make me an OS."
+AI: "Sure."
 ```
 
 ----
