@@ -1,0 +1,13 @@
+# Phase 49（VGA C1）: モード 12h でも CPU 例外（0 除算）でパニック画面になる
+image build/vibeos-fault.img
+boot-config video=vga
+timeout 15
+wait-serial video: 640x480x4
+wait-serial VIBEOS READY
+type fault kdivzero
+key ret
+wait-serial KERNEL PANIC:
+wait-serial Divide error (#DE)
+sleep 200
+# 見出しと例外名の行だけを比べる（以降はレジスタの値なのでビルドごとに変わる）
+expect-screen vga-panic 0 0 640 33

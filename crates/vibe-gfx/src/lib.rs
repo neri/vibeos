@@ -14,6 +14,7 @@ pub mod dock;
 pub mod icons;
 pub mod palette;
 pub mod panel;
+pub mod planar;
 pub mod theme;
 pub mod wallpaper;
 

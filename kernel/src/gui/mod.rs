@@ -179,6 +179,8 @@ struct Window {
     palette: Option<Box<[[u8; 3]; 256]>>,
     /// 独自のパレットの色番号 → 32 ビットの色（デスクトップで重ね合わせるときに使う）
     lut: Option<Box<[u32; 256]>>,
+    /// 独自のパレットの色番号 → モード 12h の 16 色の番号（`palette::map16`）
+    map16: Option<Box<[u8; 256]>>,
     /// アプリが忙しい間に打たれたキーも落とさないよう、押す・離すで 128 打鍵分
     keys: Ring<KeyEvent, 256>,
     mouse: Ring<MouseEvent, 64>,
@@ -285,6 +287,8 @@ pub struct Screen {
     wallpaper: Option<Box<Wallpaper>>,
     /// 標準のパレットの色番号 → 32 ビットの色
     std_lut: [u32; 256],
+    /// 標準のパレットの色番号 → モード 12h の 16 色の番号
+    std_map16: [u8; 256],
     /// デスクトップの端末の色番号 → 32 ビットの色（0〜15 を今風の配色に替えたもの。theme::TERMINAL）
     term_lut: [u32; 256],
     /// デスクトップの上端のバー（32 ビット、画面の幅 × BAR_H）
@@ -324,6 +328,7 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     menu: None,
     wallpaper: None,
     std_lut: [0; 256],
+    std_map16: [0; 256],
     term_lut: [0; 256],
     bar: Vec::new(),
     deco: None,
@@ -341,6 +346,7 @@ pub fn init() {
     s.width = vga::width();
     s.height = vga::height();
     s.std_lut = palette::lut32(&palette::standard());
+    s.std_map16 = palette::map16(&palette::standard());
     s.term_lut = s.std_lut;
     s.term_lut[..16].copy_from_slice(&theme::TERMINAL);
     s.console_w = s.width.min(CONSOLE_MAX_W);
@@ -439,6 +445,7 @@ fn new_window(
         icon: None,
         palette: None,
         lut: None,
+        map16: None,
         keys: Ring::new(NO_KEY),
         mouse: Ring::new(MouseEvent { x: 0, y: 0, buttons: 0 }),
         close_requested: false,
@@ -713,6 +720,7 @@ impl Screen {
             }
         }
         win.lut = Some(Box::new(palette::lut32(pal)));
+        win.map16 = Some(Box::new(palette::map16(pal)));
         let h = self.height;
         self.mark_rows(0, h);
         if self.focused() == Some(id) {
@@ -1134,6 +1142,13 @@ impl Screen {
                 let lut = self.windows.get(&self.foreground()).and_then(|w| w.lut.as_deref()).unwrap_or(&self.std_lut);
                 convert_row(row32, row8, lut);
                 vga::write_row32(y, row32);
+            } else if vga::bpp() == 4 {
+                // モード 12h: 前面のウィンドウのパレットの色を 16 色の近い色に直す
+                let map = self.windows.get(&self.foreground()).and_then(|w| w.map16.as_deref()).unwrap_or(&self.std_map16);
+                for c in row8.iter_mut() {
+                    *c = map[*c as usize];
+                }
+                vga::write_row4(y, row8);
             } else {
                 vga::write_row(y, row8);
             }

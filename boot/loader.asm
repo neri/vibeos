@@ -17,7 +17,8 @@
 ;   8. 画面モードを決める: VESA（VBE 2.0 以上・リニアフレームバッファ・32 ビット）のモードのうち、
 ;      上限（BOOT.CFG の video=WxH、無ければモニタの EDID、読めなければ 1024x768）とメモリ（画面 1 枚が
 ;      使用可能なメモリの 1/8 以下）に収まる一番大きいもの。無いとき・video=320x200・Shift キーを
-;      押していれば 320x200（モード 13h）
+;      押していれば 320x200（モード 13h）。video=vga なら VGA のモード 12h（640x480・16 色・4 枚の面。
+;      docs/plans/vga16.md）
 ;   9. ブート情報構造体（BI）を埋め、プロテクトモードへ移ってカーネルへジャンプ
 ;      （EAX = BOOT_MAGIC, EBX = BI のアドレス）
 
@@ -1027,6 +1028,8 @@ choose_video:
     mov si, msg_shift
     call print
 .no_shift:
+    cmp byte [want_vbe], 2
+    je .mode12
     cmp byte [want_vbe], 0
     je .vga
     call video_limits
@@ -1037,6 +1040,19 @@ choose_video:
 .vga:
     mov si, msg_mode_320
     call print
+    ret
+.mode12:
+    ; VGA のモード 12h: 0xA0000 から 4 枚の面（1 枚 = 1 行 80 バイト × 480 行）
+    mov si, msg_mode_12h
+    call print
+    mov ax, 0x0012
+    int 0x10
+    mov byte [vbe_active], 1            ; 以降は BIOS の文字表示で画面を汚さない
+    mov dword [BI + BI_VRAM_ADDR], 0xA0000
+    mov word [BI + BI_SCREEN_W], 640
+    mov word [BI + BI_SCREEN_H], 480
+    mov dword [BI + BI_PITCH], 80
+    mov dword [BI + BI_BPP], 4
     ret
 .done:
     mov si, msg_mode
@@ -1192,7 +1208,7 @@ read_edid:
     ret
 
 ; BOOT.CFG の先頭（最大 511 バイト）の "video=" を読む:
-;   video=320x200 → want_vbe = 0（レトロ）, video=WxH → cap_w x cap_h, video=auto や無ければそのまま
+;   video=320x200 → want_vbe = 0（レトロ）, video=vga → want_vbe = 2（モード 12h）, video=WxH → cap_w x cap_h, video=auto や無ければそのまま
 read_boot_config:
     mov edi, config_name
     call find_root_file
@@ -1241,6 +1257,13 @@ read_boot_config:
     mov byte [want_vbe], 0
     ret
 .not320:
+    cmp word [si], 'vg'
+    jne .notvga
+    cmp byte [si + 2], 'a'
+    jne .notvga
+    mov byte [want_vbe], 2
+    ret
+.notvga:
     call parse_dec
     jc .none
     cmp byte [si], 'x'
@@ -1469,6 +1492,7 @@ msg_jump        db "jumping to kernel", 13, 10, 0
 msg_shift       db "Shift is held: using 320x200", 13, 10, 0
 msg_no_vbe      db "no 32-bit VESA mode", 13, 10, 0
 msg_mode_320    db "video: 320x200", 13, 10, 0
+msg_mode_12h    db "video: 640x480x4", 13, 10, 0
 msg_mode        db "video: ", 0
 msg_x32         db "x32", 13, 10, 0
 msg_cap         db "video limit: ", 0
@@ -1490,7 +1514,7 @@ msg_bad_kernel  db "KERNEL.SYS is broken", 13, 10, 0
 
 boot_drive      db 0
 retries         db 0
-want_vbe        db 0
+want_vbe        db 0                    ; 0 = 320x200, 1 = VESA の 32 ビット, 2 = VGA のモード 12h
 vbe_active      db 0
 chunk_sector    db 0
 chunk_head      db 0

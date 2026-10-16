@@ -1,0 +1,18 @@
+# Phase 49（VGA C1）: video=vga で VGA のモード 12h（640x480・16 色）になり、起動直後のコンソールが出る
+# 端末の 16 色（ANSI の 40〜47・100〜107 の地と 30〜37・90〜97 の文字）が 16 色の表のとおりに出る
+boot-config video=vga
+disk-put tests/scripts/colors.txt /COLORS.TXT
+timeout 30
+wait-serial video: 640x480x4
+wait-serial VIBEOS READY
+wait-serial VibeOS shell
+type head /COLORS.TXT
+key ret
+sleep 1000
+# ステータスバーの右（日時・空きメモリ）は比べない
+expect-screen vga-console 0 0 400 96
+# 16 色の表の明るい灰（192）と濃い灰（128）が、そのままの値で出る
+expect-pixel 120 68 192 192 192
+expect-pixel 136 68 128 128 128
+serial-absent paging: framebuffer
+serial-absent PANIC

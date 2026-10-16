@@ -127,9 +127,90 @@ pub fn lut32(pal: &[[u8; 3]; 256]) -> [u32; 256] {
     core::array::from_fn(|i| rgb32(pal[i]))
 }
 
+/// VGA のモード 12h の 16 色（各 6bit。DECISIONS.md D-072）。Windows の 16 色を CGA の並び（端末の ANSI の
+/// 色番号と同じ。0〜15 の名前の定数がそのまま使える）に置いたもの。立体の縁に使う 4 段の灰色
+/// （黒・128・192・白）を持つ
+pub const VGA16: [[u8; 3]; 16] = [
+    [0, 0, 0],    // 黒
+    [0, 0, 32],   // 紺
+    [0, 32, 0],   // 緑
+    [0, 32, 32],  // 青緑
+    [32, 0, 0],   // えんじ
+    [32, 0, 32],  // 紫
+    [32, 32, 0],  // オリーブ
+    [48, 48, 48], // 明るい灰（192）
+    [32, 32, 32], // 濃い灰（128）
+    [0, 0, 63],   // 青
+    [0, 63, 0],   // 明るい緑
+    [0, 63, 63],  // 水色
+    [63, 0, 0],   // 赤
+    [63, 0, 63],  // 明るい紫
+    [63, 63, 0],  // 黄
+    [63, 63, 63], // 白
+];
+
+/// 色（各 6bit）に一番近い 16 色（`VGA16`）の番号
+pub fn nearest16(c: [u8; 3]) -> u8 {
+    let mut best = (i32::MAX, 0u8);
+    for (i, v) in VGA16.iter().enumerate() {
+        let (dr, dg, db) = (v[0] as i32 - c[0] as i32, v[1] as i32 - c[1] as i32, v[2] as i32 - c[2] as i32);
+        let d = 3 * dr * dr + 4 * dg * dg + 2 * db * db;
+        if d < best.0 {
+            best = (d, i as u8);
+        }
+    }
+    best.1
+}
+
+/// 256 色のパレット（各 6bit）の色番号 → 16 色の番号の表。0〜15 が標準のパレットの CGA の色のままなら、
+/// 同じ番号にする（端末の 16 色は色の値ではなく意味で移す）。ほかは近い色
+pub fn map16(pal: &[[u8; 3]; 256]) -> [u8; 256] {
+    core::array::from_fn(|i| if i < 16 && pal[i] == CGA[i] { i as u8 } else { nearest16(pal[i]) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vga16_is_exact_in_32bit() {
+        // QEMU が DAC の 6bit を広げたときに Windows の 16 色の値そのものになる
+        let lut: [u32; 16] = core::array::from_fn(|i| rgb32(VGA16[i]));
+        assert_eq!(lut[LIGHT_GRAY as usize], 0x00C0_C0C0);
+        assert_eq!(lut[DARK_GRAY as usize], 0x0080_8080);
+        assert_eq!(lut[BLUE as usize], 0x0000_0080);
+        assert_eq!(lut[YELLOW as usize], 0x00FF_FF00);
+        assert_eq!(lut[WHITE as usize], 0x00FF_FFFF);
+    }
+
+    #[test]
+    fn nearest16_finds_each_color() {
+        for (i, &c) in VGA16.iter().enumerate() {
+            assert_eq!(nearest16(c) as usize, i);
+        }
+        assert_eq!(nearest16([60, 2, 3]), LIGHT_RED);
+        assert_eq!(nearest16([44, 44, 44]), LIGHT_GRAY);
+        assert_eq!(nearest16([28, 28, 28]), DARK_GRAY);
+    }
+
+    #[test]
+    fn map16_keeps_terminal_colors_and_maps_the_rest() {
+        let p = standard();
+        let m = map16(&p);
+        for i in 0..16 {
+            assert_eq!(m[i], i as u8);
+        }
+        assert_eq!(m[CURSOR_BLACK as usize], BLACK);
+        assert_eq!(m[CURSOR_WHITE as usize], WHITE);
+        assert_eq!(m[GRAY_BASE as usize], BLACK);
+        assert_eq!(m[GRAY_BASE as usize + 15], WHITE);
+        assert_eq!(m[rgb(255, 0, 0) as usize], LIGHT_RED);
+        assert_eq!(m[rgb(0, 0, 128) as usize], BLUE);
+        // 独自のパレットで 0〜15 を変えたものは近い色にする
+        let mut q = p;
+        q[1] = [63, 63, 0];
+        assert_eq!(map16(&q)[1], YELLOW);
+    }
 
     #[test]
     fn layout() {

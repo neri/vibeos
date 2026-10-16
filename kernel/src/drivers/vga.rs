@@ -1,10 +1,13 @@
-//! 画面のハードウェア（VGA モード 13h・8 ビット、または VESA の 32 ビットのリニアフレームバッファ）
+//! 画面のハードウェア（VGA モード 13h・8 ビット、VGA モード 12h・16 色の 4 枚の面、または VESA の
+//! 32 ビットのリニアフレームバッファ）
 //!
 //! 画面の大きさ・1 ピクセルのビット数・1 行のバイト数・フレームバッファの場所はローダが決めて
 //! ブート情報で渡す。ここは「1 行を VRAM に書く」「パレットを設定する」だけを受け持ち、何をどこに
 //! 描くかは `gui`（ウィンドウの重ね合わせ）が決める。
 
 use core::sync::atomic::{AtomicUsize, Ordering};
+
+use vibe_gfx::{palette, planar};
 
 use crate::arch::port::{inb, outb};
 use crate::bootinfo::BootInfo;
@@ -17,6 +20,13 @@ const DAC_WRITE_INDEX: u16 = 0x3C8;
 const DAC_DATA: u16 = 0x3C9;
 const INPUT_STATUS_1: u16 = 0x3DA;
 const VRETRACE: u8 = 0x08;
+const ATTR: u16 = 0x3C0;
+const SEQ_INDEX: u16 = 0x3C4;
+const SEQ_DATA: u16 = 0x3C5;
+const GC_INDEX: u16 = 0x3CE;
+const GC_DATA: u16 = 0x3CF;
+/// シーケンサのマップマスク（書き込む面）
+const SEQ_MAP_MASK: u8 = 2;
 
 // 画面の情報（起動時に決まり、フレームバッファの番地だけページングの後に変わる）
 static WIDTH: AtomicUsize = AtomicUsize::new(320);
@@ -33,7 +43,7 @@ pub fn height() -> usize {
     HEIGHT.load(Ordering::Relaxed)
 }
 
-/// 1 ピクセルのビット数（8 か 32）
+/// 1 ピクセルのビット数（8・32、モード 12h は 4）
 pub fn bpp() -> usize {
     BPP.load(Ordering::Relaxed)
 }
@@ -41,12 +51,48 @@ pub fn bpp() -> usize {
 /// ページングを有効にする前に呼ぶ（フレームバッファは物理アドレスのまま触る）
 pub fn init(info: &BootInfo) {
     let w = (info.screen_w as usize).min(MAX_WIDTH);
-    let bpp = if info.bpp == 32 { 32 } else { 8 };
+    let bpp = match info.bpp {
+        32 => 32,
+        4 => 4,
+        _ => 8,
+    };
     WIDTH.store(w, Ordering::Relaxed);
     HEIGHT.store((info.screen_h as usize).min(MAX_HEIGHT), Ordering::Relaxed);
     BPP.store(bpp, Ordering::Relaxed);
-    PITCH.store((info.pitch as usize).max(w * bpp / 8), Ordering::Relaxed);
+    // モード 12h の pitch は 1 枚の面の 1 行のバイト数（1 バイトに 8 ピクセル）
+    let min_pitch = if bpp == 4 { w / 8 } else { w * bpp / 8 };
+    PITCH.store((info.pitch as usize).max(min_pitch), Ordering::Relaxed);
     VRAM.store(info.vram_addr as usize, Ordering::Relaxed);
+    if bpp == 4 {
+        init_planar();
+    }
+}
+
+/// モード 12h の書き込みの設定とパレット。BIOS の既定の値は当てにせず、全部書く
+fn init_planar() {
+    // SAFETY: VGA のレジスタに書くだけ（画面の色と書き込み方が決まる）
+    unsafe {
+        // グラフィックスコントローラ: Set/Reset 無効・論理演算なし・書き込みモード 0・ビットマスク全部
+        for (index, value) in [(0u8, 0u8), (1, 0), (3, 0), (5, 0), (8, 0xFF)] {
+            outb(GC_INDEX, index);
+            outb(GC_DATA, value);
+        }
+        outb(SEQ_INDEX, SEQ_MAP_MASK);
+        outb(SEQ_DATA, 0x0F);
+        // アトリビュートコントローラのパレットを 0〜15 に並べ直す（BIOS の既定は 6 と 8〜15 を DAC の
+        // 0x14・0x38〜0x3F に振っている）。0x3DA を読むと番号を書く順に戻る。番号の bit5 が 0 の間は
+        // 表示が止まるので、最後に 0x20 を書いて戻す
+        inb(INPUT_STATUS_1);
+        for i in 0..16u8 {
+            outb(ATTR, i);
+            outb(ATTR, i);
+        }
+        // 色の選択（DAC の番号の上位）を 0 に
+        outb(ATTR, 0x14);
+        outb(ATTR, 0);
+        outb(ATTR, 0x20);
+    }
+    set_dac(0, &palette::VGA16);
 }
 
 /// フレームバッファの物理アドレスと大きさ（ページングで対応付けるため）
@@ -74,6 +120,34 @@ pub fn write_row(y: usize, row: &[u8]) {
     }
 }
 
+/// 画面の `y` 行目に `row`（画面の幅、色番号 0〜15）を書く（モード 12h）。4 枚の面に分け、面ごとに
+/// マップマスクを切り替えて書く。VRAM は読まない
+pub fn write_row4(y: usize, row: &[u8]) {
+    let vram = VRAM.load(Ordering::Relaxed);
+    if vram == 0 || y >= height() || bpp() != 4 {
+        return;
+    }
+    let mut packed = [0u32; MAX_WIDTH / 8];
+    let n = planar::pack_row(&row[..row.len().min(width())], &mut packed);
+    let dst = (vram + y * PITCH.load(Ordering::Relaxed)) as *mut u8;
+    for plane in 0..4 {
+        // SAFETY: マップマスクを変えると、続く書き込みがその面にだけ入る
+        unsafe {
+            outb(SEQ_INDEX, SEQ_MAP_MASK);
+            outb(SEQ_DATA, 1 << plane);
+        }
+        for (i, &p) in packed[..n].iter().enumerate() {
+            // SAFETY: 1 枚の面の 1 行は pitch >= width / 8 バイト。y は画面の中
+            unsafe { dst.add(i).write_volatile(planar::plane_byte(p, plane)) };
+        }
+    }
+    // SAFETY: 全部の面に書く状態に戻す
+    unsafe {
+        outb(SEQ_INDEX, SEQ_MAP_MASK);
+        outb(SEQ_DATA, 0x0F);
+    }
+}
+
 /// 画面の `y` 行目に `row`（画面の幅、0x00RRGGBB）を書く（32 ビットの画面）
 pub fn write_row32(y: usize, row: &[u32]) {
     let vram = VRAM.load(Ordering::Relaxed);
@@ -87,13 +161,21 @@ pub fn write_row32(y: usize, row: &[u32]) {
     }
 }
 
-/// パレット全体を設定する（各 6bit）
+/// パレット全体を設定する（各 6bit）。モード 12h は 16 色の表（`palette::VGA16`）のまま変えないので何もしない
+/// （色番号は画面に送るときに 16 色に直す）
 pub fn set_palette(p: &[[u8; 3]; 256]) {
     set_palette_range(0, p);
 }
 
-/// パレットの一部を設定する（各 6bit）
+/// パレットの一部を設定する（各 6bit）。モード 12h では何もしない
 pub fn set_palette_range(start: u8, colors: &[[u8; 3]]) {
+    if bpp() == 4 {
+        return;
+    }
+    set_dac(start, colors);
+}
+
+fn set_dac(start: u8, colors: &[[u8; 3]]) {
     // SAFETY: DAC への書き込みは色を変えるだけ
     unsafe {
         outb(DAC_WRITE_INDEX, start);

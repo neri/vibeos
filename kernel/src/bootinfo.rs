@@ -31,9 +31,9 @@ pub struct BootInfo {
     pub screen_h: u16,
     pub kernel_addr: u32,
     pub kernel_size: u32,
-    /// 画面 1 行のバイト数
+    /// 画面 1 行のバイト数（モード 12h は 1 枚の面の 1 行）
     pub pitch: u32,
-    /// 1 ピクセルのビット数（8 = モード 13h、32 = VESA の直接色）
+    /// 1 ピクセルのビット数（8 = モード 13h、4 = モード 12h（4 枚の面）、32 = VESA の直接色）
     pub bpp: u32,
 }
 
