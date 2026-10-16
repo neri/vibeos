@@ -133,6 +133,12 @@ impl<'a> Bmp<'a> {
         out
     }
 
+    /// VGA の 16 色（`palette::VGA16`）の番号に変換した画素（左上から）。8 ビットの画像も含めて誤差拡散する
+    /// （16 色では色ごとの置き換えだけだと段差が大きいため）
+    pub fn to_vga16(&self, lut: &crate::dither::Lut16) -> Vec<u8> {
+        crate::dither::to_vga16(self.width as usize, self.height as usize, lut, |x, y| self.rgb(x as u32, y as u32))
+    }
+
     /// 標準パレットの番号に変換した画素（左上から）。
     /// 8 ビットは色ごとに近い色へ置き換え、24/32 ビットは誤差拡散（Floyd–Steinberg）で階調を表す
     pub fn to_standard_palette(&self) -> Vec<u8> {

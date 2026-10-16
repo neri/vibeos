@@ -37,6 +37,11 @@ pub fn load() {
             None => klog!("fonts: {name} is not available"),
         }
     }
+    if crate::drivers::vga::has_bios_font() {
+        klog!("fonts: 8x16 from the VGA BIOS");
+    } else {
+        klog!("fonts: 8x16 is the 8x8 font doubled (no font in the VGA BIOS)");
+    }
 }
 
 fn read(name: &str) -> Option<Loaded> {

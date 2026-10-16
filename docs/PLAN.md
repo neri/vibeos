@@ -15,8 +15,8 @@
 | 項目 | 状態 |
 |---|---|
 | 設計 | ドラフト完了（DESIGN.md） |
-| 現在の Phase | **Phase 49（VGA C1）完了、次は Phase 50（C2）**（ブランチ `test/mode12`, [計画書](plans/vga16.md)。2026-10-16）。その前の計画書はすべて完了（2026-10-15。最後は簡易ウェブブラウザの Phase 45〜48、[計画書](plans/browser.md) §9）。アプリは 42 本、フロッピーの空きは 430,080 バイト。それまでの計画書もすべて完了（2026-10-13 時点）。完了した計画（新しい順）: browser の B1〜B4（簡易ウェブブラウザ [計画書](plans/browser.md)。ブランチ `browser` で作業し main に合流, D-068・D-070）・aster-look の A1〜A4（見た目を Aster のモックアップに近づける [計画書](plans/aster-look.md)。Aster はオーナーが別の場で作ったデスクトップのデザイン案の名前で、リポジトリには無い。ブランチ `aster-look` で作業し main に合流, DECISIONS.md D-056・D-066）・modern-look の M1〜M6（見た目を今風に [計画書](plans/modern-look.md)。ブランチ `modern-look` で作業し main に合流, D-046・D-067）・Phase 38〜44（パイプとリダイレクト [計画書](plans/pipe.md) → ユーザ空間のシェル [計画書](plans/user-shell.md)）・Phase 32〜37（デスクトップの改良 [計画書](plans/desktop.md)。D1〜D6。ウィンドウの大きさの変更は見送り, D-038）・Phase 30〜31（アプリの圧縮 [計画書](plans/app-compress.md)。その時点でアプリは gzip で元の 43.1%）・Phase 27〜29（カーネルの圧縮、LZSA2 + BCJ）・Phase 22〜26（LZSA の自作）・Phase 16〜21（ネットワーク。LAN・WAN とも制限なく使える, D-032。WAN のテストで試す宛先はオーナーの許可制） |
-| 次にやること | VGA のモード 12h だけにする計画（[計画書](plans/vga16.md)、D-071・D-072）の C2（Phase 50）から順に C6 まで（C1 は完了）。C1〜C4 の間は VESA の経路を残し、モード 12h は `video=vga` で選ぶ。実機で使うネットワークカードは近い将来は決めない（D-067）。WAN で新しい宛先を試すときは許可を得てから。main は origin より先に進んでいる（push はしていない） |
+| 現在の Phase | **Phase 50（VGA C2）完了、次は Phase 51（C3）**（ブランチ `test/mode12`, [計画書](plans/vga16.md)。2026-10-16）。その前の計画書はすべて完了（2026-10-15。最後は簡易ウェブブラウザの Phase 45〜48、[計画書](plans/browser.md) §9）。アプリは 42 本、フロッピーの空きは 430,080 バイト。それまでの計画書もすべて完了（2026-10-13 時点）。完了した計画（新しい順）: browser の B1〜B4（簡易ウェブブラウザ [計画書](plans/browser.md)。ブランチ `browser` で作業し main に合流, D-068・D-070）・aster-look の A1〜A4（見た目を Aster のモックアップに近づける [計画書](plans/aster-look.md)。Aster はオーナーが別の場で作ったデスクトップのデザイン案の名前で、リポジトリには無い。ブランチ `aster-look` で作業し main に合流, DECISIONS.md D-056・D-066）・modern-look の M1〜M6（見た目を今風に [計画書](plans/modern-look.md)。ブランチ `modern-look` で作業し main に合流, D-046・D-067）・Phase 38〜44（パイプとリダイレクト [計画書](plans/pipe.md) → ユーザ空間のシェル [計画書](plans/user-shell.md)）・Phase 32〜37（デスクトップの改良 [計画書](plans/desktop.md)。D1〜D6。ウィンドウの大きさの変更は見送り, D-038）・Phase 30〜31（アプリの圧縮 [計画書](plans/app-compress.md)。その時点でアプリは gzip で元の 43.1%）・Phase 27〜29（カーネルの圧縮、LZSA2 + BCJ）・Phase 22〜26（LZSA の自作）・Phase 16〜21（ネットワーク。LAN・WAN とも制限なく使える, D-032。WAN のテストで試す宛先はオーナーの許可制） |
+| 次にやること | VGA のモード 12h だけにする計画（[計画書](plans/vga16.md)、D-071・D-072）の C3（Phase 51）から順に C6 まで（C1・C2 は完了）。C3 で見た目の画像をオーナーに見せる。C1〜C4 の間は VESA の経路を残し、モード 12h は `video=vga` で選ぶ。実機で使うネットワークカードは近い将来は決めない（D-067）。WAN で新しい宛先を試すときは許可を得てから。main は origin より先に進んでいる（push はしていない） |
 
 ## 3. Phase 一覧
 
@@ -74,7 +74,7 @@
 | 47 | B3: HTTP（移動・chunked・上限・Content-Type・Esc で止める）, アドレス欄, エラーのページ | Rust | `72-browse-http`: テストランナーのページ、相対リンク、301、`https://` への移動の表示、404・つながらない宛先、Esc。`make test-wan` に example.com | 完了 |
 | 48 | B4: 画像（BMP・PNG） | Rust | ホストのテスト（PNG のフィルタ・色の種類・壊れた PNG）。ページの中の BMP と PNG が期待画像どおり | 完了 |
 | 49 | VGA C1: ローダでモード 12h（`video=vga`、仮）, ブート情報, `vga` の 4 枚の面への書き込みとアトリビュートのパレット, 16 色の表, `vibe_gfx::planar`, 起動直後のコンソールとパニックの画面（ブランチ `test/mode12`, [計画書](plans/vga16.md)） | NASM + Rust | ホストのテスト（8 ピクセル → 4 面の並べ替え）。`video=vga` でシリアルに `video: 640x480x4`、起動直後のコンソールとパニックの画面が期待画像と一致 | 完了 |
-| 50 | C2: 16 色の素材（BIOS の 8x16 のフォント、16 色のアイコン、近い色の表と誤差拡散、`Surface` の描画） | NASM + Rust | ホストのテスト（近い色・誤差拡散・太字・円と線）。ktest でフォントとアイコンが読める | 未着手 |
+| 50 | C2: 16 色の素材（BIOS の 8x16 のフォント、16 色のアイコン、近い色の表と誤差拡散、`Surface` の描画） | NASM + Rust | ホストのテスト（近い色・誤差拡散・太字・円と線）。ktest でフォントとアイコンが読める | 完了 |
 | 51 | C3: 16 色のデスクトップ（色番号の重ね合わせ・枠・タイトルバー・バー・メニュー・枠だけのドラッグ・x の範囲の書き直し） | Rust | デスクトップの操作のシナリオが 640x480 の期待画像と一致 | 未着手 |
 | 52 | C4: アプリを 16 色に（`vibe-ui` の立体・`win_open` の中身を色番号だけに・各アプリ・`gfx_open` を無くす） | Rust | `vibe-ui` のホストのテスト。各アプリのシナリオが 16 色の期待画像と一致 | 未着手 |
 | 53 | C5: モード 12h だけにする（VESA・今風の見た目・320x200・`.VFN` などを消す、DESIGN.md の書き直し） | NASM + Rust | `make test` が全部モード 12h で通る。cirrus・isapc でも同じ画面。`size-report` を記録 | 未着手 |

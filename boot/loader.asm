@@ -19,6 +19,7 @@
 ;      使用可能なメモリの 1/8 以下）に収まる一番大きいもの。無いとき・video=320x200・Shift キーを
 ;      押していれば 320x200（モード 13h）。video=vga なら VGA のモード 12h（640x480・16 色・4 枚の面。
 ;      docs/plans/vga16.md）
+;      VGA の BIOS の 8x16 のフォントを FONT16_ADDR に写す（int 10h AX=1130h BH=06h。docs/plans/vga16.md §3.1）
 ;   9. ブート情報構造体（BI）を埋め、プロテクトモードへ移ってカーネルへジャンプ
 ;      （EAX = BOOT_MAGIC, EBX = BI のアドレス）
 
@@ -33,6 +34,7 @@ KERNEL_MAX      equ RAMDISK_ADDR - KERNEL_ADDR
 BOUNCE_SEG      equ 0x1000              ; ディスク読み込みの中継バッファ（物理 0x10000〜）
 BOUNCE_ADDR     equ BOUNCE_SEG * 16
 BPB             equ 0x7C00              ; IPL がメモリに残っているので BPB はここから読む
+FONT16_ADDR     equ 0x3000              ; VGA の BIOS の 8x16 のフォントの写し（4096 バイト。IPL の作業場所の後ろ）
 
 ; 圧縮したカーネルのヘッダ（crates/vibe-pack と同じ形）
 VPK_MAGIC       equ 0x314B5056          ; "VPK1"
@@ -97,6 +99,7 @@ start:
     mov word [BI + BI_SCREEN_H], 200
     mov dword [BI + BI_PITCH], 320
     mov dword [BI + BI_BPP], 8
+    call fetch_font
     call choose_video
 
     mov si, msg_jump
@@ -1014,6 +1017,46 @@ crc32:
 %include "unlzsa2.inc"
 
 ; =============================================================================
+; VGA の BIOS の 8x16 のフォント（256 字 × 16 バイト。bit 7 が左端）を FONT16_ADDR に写し、ブート情報に
+; 場所を書く。BIOS が答えなければ 0 のまま（カーネルは 8x8 を縦に 2 倍して使う）
+
+fetch_font:
+    push es
+    push bp
+    ; 答えの CX は今の画面の字の高さで、頼んだフォントのものではない。ES:BP が変わったかで確かめる
+    ; （中身はカーネルが 'A' に絵があるかで確かめる）
+    xor ax, ax
+    mov es, ax
+    xor bp, bp
+    mov ax, 0x1130
+    mov bh, 0x06                        ; 8x16 のフォント
+    int 0x10                            ; ES:BP = フォント
+    mov ax, es
+    or ax, bp
+    jz .fail
+    push ds
+    push es
+    pop ds
+    mov si, bp
+    xor ax, ax
+    mov es, ax
+    mov di, FONT16_ADDR
+    mov cx, 256 * 16 / 2
+    rep movsw
+    pop ds
+    mov dword [BI + BI_FONT16], FONT16_ADDR
+    mov si, msg_font
+    call print
+    jmp .done
+.fail:
+    mov si, msg_no_font
+    call print
+.done:
+    pop bp
+    pop es
+    ret
+
+; =============================================================================
 ; 画面モード
 
 choose_video:
@@ -1493,6 +1536,8 @@ msg_shift       db "Shift is held: using 320x200", 13, 10, 0
 msg_no_vbe      db "no 32-bit VESA mode", 13, 10, 0
 msg_mode_320    db "video: 320x200", 13, 10, 0
 msg_mode_12h    db "video: 640x480x4", 13, 10, 0
+msg_font        db "font: VGA BIOS 8x16", 13, 10, 0
+msg_no_font     db "font: no 8x16 font in the VGA BIOS", 13, 10, 0
 msg_mode        db "video: ", 0
 msg_x32         db "x32", 13, 10, 0
 msg_cap         db "video limit: ", 0

@@ -733,3 +733,12 @@
 - `vga::write_row4` と `init_planar`（グラフィックスコントローラ・アトリビュートのパレット・DAC を明示して設定）。全画面の経路で、前面のウィンドウのパレットの色番号を 16 色に直して出す
 - シナリオ `74-vga-console`（端末の 16 色の表を `head` で出し、画面と 2 点の色を比べる。表は `tests/scripts/colors.txt`）・`75-vga-panic`。期待画像 `vga-console`・`vga-panic` は目で確かめた
 - 最初の試しでそのまま映った。16 色は QEMU の画面で Windows の 16 色の値そのもの（DAC の 32 → 128、48 → 192）
+
+## 2026-10-16 VGA C2: 16 色の素材（Phase 50、ブランチ `test/mode12`）
+
+- ローダが VGA の BIOS の 8x16 のフォント（`int 10h AX=1130h BH=06h`）を `0x3000` に写し、ブート情報の `font16` で渡す。カーネルは `vga::init` で自分の中に写す（`vga::font16`。無ければ 8x8 を縦に 2 倍した `FONT_8X16_TALL`）
+  - 詰まった所: 最初は答えの CX（1 字のバイト数）が 16 かで確かめていたが、SeaVGABIOS は CX に「今の画面の字の高さ」（モード 13h なので 8）を返し、いつも無しになった。Ralf Brown の割り込みの一覧にも同じ注意がある。ES:BP を 0:0 にしてから呼び、変わったかで確かめるようにした
+- `vibe-font`: `Font` を 8x8・8x8 を縦に 2 倍・VGA の BIOS の並び（bit 7 が左端、256 字）の 3 種類に。BIOS のフォントは ASCII の表示できる字だけを使う
+- `vibe-gfx`: `dither`（4096 項目の近い色の表 `Lut16` と Floyd–Steinberg）・`Bmp::to_vga16`、`Surface` の `bevel`・`circle`・`fill_circle`・`thick_line`・`draw_text_bold`
+- 16 色のアイコン: `.VIA` に 1 画素 1 バイトの `VIA4` を足し、`vibe-icongen --vga16` で `assets/icons/ICONS4.VIA`（19 個、5,100 バイト）を作る。最初は近い色だけで選んだので、青みのある灰色の縁が紺や青緑の点になった（`mines`・`terminal`・`script`・`app`）。灰色に近い色は黒・灰・白から選ぶようにした。どれも何の絵か分かる（`calc` はオリーブ、`edit` は灰色になる。見た目は C3 でオーナーに見せる）
+- ktest `vga16_assets`（BIOS のフォントの字・16 色のアイコン）。ホストのテストは vibe-font 3 本・vibe-gfx 8 本を足した

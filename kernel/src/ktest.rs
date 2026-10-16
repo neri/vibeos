@@ -56,6 +56,7 @@ const TESTS: &[(&str, fn())] = &[
     ("fs_write_and_sync", fs_write_and_sync),
     ("gfx_compose_speed", gfx_compose_speed),
     ("fonts_loaded", fonts_loaded),
+    ("vga16_assets", vga16_assets),
 ];
 
 pub fn run_all() -> ! {
@@ -789,4 +790,27 @@ fn fonts_loaded() {
     let head = vibe_font::VFont::parse(fonts::data(vibe_abi::FONT_HEADING).expect("HEAD.VFN")).unwrap();
     assert_eq!(head.size, 20);
     assert!(head.measure("VibeOS") > bold.measure("VibeOS"));
+}
+
+/// モード 12h 用の素材（docs/plans/vga16.md の C2）: VGA の BIOS の 8x16 のフォントと 16 色のアイコン
+fn vga16_assets() {
+    use crate::drivers::vga;
+    use crate::gfx::icons;
+    // QEMU の VGA BIOS には 8x16 のフォントがある
+    assert!(vga::has_bios_font(), "no 8x16 font from the VGA BIOS");
+    let f = vga::font16();
+    assert_eq!((f.width, f.height), (8, 16));
+    // ASCII の表示できる字は空白を除いてどれも絵があり、'A' と 'B' は違う絵
+    for c in '!'..='~' {
+        assert!((0..16).any(|y| f.row_bits(c, y) != 0), "no glyph for {c:?}");
+    }
+    assert!((0..16).any(|y| f.row_bits('A', y) != f.row_bits('B', y)));
+    assert!((0..16).all(|y| f.row_bits(' ', y) == 0));
+    // 16 色のアイコン: 16x16 の色番号（0〜15 か透明）
+    for name in ["app", "terminal", "folder", "calc"] {
+        let px = icons::get16(name).unwrap_or_else(|| panic!("16-color icon {name}"));
+        assert_eq!(px.len(), icons::SIZE * icons::SIZE);
+        assert!(px.iter().all(|&c| c < 16 || c == vibe_gfx::icons::TRANSPARENT));
+        assert!(px.iter().any(|&c| c != vibe_gfx::icons::TRANSPARENT));
+    }
 }

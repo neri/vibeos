@@ -35,6 +35,8 @@ pub struct BootInfo {
     pub pitch: u32,
     /// 1 ピクセルのビット数（8 = モード 13h、4 = モード 12h（4 枚の面）、32 = VESA の直接色）
     pub bpp: u32,
+    /// VGA の BIOS の 8x16 のフォント（256 字 × 16 バイト）をローダが写した物理アドレス。無ければ 0
+    pub font16: u32,
 }
 
 const _: () = {
@@ -47,7 +49,8 @@ const _: () = {
     assert!(offset_of!(BootInfo, kernel_size) == 0x320);
     assert!(offset_of!(BootInfo, pitch) == 0x324);
     assert!(offset_of!(BootInfo, bpp) == 0x328);
-    assert!(size_of::<BootInfo>() == 0x32C);
+    assert!(offset_of!(BootInfo, font16) == 0x32C);
+    assert!(size_of::<BootInfo>() == 0x330);
 };
 
 impl BootInfo {
@@ -72,6 +75,7 @@ static BOOT_INFO: crate::sync::BootCell<BootInfo> = crate::sync::BootCell::new(B
     kernel_size: 0,
     pitch: 0,
     bpp: 0,
+    font16: 0,
 });
 
 /// kmain の最初に 1 回だけ（割り込み禁止・ページング前に）呼ぶ。写しへの参照を返す

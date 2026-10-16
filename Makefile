@@ -15,7 +15,8 @@
 #   make lzsa-ref    本家の lzsa を GitHub から取ってきてビルドする（build/ext/lzsa。DECISIONS.md D-033）
 #   make size-report KERNEL.SYS の圧縮前後の大きさとフロッピーの空き
 #   make fonts    assets/fonts の .VFN を Noto のフォントから作り直す（make fonts-fetch で GitHub から取ってくる。tools/vibe-fontgen）
-#   make icons    assets/icons/ICONS.VIA（と、ドック用の 32x32 の ICONS32.VIA）を手で書いた SVG から作り直す（tools/vibe-icongen）
+#   make icons    assets/icons/ICONS.VIA（と、ドック用の 32x32 の ICONS32.VIA、モード 12h 用の 16 色の ICONS4.VIA）を
+#                 手で書いた SVG から作り直す（tools/vibe-icongen）
 #   make COMPRESS=0  カーネルとアプリを圧縮しないイメージを作る（ローダは印の無い KERNEL.SYS を
 #                    そのまま写し、カーネルは gzip でない ELF をそのまま読む）。アプリは RAW_APPS だけ
 #   make clean
@@ -210,7 +211,7 @@ GEN_STAMP := $(GEN_ROOTFS)/.stamp
 FONT_FILES := $(wildcard assets/fonts/*.VFN)
 
 $(GEN_STAMP): $(shell find tools/mkassets -type f) $(FONT_FILES) assets/fonts/OFL.TXT assets/icons/ICONS.VIA \
-		assets/icons/ICONS32.VIA tools/dock-cfg.sh Makefile | $(BUILD)
+		assets/icons/ICONS32.VIA assets/icons/ICONS4.VIA tools/dock-cfg.sh Makefile | $(BUILD)
 	rm -rf $(GEN_ROOTFS)
 	$(CARGO) run -q --release -p mkassets -- $(GEN_ROOTFS)
 	mkdir -p $(GEN_ROOTFS)/SYSTEM/FONTS
@@ -218,15 +219,17 @@ $(GEN_STAMP): $(shell find tools/mkassets -type f) $(FONT_FILES) assets/fonts/OF
 	cp assets/fonts/OFL.TXT $(GEN_ROOTFS)/SYSTEM/FONTS/
 	gzip -9 -n -c assets/icons/ICONS.VIA > $(GEN_ROOTFS)/SYSTEM/ICONS.VIA
 	gzip -9 -n -c assets/icons/ICONS32.VIA > $(GEN_ROOTFS)/SYSTEM/ICONS32.VIA
+	gzip -9 -n -c assets/icons/ICONS4.VIA > $(GEN_ROOTFS)/SYSTEM/ICONS4.VIA
 	tools/dock-cfg.sh $(GEN_ROOTFS)/SYSTEM/DOCK.CFG assets/icons $(DOCK_APPS)
 	touch $@
 
 # assets/icons/ICONS.VIA を手で書いた SVG（assets/icons/*.svg）から作り直す（tools/vibe-icongen）。
-# ドック用の 32x32 の ICONS32.VIA は DOCK_APPS の分だけ
+# ドック用の 32x32 の ICONS32.VIA は DOCK_APPS の分だけ。ICONS4.VIA はモード 12h 用の 16 色（docs/plans/vga16.md §3.6）
 icons:
 	$(CARGO) build -q --release -p vibe-icongen
 	target/release/vibe-icongen assets/icons/ICONS.VIA assets/icons/*.svg
 	target/release/vibe-icongen --size 32 assets/icons/ICONS32.VIA $(addprefix assets/icons/,$(addsuffix .svg,$(DOCK_APPS)))
+	target/release/vibe-icongen --vga16 assets/icons/ICONS4.VIA assets/icons/*.svg
 
 # assets/fonts の .VFN を作り直す（ふだんのビルドでは使わない）。Noto のフォントは GitHub の公式の置き場所から
 # 版を決めて取ってくる（tools/fetch-fonts.sh。SHA-256 を確かめる。DECISIONS.md D-052）

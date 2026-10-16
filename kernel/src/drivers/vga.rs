@@ -5,12 +5,14 @@
 //! ブート情報で渡す。ここは「1 行を VRAM に書く」「パレットを設定する」だけを受け持ち、何をどこに
 //! 描くかは `gui`（ウィンドウの重ね合わせ）が決める。
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use vibe_font::Font;
 use vibe_gfx::{palette, planar};
 
 use crate::arch::port::{inb, outb};
 use crate::bootinfo::BootInfo;
+use crate::sync::BootCell;
 
 /// 対応する一番大きな画面（ローダの MAX_SCREEN_W / MAX_SCREEN_H と同じ）
 pub const MAX_WIDTH: usize = 2560;
@@ -34,6 +36,10 @@ static HEIGHT: AtomicUsize = AtomicUsize::new(200);
 static PITCH: AtomicUsize = AtomicUsize::new(320);
 static BPP: AtomicUsize = AtomicUsize::new(8);
 static VRAM: AtomicUsize = AtomicUsize::new(0);
+
+/// VGA の BIOS の 8x16 のフォントの写し（ローダが低いメモリに置いたものを、ページングの前に写す）
+static BIOS_FONT: BootCell<[u8; 256 * 16]> = BootCell::new([0; 256 * 16]);
+static BIOS_FONT_OK: AtomicBool = AtomicBool::new(false);
 
 pub fn width() -> usize {
     WIDTH.load(Ordering::Relaxed)
@@ -63,9 +69,43 @@ pub fn init(info: &BootInfo) {
     let min_pitch = if bpp == 4 { w / 8 } else { w * bpp / 8 };
     PITCH.store((info.pitch as usize).max(min_pitch), Ordering::Relaxed);
     VRAM.store(info.vram_addr as usize, Ordering::Relaxed);
+    if info.font16 != 0 {
+        copy_bios_font(info.font16 as usize);
+    }
     if bpp == 4 {
         init_planar();
     }
+}
+
+fn copy_bios_font(addr: usize) {
+    // SAFETY: 起動直後で、ほかに誰も BIOS_FONT を触らない。addr はローダが 4096 バイトを写した所で、
+    // まだページングが無いので物理アドレスのまま読める
+    let font = unsafe { &mut *BIOS_FONT.as_ptr() };
+    for (i, b) in font.iter_mut().enumerate() {
+        // SAFETY: 同上
+        *b = unsafe { ((addr + i) as *const u8).read_volatile() };
+    }
+    // 'A' に絵が無ければ使えないものとみなす
+    if font[b'A' as usize * 16..][..16].iter().any(|&b| b != 0) {
+        BIOS_FONT_OK.store(true, Ordering::Release);
+    }
+}
+
+/// 8x16 のフォント: VGA の BIOS のもの。無ければ 8x8 を縦に 2 倍したもの（16 色のデスクトップの字。
+/// 使い始めるのは docs/plans/vga16.md の C3 から）
+#[allow(dead_code)]
+pub fn font16() -> Font {
+    if BIOS_FONT_OK.load(Ordering::Acquire) {
+        // SAFETY: BIOS_FONT は init（起動直後）の後は書き換えない
+        Font::vga16(unsafe { &*BIOS_FONT.as_ptr() })
+    } else {
+        vibe_font::FONT_8X16_TALL.clone()
+    }
+}
+
+/// VGA の BIOS の 8x16 のフォントを使えるか
+pub fn has_bios_font() -> bool {
+    BIOS_FONT_OK.load(Ordering::Acquire)
 }
 
 /// モード 12h の書き込みの設定とパレット。BIOS の既定の値は当てにせず、全部書く
