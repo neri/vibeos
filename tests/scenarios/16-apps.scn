@@ -1,7 +1,6 @@
 # Phase 10: アプリ群（mandel / snake / more）
-# Phase 52（VGA C4）から 16 色の画面（video=vga）で。mandel と snake は 320x200 のウィンドウ
+# Phase 52（VGA C4）から 16 色の画面で。mandel と snake は 320x200 のウィンドウ
 # （1 つ目は中身 120,65、2 つ目は 144,85）
-boot-config video=vga
 timeout 40
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell

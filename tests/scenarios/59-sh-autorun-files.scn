@@ -1,10 +1,10 @@
 # ユーザ空間のシェル S4: 起動時の /AUTORUN.SH、files から .SH を新しい端末で動かす、$(…)
-# デスクトップが要る。Bochs は 32 ビットのモードが無くレトロで動くので QEMU だけ（DECISIONS.md D-048）
+# デスクトップが要る（QEMU だけで流す）
 qemu-only
 disk-put tests/scripts/autorun.sh /AUTORUN.SH
 disk-put tests/scripts/hi.sh /DOCS/HI.SH
 timeout 30
-wait-serial gui: desktop 1024x768
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
 wait-serial autorun: hello from /AUTORUN.SH
 wait-serial autorun: sum 6

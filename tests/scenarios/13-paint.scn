@@ -1,7 +1,6 @@
 # Phase 8: マウスで動くカーソルと、マウスで線を描くお絵かき
-# Phase 52（VGA C4）から 16 色の画面（video=vga）のウィンドウで。既定の大きさは中身 120,65 に 320x212
+# Phase 52（VGA C4）から 16 色の画面のウィンドウで。既定の大きさは中身 120,65 に 320x212
 # （上の 12 ピクセルは色の並び、1 色 20 ピクセル）
-boot-config video=vga
 timeout 20
 wait-serial ps2: keyboard true, mouse true
 wait-serial gui: desktop 640x480

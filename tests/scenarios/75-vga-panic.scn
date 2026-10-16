@@ -1,6 +1,5 @@
 # Phase 49（VGA C1）: モード 12h でも CPU 例外（0 除算）でパニック画面になる
 image build/vibeos-fault.img
-boot-config video=vga
 timeout 15
 wait-serial video: 640x480x4
 wait-serial VIBEOS READY

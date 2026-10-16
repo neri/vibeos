@@ -1,12 +1,9 @@
-//! ビットマップフォント（8×8・それを縦に 2 倍した 8×16・VGA の BIOS の 8×16。なめらかなフォント `.VFN` は `vfn`）。
+//! ビットマップフォント（8×8・それを縦に 2 倍した 8×16・VGA の BIOS の 8×16）。
 //!
 //! 文字の大きさは `Font` から取る（呼び出し側で 8×8 を決め打ちしない）。
 //! 1 行分のビットは `row_bits` で取り出し、bit 0 が左端のピクセル。
 
 #![cfg_attr(not(test), no_std)]
-
-pub mod vfn;
-pub use vfn::{Glyph, VFont};
 
 #[derive(Clone)]
 pub struct Font {

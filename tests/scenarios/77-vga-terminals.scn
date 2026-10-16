@@ -1,7 +1,6 @@
 # Phase 51（VGA C3）: 16 色の画面のデスクトップの端末 2 つ・クリップボード・背景の画像
 # 端末 1 の中身は 0,72 から（8x16 の 80x25。行 r は y = 72 + 16r、桁 c は x = 8c）。メニューの Terminal は 24〜41。
 # 端末 2 は中身 0,65 から（タイトルバー 45〜64）。端末 1 のタイトルバーは 52〜71
-boot-config video=vga
 timeout 30
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell

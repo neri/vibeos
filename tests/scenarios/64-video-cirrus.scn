@@ -1,0 +1,16 @@
+# Phase 53（VGA C5）: 画面はいつも VGA のモード 12h（640x480・16 色）。32 ビットの VESA のモードを持たない
+# ビデオカード（QEMU の cirrus）でも同じデスクトップになる
+qemu-arg -vga
+qemu-arg cirrus
+timeout 30
+wait-serial video: 640x480x4
+wait-serial VIBEOS READY
+wait-serial gui: desktop 640x480
+wait-serial VibeOS shell
+type echo hello
+key ret
+wait-serial hello
+sleep 300
+# 起動したデスクトップの画面は標準の VGA（-vga std）と同じ（76-vga-desktop と同じ期待画像）
+expect-screen vga-desktop 0 0 380 480
+serial-absent PANIC

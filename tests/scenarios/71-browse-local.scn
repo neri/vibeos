@@ -1,13 +1,12 @@
 # Phase 46（ブラウザ B2）: フロッピーのページを browse で表示する。テスト用のページ（tests/web）はイメージの写しの
 # /DOCS/WEB に入れる（普通のイメージには入れない。DECISIONS.md D-068）。
-# Phase 52（VGA C4）から 16 色の画面（video=vga）で。ウィンドウは中身 3,63 に 636x416（上の道具の並び 36、
+# Phase 52（VGA C4）から 16 色の画面で。ウィンドウは中身 3,63 に 636x416（上の道具の並び 36、
 # 下の行 20。タイトルバーは 43〜62）。画面は枠を含むウィンドウ全体（2,42 から 638x438）で比べる。下の行の文字は
 # 6,460 から 500x18 で比べる。リンクの位置（画面の座標。文字は 8x16 の固定幅）:
 # INDEX.HTM の "a link to page 2" 480,148・"the lists below" 130,164、
 # PAGE2.HTM の "a text file" 494,148・"secure page" 95,192。[x] は 627,52
 disk-put tests/web/INDEX.HTM /DOCS/WEB/INDEX.HTM
 disk-put tests/web/PAGE2.HTM /DOCS/WEB/PAGE2.HTM
-boot-config video=vga
 timeout 30
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell

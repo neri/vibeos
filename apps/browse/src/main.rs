@@ -129,10 +129,6 @@ struct App {
 }
 
 fn main() -> i32 {
-    if !vibe_rt::gfx::is_desktop() {
-        println!("browse: use it on the desktop (not in the 320x200 mode)");
-        return 1;
-    }
     let arg = vibe_rt::args().nth(1).map(String::from);
     let start = match arg.as_deref().map(parse_target) {
         Some(Ok(u)) => Some(u),

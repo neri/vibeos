@@ -1,6 +1,5 @@
 # パイプ P3: 内蔵コマンドをパイプとリダイレクトで使う、フィルタのアプリ、more と cat が標準入力を読む
-# （more の画面は 320x200 の全画面の端末で比べる）
-boot-config video=320x200
+# （more の画面はデスクトップの端末 1 で比べる。中身は 0,72 から 8x16 の 80x25）
 timeout 40
 wait-serial VIBEOS READY
 wait-serial VibeOS shell
@@ -75,12 +74,12 @@ type ps | grep shell
 key ret
 wait-serial shell
 # ls | more: 1 画面で止まり、スペースで進む（ディスク上の並びはホストで変わるので sort を挟む。
-# 名前の列だけを比べる。大きさと日時はビルドごとに変わる）
+# 名前の列だけを比べる。大きさと日時と、最後の行の more の割合はビルドごとに変わる）
 type ls /BIN | sort | more
 key ret
 wait-serial -- more (
 sleep 300
-expect-screen more-ls 0 16 208 384
+expect-screen more-ls 0 72 104 384
 key spc
 wait-serial WC.ELF
 type echo after more

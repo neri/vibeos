@@ -6,8 +6,8 @@
 //!
 //! 最初の端末（0 番のウィンドウ）は起動直後から使うので静的な領域に置く。ほかの端末はヒープに置く。
 //!
-//! 文字: デスクトップの端末（32 ビットのウィンドウ）は固定幅のなめらかなフォント（gfx::fonts::mono、
-//! 1 文字 8x16）、全画面（8 ビット）とフォントが無いときは 8x8 のビットマップのフォント。
+//! 文字: デスクトップの端末は 8x16（VGA の BIOS のフォント。`vga::font16`）、起動直後とパニックの全画面は
+//! 8x8 のビットマップのフォント。色は 16 色の番号（ANSI の色は CGA の並び）。
 //!
 //! カーソルの左右移動（`\x08`, `ESC [ n D` / `C`）は行をまたいで前後の行へ回り込む。
 //! 行をまたいだ入力行の編集（シェル）を相対移動だけで書けるようにするため。
@@ -24,53 +24,27 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::{self, Write};
 
-use vibe_font::{FONT_8X8, Font, VFont};
+use vibe_font::{FONT_8X8, Font};
 use vibe_gfx::palette;
 use vibe_term::{Action, Parser, Sgr};
 
-use crate::gui::{self, SCREEN, Screen, WinId, WinPixels};
+use crate::gui::{self, SCREEN, Screen, WinId};
 use crate::sync::IrqMutex;
 use crate::task::sched;
 
 const TAB_WIDTH: usize = 4;
-/// Alt+F1〜F4 で選べる端末の数（デスクトップでは `term` でいくつでも開ける）
-const MAX_NUMBERED: usize = 4;
 
 /// ANSI の色番号（黒 赤 緑 黄 青 紫 水 白）→ CGA パレット
 const ANSI_TO_CGA: [u8; 8] = [0, 4, 2, 6, 1, 5, 3, 7];
 const DEFAULT_FG: u8 = palette::LIGHT_GRAY;
 const DEFAULT_BG: u8 = palette::BLACK;
 
-/// 端末の文字
-#[derive(Clone, Copy)]
-enum TermFont {
-    Bitmap(&'static Font),
-    /// 固定幅のなめらかなフォント（32 ビットのウィンドウだけ）
-    Smooth(&'static VFont<'static>),
-}
-
-impl TermFont {
-    fn width(&self) -> usize {
-        match self {
-            TermFont::Bitmap(f) => f.width,
-            TermFont::Smooth(f) => f.cell_width as usize,
-        }
-    }
-
-    fn height(&self) -> usize {
-        match self {
-            TermFont::Bitmap(f) => f.height,
-            TermFont::Smooth(f) => f.line_height as usize,
-        }
-    }
-}
-
 pub struct Terminal {
     /// 端末のウィンドウ（端末の番号としても使う）
     win: WinId,
-    /// 人に見せる番号（1〜）。Alt+F1〜F4 で選ぶ
+    /// 人に見せる番号（1〜。"Terminal 2" のように題名に出す）
     number: usize,
-    font: TermFont,
+    font: &'static Font,
     cols: usize,
     rows: usize,
     /// 0..=cols。cols は「行末まで書いた（次の文字で改行する）」状態
@@ -101,7 +75,7 @@ impl Terminal {
         Terminal {
             win,
             number,
-            font: TermFont::Bitmap(&FONT_8X8),
+            font: &FONT_8X8,
             cols: 0,
             rows: 0,
             col: 0,
@@ -119,17 +93,11 @@ impl Terminal {
 
     /// 大きさをウィンドウに合わせ、先頭から書き始める（画面は消さない）
     fn fit(&mut self, screen: &Screen) {
-        self.font = match crate::gfx::fonts::mono() {
-            Some(f) if screen.window_is_rgb(self.win) => TermFont::Smooth(f),
-            // 16 色の画面のデスクトップは 8x16（VGA の BIOS のフォント）
-            _ if gui::is_classic() && screen.mode() == gui::Mode::Desktop => {
-                TermFont::Bitmap(crate::drivers::vga::font16())
-            }
-            _ => TermFont::Bitmap(&FONT_8X8),
-        };
+        // デスクトップは 8x16（VGA の BIOS のフォント）、起動直後とパニックの全画面は 8x8
+        self.font = if screen.mode() == gui::Mode::Desktop { crate::drivers::vga::font16() } else { &FONT_8X8 };
         let (w, h) = screen.window_size(self.win).unwrap_or((0, 0));
-        self.cols = w / self.font.width();
-        self.rows = h / self.font.height();
+        self.cols = w / self.font.width;
+        self.rows = h / self.font.height;
         self.col = 0;
         self.row = 0;
         self.cursor_drawn = false;
@@ -221,24 +189,12 @@ fn numbers_in_use() -> [bool; 64] {
     used
 }
 
-/// 番号 `n` の端末のウィンドウ
-fn find_number(n: usize) -> Option<WinId> {
-    if n == 1 {
-        return Some(gui::CONSOLE);
-    }
-    TERMINALS.lock().values().find(|t| t.number == n).map(|t| t.win)
-}
-
-/// 新しい端末を開いてシェルを動かす。`number` を指定しなければ空いている一番小さい番号。
+/// 新しい端末を開いてシェルを動かす。番号は空いている一番小さいもの。
 /// `command` があれば、シェルはそれを実行して終わり、端末を閉じる（タイトルはコマンド）。
 /// 開いた端末のウィンドウを返す
-pub fn open_terminal(number: Option<usize>, command: Option<alloc::string::String>) -> Option<WinId> {
+pub fn open_terminal(command: Option<alloc::string::String>) -> Option<WinId> {
     let used = numbers_in_use();
-    let n = match number {
-        Some(n) if n < used.len() && !used[n] => n,
-        Some(_) => return None,
-        None => (2..used.len()).find(|&n| !used[n])?,
-    };
+    let n = (2..used.len()).find(|&n| !used[n])?;
     let mut term = Box::new(Terminal::new(0, n));
     let win = {
         let mut terms = TERMINALS.lock();
@@ -289,23 +245,6 @@ pub fn mouse(tty: WinId, x: i32, y: i32, buttons: u8) {
     }
 }
 
-/// Alt+F1〜F4: 番号 `n` の端末（とそれに属するウィンドウ）を前に出す。無ければ開く
-pub fn switch_to(n: usize) {
-    if n == 0 || n > MAX_NUMBERED {
-        return;
-    }
-    match find_number(n) {
-        Some(win) => {
-            let mut s = SCREEN.lock();
-            s.raise_tty(win);
-            s.present();
-        }
-        None => {
-            open_terminal(Some(n), None);
-        }
-    }
-}
-
 struct Writer<'a> {
     console: &'a mut Terminal,
     screen: &'a mut Screen,
@@ -327,7 +266,7 @@ impl Write for Writer<'_> {
 
 impl Terminal {
     fn cell_y(&self, row: usize) -> usize {
-        row * self.font.height()
+        row * self.font.height
     }
 
     fn apply(&mut self, screen: &mut Screen, a: Action) {
@@ -446,26 +385,15 @@ impl Terminal {
         if let Some(c) = self.grid.get_mut(row * self.cols + col) {
             *c = Cell { ch, fg: self.fg, bg: self.bg };
         }
-        let (x, y) = (col * self.font.width(), self.cell_y(row));
+        let (x, y) = (col * self.font.width, self.cell_y(row));
         self.paint_char(screen, x, y, ch, self.fg, self.bg);
-        screen.mark_window_dirty(self.win, y, y + self.font.height());
+        screen.mark_window_dirty(self.win, y, y + self.font.height);
     }
 
     /// 文字の枠 (x, y) に 1 文字描く（背景も塗る）
     fn paint_char(&self, screen: &mut Screen, x: usize, y: usize, ch: char, fg: u8, bg: u8) {
-        let (x, y) = (x as i32, y as i32);
-        let (w, h) = (self.font.width() as i32, self.font.height() as i32);
-        let Some(px) = screen.window_pixels(self.win) else { return };
-        match (px, self.font) {
-            (WinPixels::P8(mut s), TermFont::Bitmap(f)) => s.draw_char(f, x, y, ch, fg, Some(bg)),
-            (WinPixels::P8(mut s), TermFont::Smooth(_)) => s.draw_char(&FONT_8X8, x, y, ch, fg, Some(bg)),
-            (WinPixels::P32(mut c, lut), TermFont::Bitmap(f)) => {
-                c.draw_char(f, x, y, ch, lut[fg as usize], Some(lut[bg as usize]))
-            }
-            (WinPixels::P32(mut c, lut), TermFont::Smooth(f)) => {
-                c.fill_rect(x, y, w, h, lut[bg as usize]);
-                c.draw_glyph(f, x, y, ch, lut[fg as usize]);
-            }
+        if let Some(mut s) = screen.window_surface(self.win) {
+            s.draw_char(self.font, x as i32, y as i32, ch, fg, Some(bg));
         }
     }
 
@@ -473,10 +401,10 @@ impl Terminal {
         if from >= to {
             return;
         }
-        let (w, h) = (self.font.width(), self.font.height());
+        let (w, h) = (self.font.width, self.font.height);
         let y = self.cell_y(row);
         self.blank_grid(row * self.cols + from, row * self.cols + to);
-        if let Some(mut px) = screen.window_pixels(self.win) {
+        if let Some(mut px) = screen.window_surface(self.win) {
             px.fill_rect((from * w) as i32, y as i32, ((to - from) * w) as i32, h as i32, self.bg);
         }
         screen.mark_window_dirty(self.win, y, y + h);
@@ -488,8 +416,8 @@ impl Terminal {
         }
         let (y0, y1) = (self.cell_y(from), self.cell_y(to));
         self.blank_grid(from * self.cols, to * self.cols);
-        if let Some(mut px) = screen.window_pixels(self.win) {
-            px.fill_rect(0, y0 as i32, (self.cols * self.font.width()) as i32, (y1 - y0) as i32, self.bg);
+        if let Some(mut px) = screen.window_surface(self.win) {
+            px.fill_rect(0, y0 as i32, (self.cols * self.font.width) as i32, (y1 - y0) as i32, self.bg);
         }
         screen.mark_window_dirty(self.win, y0, y1);
     }
@@ -499,15 +427,15 @@ impl Terminal {
             self.row += 1;
             return;
         }
-        let h = self.font.height() as i32;
+        let h = self.font.height as i32;
         if !self.grid.is_empty() {
             self.grid.copy_within(self.cols.., 0);
             let n = self.grid.len();
             self.blank_grid(n - self.cols, n);
         }
         let (y0, y1) = (self.cell_y(0), self.cell_y(self.rows));
-        if let Some(mut px) = screen.window_pixels(self.win) {
-            px.scroll_up(0, y0 as i32, (self.cols * self.font.width()) as i32, (y1 - y0) as i32, h, self.bg);
+        if let Some(mut px) = screen.window_surface(self.win) {
+            px.scroll_up(0, y0 as i32, (self.cols * self.font.width) as i32, (y1 - y0) as i32, h, self.bg);
         }
         screen.mark_window_dirty(self.win, y0, y1);
     }
@@ -515,14 +443,14 @@ impl Terminal {
     /// カーソル（文字の下の 1 ピクセルの線）
     fn cursor_line(&self) -> (i32, i32, i32) {
         let col = self.col.min(self.cols - 1);
-        let x = (col * self.font.width()) as i32;
-        let y = (self.cell_y(self.row) + self.font.height() - 1) as i32;
-        (x, y, self.font.width() as i32)
+        let x = (col * self.font.width) as i32;
+        let y = (self.cell_y(self.row) + self.font.height - 1) as i32;
+        (x, y, self.font.width as i32)
     }
 
     fn show_cursor(&mut self, screen: &mut Screen) {
         let (x, y, w) = self.cursor_line();
-        if let Some(mut px) = screen.window_pixels(self.win) {
+        if let Some(mut px) = screen.window_surface(self.win) {
             px.hline(x, y, w, self.fg);
         }
         screen.mark_window_dirty(self.win, y as usize, y as usize + 1);
@@ -534,7 +462,7 @@ impl Terminal {
             return;
         }
         let (x, y, w) = self.cursor_line();
-        if let Some(mut px) = screen.window_pixels(self.win) {
+        if let Some(mut px) = screen.window_surface(self.win) {
             px.hline(x, y, w, self.bg);
         }
         screen.mark_window_dirty(self.win, y as usize, y as usize + 1);
@@ -554,9 +482,9 @@ impl Terminal {
     fn repaint_cell(&self, screen: &mut Screen, i: usize, inverted: bool) {
         let Some(c) = self.grid.get(i) else { return };
         let (fg, bg) = if inverted { (c.bg, c.fg) } else { (c.fg, c.bg) };
-        let (x, y) = ((i % self.cols) * self.font.width(), self.cell_y(i / self.cols));
+        let (x, y) = ((i % self.cols) * self.font.width, self.cell_y(i / self.cols));
         self.paint_char(screen, x, y, c.ch, fg, bg);
-        screen.mark_window_dirty(self.win, y, y + self.font.height());
+        screen.mark_window_dirty(self.win, y, y + self.font.height);
     }
 
     fn paint_selection(&self, screen: &mut Screen, inverted: bool) {
@@ -604,8 +532,8 @@ impl Terminal {
         if self.grid.is_empty() {
             return;
         }
-        let col = (x.max(0) as usize / self.font.width()).min(self.cols - 1);
-        let row = (y.max(0) as usize / self.font.height()).min(self.rows - 1);
+        let col = (x.max(0) as usize / self.font.width).min(self.cols - 1);
+        let row = (y.max(0) as usize / self.font.height).min(self.rows - 1);
         let cell = row * self.cols + col;
         let left = buttons & 1 != 0;
         match (left, self.selecting) {

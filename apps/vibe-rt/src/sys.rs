@@ -2,7 +2,7 @@
 
 use core::arch::asm;
 
-use vibe_abi::{DirEntry, FsInfo, MouseState, PciInfo, ProcInfo, SpawnArgs, Stat, SysInfo, nr};
+use vibe_abi::{DirEntry, FsInfo, PciInfo, ProcInfo, SpawnArgs, Stat, SysInfo, nr};
 
 /// システムコール。引数は EBX, ECX, EDX, ESI, EDI の順。
 ///
@@ -146,34 +146,12 @@ pub fn readdir(path: &str, entries: &mut [DirEntry]) -> i32 {
     syscall(nr::READDIR, path.as_ptr() as u32, path.len() as u32, entries.as_mut_ptr() as u32, entries.len() as u32, 0)
 }
 
-pub fn gfx_open(flags: u32) -> i32 {
-    syscall(nr::GFX_OPEN, flags, 0, 0, 0, 0)
-}
-
-pub fn gfx_blit(buf: &[u8; 64000]) -> i32 {
-    syscall(nr::GFX_BLIT, buf.as_ptr() as u32, 0, 0, 0, 0)
-}
-
-pub fn gfx_palette(start: u8, rgb: &[[u8; 3]]) -> i32 {
-    syscall(nr::GFX_PALETTE, start as u32, rgb.len() as u32, rgb.as_ptr() as u32, 0, 0)
-}
-
-pub fn gfx_close() -> i32 {
-    syscall(nr::GFX_CLOSE, 0, 0, 0, 0, 0)
-}
-
 /// キーイベント（nonblock で無ければ None）
 pub fn getkey(nonblock: bool) -> Option<vibe_abi::KeyEvent> {
     match syscall(nr::GETKEY, nonblock as u32, 0, 0, 0, 0) {
         0 => None,
         v => Some(vibe_abi::KeyEvent(v as u32)),
     }
-}
-
-/// マウスのイベント（無ければ None。待たない）
-pub fn mouse() -> Option<MouseState> {
-    let mut m = MouseState::default();
-    (syscall(nr::MOUSE, &mut m as *mut MouseState as u32, 0, 0, 0, 0) == 1).then_some(m)
 }
 
 /// PC スピーカーで `freq` Hz を `ms` ミリ秒鳴らす（待たない）。freq 0 で止める
@@ -186,7 +164,7 @@ pub fn time() -> u32 {
     syscall(nr::TIME, 0, 0, 0, 0, 0) as u32
 }
 
-/// ウィンドウを開く（デスクトップでは枠付き、全画面のときは前面に出る）。負ならエラー
+/// ウィンドウを開く（デスクトップの枠付きのウィンドウ）。負ならエラー
 pub fn win_open(w: u32, h: u32, title: &str, flags: u32) -> i32 {
     syscall(nr::WIN_OPEN, w, h, title.as_ptr() as u32, title.len() as u32, flags)
 }
@@ -196,19 +174,9 @@ pub fn win_blit(win: i32, buf: &[u8]) -> i32 {
     syscall(nr::WIN_BLIT, win as u32, buf.as_ptr() as u32, 0, 0, 0)
 }
 
-/// 32 ビットのウィンドウ（WIN_RGB32）の中身全体を `buf`（w*h 個の 0x00RRGGBB）で書き換える
-pub fn win_blit32(win: i32, buf: &[u32]) -> i32 {
-    syscall(nr::WIN_BLIT, win as u32, buf.as_ptr() as u32, 0, 0, 0)
-}
-
-/// フォント（kind は FONT_*）のバイト列を `buf` に写す。大きさを返す（buf が足りなければ写さない）
+/// フォント（kind は FONT_VGA16）のバイト列を `buf` に写す。大きさを返す（buf が足りなければ写さない）
 pub fn font_data(kind: u32, buf: &mut [u8]) -> i32 {
     syscall(nr::FONT_DATA, kind, buf.as_mut_ptr() as u32, buf.len() as u32, 0, 0)
-}
-
-/// 16x16 のアイコン（事前に掛けたアルファの 0xAARRGGBB）
-pub fn icon_data(name: &str, buf: &mut [u32; vibe_abi::ICON_SIZE * vibe_abi::ICON_SIZE]) -> i32 {
-    syscall(nr::ICON_DATA, name.as_ptr() as u32, name.len() as u32, buf.as_mut_ptr() as u32, 0, 0)
 }
 
 /// 16 色の 16x16 のアイコン（色番号、透明は 0xFF）
@@ -267,11 +235,6 @@ pub fn sys_info() -> SysInfo {
 /// ウィンドウのタイトルを変える
 pub fn win_title(win: i32, title: &str) -> i32 {
     syscall(nr::WIN_TITLE, win as u32, title.as_ptr() as u32, title.len() as u32, 0, 0)
-}
-
-/// ウィンドウ独自のパレット（各 6bit）
-pub fn win_palette(win: i32, start: u8, rgb: &[[u8; 3]]) -> i32 {
-    syscall(nr::WIN_PALETTE, win as u32, start as u32, rgb.len() as u32, rgb.as_ptr() as u32, 0)
 }
 
 /// クリップボードに文字を入れる

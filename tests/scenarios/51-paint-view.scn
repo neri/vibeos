@@ -1,6 +1,5 @@
 # Phase 36（デスクトップ D5）: view は画像の大きさのウィンドウ、paint は好きな大きさのキャンバスのウィンドウ
-# Phase 52（VGA C4）から 16 色の画面（video=vga）で。画像は 24 ビットも 8 ビットも 16 色に誤差拡散して出る
-boot-config video=vga
+# Phase 52（VGA C4）から 16 色の画面で。画像は 24 ビットも 8 ビットも 16 色に誤差拡散して出る
 timeout 30
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell

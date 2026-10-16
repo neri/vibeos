@@ -1,10 +1,9 @@
 # Phase 35（デスクトップ D4）: ファイルマネージャ。フォルダを移り、BMP をダブルクリックで view が開く。
 # コピー・名前の変更（移動）・削除・フォルダ作りがフロッピー（ホスト側の mtools）にも反映される。テキストは新しい端末の edit で開く
-# Phase 52（VGA C4）から 16 色の画面（video=vga）で。ウィンドウは中身 120,65 に 320x224（タイトルバー 45〜64）。
+# Phase 52（VGA C4）から 16 色の画面で。ウィンドウは中身 120,65 に 320x224（タイトルバー 45〜64）。
 # 一覧の i 行目は y = 93 + 20i から 20 ピクセル。
 # ボタン（y = 241〜264）の中心の x: Open 156, Copy 218, Rename 280, Delete 342, Folder 404
 writable
-boot-config video=vga
 timeout 40
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell

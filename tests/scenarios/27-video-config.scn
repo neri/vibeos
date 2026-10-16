@@ -1,7 +1,0 @@
-# Phase 14: BOOT.CFG で 320x200 を選べる
-boot-config video=320x200
-timeout 30
-wait-serial video: 320x200
-wait-serial VIBEOS READY
-serial-absent VESA
-serial-absent paging: framebuffer

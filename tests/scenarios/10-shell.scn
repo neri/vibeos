@@ -2,10 +2,10 @@
 timeout 15
 wait-serial VIBEOS READY
 wait-serial VibeOS shell
-# 上端のバー（地は塗らず、左上は既定の背景の地の色）が描かれ、時刻が進む
+# 上端のバー（明るい灰色の地）が描かれ、右の状態の表示の時刻が進む
 sleep 300
-expect-pixel 4 4 60 52 137
-expect-change 760 0 264 24 1500
+expect-pixel 4 4 192 192 192
+expect-change 392 0 248 20 1500
 # 行の途中に挿入: "eco hi" → Home, → → で 'c' の前に 'h' を入れて "echo hi"
 type eco hi
 key home

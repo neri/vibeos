@@ -1,12 +1,11 @@
 # Phase 48（ブラウザ B4）: ページの中の画像（PNG と 24 ビットの BMP）。画像は tests/web/make-images.py で作ったもの。
 # 同じ画像は 1 回だけ読む。width だけの画像は縦横の比を保って広げる。無い画像・壊れた PNG は [alt] のまま。
-# Phase 52（VGA C4）から 16 色の画面（video=vga）で。画像は 16 色に誤差拡散して出る。ウィンドウは中身 3,63 に
+# Phase 52（VGA C4）から 16 色の画面で。画像は 16 色に誤差拡散して出る。ウィンドウは中身 3,63 に
 # 636x416（71-browse-local と同じ）。リンクの画像（TILE.BMP）は 10〜43, 268〜292
 disk-put tests/web/IMG.HTM /DOCS/WEB/IMG.HTM
 disk-put tests/web/LOGO.PNG /DOCS/WEB/LOGO.PNG
 disk-put tests/web/TILE.BMP /DOCS/WEB/TILE.BMP
 disk-put tests/web/BAD.PNG /DOCS/WEB/BAD.PNG
-boot-config video=vga
 timeout 30
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell

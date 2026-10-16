@@ -33,8 +33,8 @@ pub fn init(info: &BootInfo) {
             continue;
         }
         let start = (e.base as usize).max(LOW_MEMORY_END);
-        // 装置のメモリの窓（paging::MMIO_BASE 以上）と重ならないよう、RAM はそこまで
-        let end = (e.base + e.len).min(LIMIT.min(super::paging::MMIO_BASE) as u64) as usize;
+        // カーネル空間（paging::KERNEL_SPACE_END より下）に同じ番地で対応付けられる所まで
+        let end = (e.base + e.len).min(LIMIT.min(super::paging::KERNEL_SPACE_END) as u64) as usize;
         if start < end {
             frames.add_free_range(start, end);
             ram_end = ram_end.max(end);

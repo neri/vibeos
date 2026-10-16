@@ -1,6 +1,5 @@
-# Phase 8: BMP 画像を表示し、キーで閉じる。Phase 52（VGA C4）から 16 色の画面（video=vga）のウィンドウで
+# Phase 8: BMP 画像を表示し、キーで閉じる。Phase 52（VGA C4）から 16 色の画面のウィンドウで
 # （画面の比較は 51-paint-view）。BMP でないファイルはエラーになる
-boot-config video=vga
 timeout 20
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell

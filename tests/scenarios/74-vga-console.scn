@@ -1,7 +1,6 @@
-# Phase 49（VGA C1）: video=vga で VGA のモード 12h（640x480・16 色）になる。端末の 16 色（ANSI の 40〜47・100〜107 の
+# Phase 49（VGA C1）: VGA のモード 12h（640x480・16 色）になる。端末の 16 色（ANSI の 40〜47・100〜107 の
 # 地と 30〜37・90〜97 の文字）が 16 色の表のとおりに出る。Phase 51（C3）からはデスクトップの端末 1 に出る
 # （中身は 0,72 から、8x16。行 r は y = 72 + 16r）
-boot-config video=vga
 disk-put tests/scripts/colors.txt /COLORS.TXT
 timeout 30
 wait-serial video: 640x480x4

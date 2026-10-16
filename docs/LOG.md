@@ -10,7 +10,7 @@
 | 2026-10-11 | png（ホスト） | 0.17 | vibe-run の画面比較 | ホスト側ツール |
 | 2026-10-11 | font8x8 | 0.3（default-features なし） | 8×8 フォントのデータ | DESIGN.md §3.4 で可としたもの。描画は自作 |
 | 2026-10-12 | miniz_oxide | 0.9（default-features なし） | アプリ（gzip）の deflate の展開（`crates/vibe-pack` 経由でカーネルが使う） | DESIGN.md §3.4 で可としたもの（D-035）。gzip の枠は自作。ホストのテストでは deflate の圧縮にも使う |
-| 2026-10-13 | ab_glyph（ホスト） | 0.2.32 | `tools/vibe-fontgen` で TrueType をラスタライズする | ホスト側ツール（ブランチ `modern-look`、M3）。カーネル・アプリには入れない |
+| 2026-10-13 | ab_glyph（ホスト） | 0.2.32 | `tools/vibe-fontgen` で TrueType をラスタライズする | ホスト側ツール（ブランチ `modern-look`、M3）。カーネル・アプリには入れない。2026-10-16 の VGA C5 で `vibe-fontgen` ごと外した |
 | 2026-10-14 | miniz_oxide（使う所を足した） | 0.9（default-features なし） | `crates/vibe-web` の PNG の zlib の展開（ブラウザ `browse`） | 新しいクレートではなく、上の行のものを `vibe-web` からも使う（ブランチ `browser`、B4）。PNG の塊・フィルタ・色の読み方は自作 |
 
 ---
@@ -762,3 +762,13 @@
 - ブラウザは 8x16 の固定幅の字だけ（`Metrics` も固定幅）。画像は読んだときに 16 色に誤差拡散。640x480 では 636x416 のウィンドウ
 - シナリオをアプリごとに 16 色の画面に移した（D-074）。リンクの位置はページを描いて青い下線を探して決めた。`48-files` で files と view の出力が 1 行に混ざって待ちが外れることがあった（`71-browse-local` と同じ。起動したアプリの出力が println! の途中に割り込む）。混ざる前の所までを待つようにした
 - 期待画像（作り直したもの 30 枚ほど）はまとめて並べて目で確かめた。落ち物パズルの一時停止の比べる範囲が帯の上を切っていたので広げた
+
+## 2026-10-16 VGA C5: モード 12h だけにする（Phase 53、ブランチ `test/mode12`）
+
+- 途中でセッションの利用の上限で止まり、オーナーの「続けて」で再開した
+- ローダ: VESA のモードの選び方・EDID・`video=`・Shift を消し、いつもモード 12h（`set_video`）。テストランナーの `video=1024x768` を足す処理も消した
+- カーネル: `gui` を 16 色だけに書き直した（`gui/mod.rs`。見た目は `classic.rs` を `draw.rs` にした、`deco.rs`・`dock.rs` は消した）。`vga.rs` はモード 12h だけ、`gfx/fonts.rs`（`.VFN`）を消し、`gfx/icons.rs` は 16 色だけ。端末は 8 ビットのウィンドウだけ、Alt+F1〜F4 は無し。装置のメモリの窓を消した。消したシステムコールと、プロセスの全画面（`display`）も無くした
+- ライブラリとツール: `vibe-gfx` の `canvas`・`panel`・`backdrop`・`dock`・`theme`・256 色の標準のパレットを消し、`.VIA` は 16 色（`VIA4`）だけ。`vibe-font` の `vfn`、`vibe-fontgen`・`fetch-fonts.sh`・`assets/fonts`（Noto と OFL.TXT）・`dock-cfg.sh`・`make fonts`・`make test-dock-cfg` を消した。外部クレートの `ab_glyph` は使わなくなった
+- `vibe-rt`: `Screen`・`Window32`・`.VFN` のフォントと 32 ビットのアイコンの関数を消した
+- シナリオは D-075 のとおり（60 本に）。期待画像は 15 枚を消し、変わった 12 枚を作り直して目で確かめた。`more` の画面は最後の行の割合がビルドごとに変わるので比べる範囲から外した
+- 大きさ（`make size-report`）: KERNEL.SYS は 396,240 バイト（圧縮して 178,014 = 44.9%）、アプリは gzip で 630,541 バイト、フロッピーの空きは 512,000 バイト（C1 の前は 430,080。フォントと 32 ビットの描き方が無くなった分）

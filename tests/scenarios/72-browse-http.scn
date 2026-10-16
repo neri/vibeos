@@ -1,6 +1,6 @@
 # Phase 47（ブラウザ B3）: HTTP のページを browse で表示する。テストランナーが 10.0.2.100:80 で返し、名前は
 # 偽の DNS（www.vibeos.test）。移動・chunked・https への移動・404・無い名前・つながらないポート・Esc で止める。
-# Phase 52（VGA C4）から 16 色の画面（video=vga）で。ウィンドウは中身 3,63 に 636x416（71-browse-local と同じ）。
+# Phase 52（VGA C4）から 16 色の画面で。ウィンドウは中身 3,63 に 636x416（71-browse-local と同じ）。
 # "a link to page 2" は 480,148
 net
 qemu-only
@@ -13,7 +13,6 @@ www-raw SECURE.HTM HTTP/1.1 302 Found\r\nLocation: https://www.vibeos.test/\r\nC
 www-raw SLOW.HTM HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100\r\n\r\n<p>slow\w
 serve-dns www.vibeos.test=10.0.2.100
 boot-config dns=10.0.2.50
-boot-config video=vga
 timeout 30
 wait-serial net: address 10.0.2.15
 wait-serial VibeOS shell

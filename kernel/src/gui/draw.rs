@@ -1,4 +1,4 @@
-//! 16 色の画面（VGA のモード 12h、640x480）のデスクトップの見た目（docs/plans/vga16.md、D-072）
+//! デスクトップの見た目（VGA のモード 12h、640x480・16 色。docs/plans/vga16.md、D-072・D-073）
 //!
 //! Windows 3.x 風: 明るい灰色の地に白と濃い灰色の縁の立体。色は `palette::VGA16` の番号（0〜15）だけで、
 //! 混ぜた色は作らない。文字は 8x16 の固定幅（VGA の BIOS のフォント。`vga::font16`）、太字は重ね打ち。
@@ -13,16 +13,16 @@
 //!   1 回だけ描き直す（486 と ISA の VGA では中身ごと動かすと引っかかるため。§6 の 6）
 //!
 //! 重ね合わせは色番号の 1 行（`compose_row`）で、`vga::write_row4_span` で 4 枚の面に分けて送る。
+//! 背景の画像は読むときに 1 回だけ 16 色に誤差拡散してある（`Wallpaper::pixels`）。
 
 use alloc::string::String;
-use alloc::vec;
 
 use vibe_font::Font;
 use vibe_gfx::Surface;
 use vibe_gfx::palette::{BLACK, CYAN, DARK_GRAY, LIGHT_GRAY, MAGENTA, WHITE};
 
 use super::bar;
-use super::{Pixels, Row, Screen, WinId, Window};
+use super::{Screen, WinId, Window};
 use crate::drivers::vga;
 
 /// タイトルバー（下の黒い線を含む）と上端のバーの高さ、メニューの 1 項目の高さ
@@ -79,13 +79,13 @@ fn draw_icon(s: &mut Surface, x: i32, y: i32, icon: &[u8], dim: bool) {
     }
 }
 
-/// タイトルバーを `w.title8` に描く
+/// タイトルバーを `w.titlebar` に描く
 pub(super) fn render_titlebar(w: &mut Window, focused: bool) {
     let (ww, h) = (w.w, TITLE_H);
-    w.title8.resize(ww * h, 0);
+    w.titlebar.resize(ww * h, 0);
     let close_x = w.close_box_x();
     let min_x = w.minimize_box_x();
-    let mut s = Surface::new(&mut w.title8, ww, h);
+    let mut s = Surface::new(&mut w.titlebar, ww, h);
     let (bg, fg) = if focused { (TITLE_ACTIVE, WHITE) } else { (TITLE_INACTIVE, LIGHT_GRAY) };
     let band = h as i32 - 1;
     s.fill_rect(0, 0, ww as i32, band, bg);
@@ -93,7 +93,7 @@ pub(super) fn render_titlebar(w: &mut Window, focused: bool) {
     let f = font();
     let ty = (band - f.height as i32) / 2;
     let mut tx = 4;
-    if let Some(icon) = w.icon16 {
+    if let Some(icon) = w.icon {
         draw_icon(&mut s, 2, (band - 16) / 2, icon, false);
         tx = 22;
     }
@@ -125,14 +125,14 @@ pub(super) fn render_titlebar(w: &mut Window, focused: bool) {
 }
 
 impl Screen {
-    /// 上端のバーを `self.bar8` に描き直す
-    pub(super) fn render_bar_classic(&mut self) {
+    /// 上端のバーを `self.bar` に描き直す
+    pub(super) fn render_bar(&mut self) {
         self.bar_dirty = false;
         let w = self.width;
-        self.bar8.resize(w * BAR_H, 0);
+        self.bar.resize(w * BAR_H, 0);
         let focused = self.focused();
         let buttons = self.bar_buttons();
-        let mut buf = core::mem::take(&mut self.bar8);
+        let mut buf = core::mem::take(&mut self.bar);
         let mut s = Surface::new(&mut buf, w, BAR_H);
         let f = font();
         let h = BAR_H as i32;
@@ -155,7 +155,7 @@ impl Screen {
                 raised(&mut s, x, 1, bw, h - 2);
             }
             let mut tx = x + 4;
-            if let Some(icon) = win.icon16 {
+            if let Some(icon) = win.icon {
                 draw_icon(&mut s, x + 2, (h - 16) / 2, icon, win.minimized);
                 tx = x + 20;
             }
@@ -164,16 +164,16 @@ impl Screen {
         }
         let x = w as i32 - text_width(&self.status_text) - bar::STATUS_PAD;
         s.draw_text(f, x, ty, &self.status_text, BLACK, None);
-        self.bar8 = buf;
+        self.bar = buf;
         self.mark_rows(0, BAR_H);
     }
 
     /// メニューの中身を描き直す
-    pub(super) fn render_menu_classic(&mut self) {
+    pub(super) fn render_menu(&mut self) {
         let Some(m) = &mut self.menu else { return };
         let (w, h) = (m.w, m.h);
-        m.buf8.resize(w * h, 0);
-        let mut s = Surface::new(&mut m.buf8, w, h);
+        m.buf.resize(w * h, 0);
+        let mut s = Surface::new(&mut m.buf, w, h);
         let f = font();
         s.fill_rect(0, 0, w as i32, h as i32, FACE);
         s.rect(0, 0, w as i32, h as i32, BLACK);
@@ -188,7 +188,7 @@ impl Screen {
                 BLACK
             };
             let app = if item == super::MENU_TERMINAL { "terminal" } else { item.as_str() };
-            if let Some(icon) = crate::gfx::icons::get16(app).or_else(|| crate::gfx::icons::get16("app")) {
+            if let Some(icon) = crate::gfx::icons::for_app(app) {
                 draw_icon(&mut s, x + 4, y + (ih - 16) / 2, icon, false);
             }
             s.draw_text(f, x + 24, y + (ih - f.height as i32) / 2, item, fg, None);
@@ -198,37 +198,37 @@ impl Screen {
     }
 
     /// 背景の `y` 行目（色番号）
-    fn background_row_classic(&self, y: usize, row: &mut [u8]) {
-        let wp = self.wallpaper.as_deref().filter(|wp| wp.pixels8.len() == wp.w * wp.h);
+    fn background_row(&self, y: usize, row: &mut [u8]) {
+        let wp = self.wallpaper.as_deref();
         if !wp.is_some_and(|wp| wp.fit == vibe_gfx::wallpaper::Fit::Tile) {
             row.fill(DESKTOP);
         }
         if let Some(wp) = wp {
-            vibe_gfx::wallpaper::fill_row(row, y, &wp.pixels8, wp.w, wp.h, self.height, wp.fit);
+            vibe_gfx::wallpaper::fill_row(row, y, &wp.pixels, wp.w, wp.h, self.height, wp.fit);
         }
     }
 
-    /// 16 色の画面のデスクトップの 1 行（色番号）
-    pub(super) fn compose_row_classic(&self, y: usize, row: &mut [u8], focused: Option<WinId>) {
+    /// デスクトップの 1 行（色番号）: バー → 背景 → ウィンドウ（奥から）→ メニュー → ドラッグの枠 → カーソル
+    pub(super) fn compose_row(&self, y: usize, row: &mut [u8], _focused: Option<WinId>) {
         if y < BAR_H {
-            if self.bar8.len() == self.width * BAR_H {
-                row.copy_from_slice(&self.bar8[y * self.width..(y + 1) * self.width]);
+            if self.bar.len() == self.width * BAR_H {
+                row.copy_from_slice(&self.bar[y * self.width..(y + 1) * self.width]);
             }
-            return;
+        } else {
+            self.background_row(y, row);
+            for &id in &self.order {
+                self.draw_window_row(id, y as i32, row);
+            }
+            self.draw_menu_row(y, row);
+            self.draw_outline_row(y as i32, row);
         }
-        self.background_row_classic(y, row);
-        for &id in &self.order {
-            self.draw_window_row_classic(id, y as i32, row, focused == Some(id));
-        }
-        self.draw_menu_row_classic(y, row);
-        self.draw_outline_row(y as i32, row);
         if self.cursor_visible {
-            self.draw_cursor_row_classic(y, row);
+            self.draw_cursor_row(y, row);
         }
     }
 
     /// ウィンドウ（黒い枠・タイトルバー・中身）の `y` 行目を重ねる
-    fn draw_window_row_classic(&self, id: WinId, y: i32, row: &mut [u8], _focused: bool) {
+    fn draw_window_row(&self, id: WinId, y: i32, row: &mut [u8]) {
         let w = &self.windows[&id];
         if w.minimized {
             return;
@@ -259,39 +259,24 @@ impl Screen {
         let d = &mut row[(w.x + s0 as i32) as usize..(w.x + s1 as i32) as usize];
         if y < w.y {
             let r = (y - (w.y - TITLE_H as i32)) as usize;
-            if w.title8.len() == w.w * TITLE_H {
-                d.copy_from_slice(&w.title8[r * w.w + s0..r * w.w + s1]);
+            if w.titlebar.len() == w.w * TITLE_H {
+                d.copy_from_slice(&w.titlebar[r * w.w + s0..r * w.w + s1]);
             }
             return;
         }
-        match self.client_row(id, (y - w.y) as usize) {
-            Row::P8(r) => {
-                let map = w.map16.as_deref().unwrap_or(&self.std_map16);
-                for (o, &c) in d.iter_mut().zip(&r[s0..s1]) {
-                    *o = map[c as usize];
-                }
-            }
-            // 32 ビットのウィンドウ（今風の描き方のアプリ）は近い色に（C4 でアプリを 16 色にするまでの仮）
-            Row::P32(r) => {
-                if let Some(lut) = &self.lut16 {
-                    for (o, &c) in d.iter_mut().zip(&r[s0..s1]) {
-                        *o = lut.get((c >> 16) as u8, (c >> 8) as u8, c as u8);
-                    }
-                }
-            }
-        }
+        d.copy_from_slice(&self.client_row(id, (y - w.y) as usize)[s0..s1]);
     }
 
-    fn draw_menu_row_classic(&self, y: usize, row: &mut [u8]) {
+    fn draw_menu_row(&self, y: usize, row: &mut [u8]) {
         let Some(m) = &self.menu else { return };
         let my = bar::menu_y();
-        if y < my || y >= my + m.h || m.buf8.len() != m.w * m.h {
+        if y < my || y >= my + m.h || m.buf.len() != m.w * m.h {
             return;
         }
         let x0 = bar::MENU_X as usize;
         let n = m.w.min(row.len().saturating_sub(x0));
         let r = y - my;
-        row[x0..x0 + n].copy_from_slice(&m.buf8[r * m.w..r * m.w + n]);
+        row[x0..x0 + n].copy_from_slice(&m.buf[r * m.w..r * m.w + n]);
     }
 
     /// ドラッグしている枠（ウィンドウ全体の外側。2 ピクセルの白黒の点線）の矩形 (x, y, w, h)
@@ -350,45 +335,6 @@ impl Screen {
         self.mark_outline();
         if let Some((x, y)) = self.outline.take() {
             self.move_window(id, x, y);
-        }
-    }
-
-    fn draw_cursor_row_classic(&self, y: usize, row: &mut [u8]) {
-        let dy = y as i32 - self.cursor_y;
-        if dy < 0 || dy >= super::CURSOR_SHAPE.len() as i32 {
-            return;
-        }
-        for (dx, c) in super::CURSOR_SHAPE[dy as usize].bytes().enumerate() {
-            let x = self.cursor_x + dx as i32;
-            let color = match c {
-                b'#' => BLACK,
-                b'o' => WHITE,
-                _ => continue,
-            };
-            if (0..row.len() as i32).contains(&x) {
-                row[x as usize] = color;
-            }
-        }
-    }
-
-    /// 16 色の画面でデスクトップにする（`start_desktop` から）: 最初の端末を 8x16 の 80x25 の 8 ビットの
-    /// ウィンドウにし、左右の枠が画面の外に出る位置（x = 0）に置く
-    pub(super) fn start_classic(&mut self) {
-        self.lut16 = Some(alloc::boxed::Box::new(vibe_gfx::dither::Lut16::new()));
-        let (cw, ch) = self.desktop_terminal_size();
-        self.console_w = cw;
-        self.console_h = ch;
-        let y = (self.height - ch - 8).max(BAR_H + TITLE_H + 1) as i32;
-        self.console_y = y as usize;
-        if let Some(c) = self.windows.get_mut(&super::CONSOLE) {
-            c.icon16 = crate::gfx::icons::get16("terminal");
-            c.app = String::from("terminal");
-            c.w = cw;
-            c.h = ch;
-            c.x = 0;
-            c.y = y;
-            c.closable = false;
-            c.pixels = Pixels::P8(vec![BLACK; cw * ch].into_boxed_slice());
         }
     }
 }

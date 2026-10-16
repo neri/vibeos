@@ -1,8 +1,7 @@
 # Phase 36（デスクトップ D5）: マインスイーパと落ち物パズル（どちらも種を指定して同じ盤面にする）
-# Phase 52（VGA C4）から 16 色の画面（video=vga）で。mines のウィンドウは中身 120,65 に 156x186。
+# Phase 52（VGA C4）から 16 色の画面で。mines のウィンドウは中身 120,65 に 156x186。
 # マス (x, y) の中心は (134 + 16x, 109 + 16y)。
 # 種 5 で (4,4) を最初に開くと、地雷は (6,1) (2,2) (1,4) (2,4) (6,4) (0,5) (1,5) (4,8) (5,8) (7,8)
-boot-config video=vga
 timeout 30
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell

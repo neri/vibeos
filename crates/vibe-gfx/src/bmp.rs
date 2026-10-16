@@ -1,9 +1,7 @@
 //! BMP 画像の読み込み（無圧縮の 8 / 24 / 32 ビット）
 
-use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::palette;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BmpError {
@@ -138,52 +136,12 @@ impl<'a> Bmp<'a> {
     pub fn to_vga16(&self, lut: &crate::dither::Lut16) -> Vec<u8> {
         crate::dither::to_vga16(self.width as usize, self.height as usize, lut, |x, y| self.rgb(x as u32, y as u32))
     }
-
-    /// 標準パレットの番号に変換した画素（左上から）。
-    /// 8 ビットは色ごとに近い色へ置き換え、24/32 ビットは誤差拡散（Floyd–Steinberg）で階調を表す
-    pub fn to_standard_palette(&self) -> Vec<u8> {
-        let pal = palette::standard();
-        let (w, h) = (self.width as usize, self.height as usize);
-        let mut out = Vec::with_capacity(w * h);
-        if self.is_indexed() {
-            // パレットの色ごとに 1 回だけ近い色を探す
-            let map: Vec<u8> = self.colors.iter().map(|&[r, g, b]| palette::nearest(&pal, r, g, b)).collect();
-            for y in 0..self.height {
-                for x in 0..self.width {
-                    out.push(map.get(self.index(x, y) as usize).copied().unwrap_or(0));
-                }
-            }
-            return out;
-        }
-        // 今の行と次の行に持ち越す誤差（RGB, 8bit の単位 × 16）
-        let mut err = vec![[0i32; 3]; w + 2];
-        let mut next = vec![[0i32; 3]; w + 2];
-        for y in 0..self.height {
-            for x in 0..w {
-                let src = self.rgb(x as u32, y);
-                let want: [i32; 3] = core::array::from_fn(|i| (src[i] as i32 + err[x + 1][i] / 16).clamp(0, 255));
-                let idx = palette::nearest(&pal, want[0] as u8, want[1] as u8, want[2] as u8);
-                out.push(idx);
-                let got = pal[idx as usize];
-                for i in 0..3 {
-                    // パレットは 6bit なので 8bit に戻して差を取る
-                    let e = want[i] - (got[i] as i32 * 255 / 63);
-                    err[x + 2][i] += e * 7;
-                    next[x][i] += e * 3;
-                    next[x + 1][i] += e * 5;
-                    next[x + 2][i] += e;
-                }
-            }
-            core::mem::swap(&mut err, &mut next);
-            next.iter_mut().for_each(|e| *e = [0; 3]);
-        }
-        out
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::palette;
 
     /// テスト用に BMP を組み立てる
     fn make(width: i32, height: i32, bits: u16, palette: &[[u8; 3]], rows: &[Vec<u8>]) -> Vec<u8> {
@@ -224,10 +182,9 @@ mod tests {
         assert_eq!(b.index(1, 0), 1);
         assert_eq!(b.rgb(1, 0), [255, 0, 0]);
         assert_eq!(b.rgb(0, 1), [0, 0, 255]);
-        let std = b.to_standard_palette();
-        let p = palette::standard();
-        assert_eq!(p[std[1] as usize], [63, 0, 0]);
-        assert_eq!(std[0], palette::BLACK);
+        let px = b.to_vga16(&crate::dither::Lut16::new());
+        assert_eq!(px[1], palette::LIGHT_RED);
+        assert_eq!(px[0], palette::BLACK);
     }
 
     #[test]
@@ -237,7 +194,7 @@ mod tests {
         let b = Bmp::parse(&data).unwrap();
         assert_eq!(b.rgb(0, 0), [255, 0, 0]);
         assert_eq!(b.rgb(0, 1), [255, 255, 255]);
-        assert_eq!(b.to_standard_palette()[1], palette::WHITE);
+        assert_eq!(b.to_vga16(&crate::dither::Lut16::new())[1], palette::WHITE);
     }
 
     #[test]

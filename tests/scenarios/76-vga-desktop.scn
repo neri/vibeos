@@ -5,7 +5,6 @@
 # clock は 7 つ目で 132〜149）。clock の中身は 120,65 から 136x170（タイトルバー 45〜64、[_] 212〜231、[x] 234〜253）。
 # バーのウィンドウのボタンは x=72 から 140 ずつ（Terminal 1 が 72〜211、Clock が 212〜351）。
 # バーの右（日時・空きメモリ）と時計の文字盤は時間で変わるので画面の比較に入れない
-boot-config video=vga
 timeout 30
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell

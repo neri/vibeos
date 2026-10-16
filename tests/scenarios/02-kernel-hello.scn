@@ -1,14 +1,10 @@
-# Phase 2: Rust カーネルが起動し、フォントで画面に文字を描く
-# 期待画像は 320x200 のもの
-boot-config video=320x200
+# Phase 2: Rust カーネルが起動し、フォントで画面に文字を描く（起動直後の全画面のコンソール。すぐにデスクトップに
+# なるので画面は比べず、端末に書いた文字がシリアルにも出ることを見る）
 timeout 15
 wait-serial VibeOS kernel starting
 wait-serial Hello from Rust!
 # ネットワークのカードは付けていない
 wait-serial net: no network card (PCI, or NE2000 at 0x300)
 wait-serial VIBEOS READY
+wait-serial gui: desktop 640x480
 serial-absent PANIC
-sleep 200
-# 2〜3 行目（"VibeOS" と "Hello from Rust!"）だけを比べる。1 行目はステータスバー（時刻が変わる）、
-# 4 行目以降はビルドごとに変わる値を含む
-expect-screen phase2-hello 0 16 640 32

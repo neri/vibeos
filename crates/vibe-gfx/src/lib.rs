@@ -1,22 +1,17 @@
-//! 8bit パレット画像への描画（32 ビットの画像は `canvas`）。
+//! 色番号の画像への描画（1 ピクセル = 1 バイト = VGA の 16 色の番号。`palette::VGA16`）。
 //!
-//! ハードウェアには触らず、バイト列（1 ピクセル = 1 バイト = パレット番号）に描くだけ。
+//! ハードウェアには触らず、バイト列に描くだけ。
 //! はみ出した部分は切り捨てる（座標は負でもよい）。
 
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
-pub mod backdrop;
 pub mod bmp;
-pub mod canvas;
 pub mod dither;
-pub mod dock;
 pub mod icons;
 pub mod palette;
-pub mod panel;
 pub mod planar;
-pub mod theme;
 pub mod wallpaper;
 
 use vibe_font::Font;

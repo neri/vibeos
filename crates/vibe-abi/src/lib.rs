@@ -26,28 +26,15 @@ pub const OPEN_TRUNCATE: u32 = 4;
 /// いつも終わりに書き足す
 pub const OPEN_APPEND: u32 = 8;
 
-/// gfx_open のフラグ: マウスカーソルを表示する
-pub const GFX_CURSOR: u32 = 1;
-
-/// win_open のフラグ: 中身は 32 ビット（0x00RRGGBB）。win_blit は幅 × 高さ × 4 バイトを読む。
-/// 320x200 の全画面では標準のパレットの近い色で出る
-pub const WIN_RGB32: u32 = 1;
-
-/// font_data の種類: UI の文字・太字・固定幅・見出し（`.VFN`。vibe_font::vfn）
-pub const FONT_UI: u32 = 0;
-pub const FONT_BOLD: u32 = 1;
-pub const FONT_MONO: u32 = 2;
-/// 見出しの大きい太字（20px。ブラウザの h1・h2）
-pub const FONT_HEADING: u32 = 3;
-/// VGA の BIOS の 8x16 のフォント（256 字 × 16 バイト、bit 7 が左端。`vibe_font::Font::vga16`）。
-/// 16 色の画面のアプリの文字
+/// font_data の種類: VGA の BIOS の 8x16 のフォント（256 字 × 16 バイト、bit 7 が左端。`vibe_font::Font::vga16`）。
+/// アプリの文字（番号の 0〜3 は前の `.VFN` のフォントの欠番）
 pub const FONT_VGA16: u32 = 4;
-/// icon_data のアイコンの 1 辺
+/// icon16_data のアイコンの 1 辺
 pub const ICON_SIZE: usize = 16;
 /// wallpaper_set の画像の画素の数の上限
 pub const WALLPAPER_MAX_PIXELS: u32 = 4 * 1024 * 1024;
 
-/// 画面の大きさ（モード 13h）
+/// アプリの既定のウィンドウの大きさ（mandel・snake・paint の 320x200）
 pub const SCREEN_WIDTH: usize = 320;
 pub const SCREEN_HEIGHT: usize = 200;
 
@@ -96,10 +83,10 @@ pub mod nr {
     pub const SOUND: u32 = 24;
     /// time() -> 1970 年からの秒（現地時刻）。時計が無ければ 0
     pub const TIME: u32 = 25;
-    /// win_open(w, h, title, title_len, flags) -> ウィンドウ番号。デスクトップでは枠付きのウィンドウ、
-    /// 全画面のときは前面に出る。flags は WIN_*（WIN_RGB32 なら中身は 32 ビット）
+    /// win_open(w, h, title, title_len, flags) -> ウィンドウ番号。デスクトップの枠付きのウィンドウ
+    /// （640x480 まで。flags は今は使わない）
     pub const WIN_OPEN: u32 = 26;
-    /// win_blit(win, buf) -> 0。中身全体を書き換える（8 ビットなら w*h バイト、WIN_RGB32 なら w*h*4 バイト）
+    /// win_blit(win, buf) -> 0。中身全体を w*h バイトの色番号（VGA の 16 色）で書き換える
     pub const WIN_BLIT: u32 = 27;
     /// win_event(win, &mut WinEvent, timeout_ms) -> 1 ならイベントあり, 0 なら時間切れ。
     /// timeout_ms = 0 なら待たない、u32::MAX ならいつまでも待つ
@@ -147,9 +134,6 @@ pub mod nr {
     pub const KILL: u32 = 46;
     /// sys_info(&mut SysInfo) -> 0。メモリ・時間・画面の情報
     pub const SYS_INFO: u32 = 47;
-    /// win_palette(win, start, count, rgb: *const [u8; 3]) -> 0。ウィンドウ独自のパレット（各 6bit）。
-    /// デスクトップでは標準のパレットの近い色に置き換えて出る
-    pub const WIN_PALETTE: u32 = 48;
     /// clip_set(buf, len) -> 0。クリップボードに文字を入れる（4096 バイトまで）
     pub const CLIP_SET: u32 = 49;
     /// clip_get(buf, len) -> クリップボードの文字の長さ（buf には入るだけ写す）
@@ -197,31 +181,19 @@ pub mod nr {
     /// fault_test(kind) -> 戻らない。カーネルの中でわざと例外を起こす（FAULT_* 。テスト用のカーネルだけ。
     /// ほかは -ENOSYS）
     pub const FAULT_TEST: u32 = 70;
-    /// font_data(kind, buf, len) -> フォントの大きさ（バイト）。kind は FONT_*。len がそれ以上なら buf に
-    /// 写す（足りなければ写さずに大きさだけ返す）。カーネルが起動時に読んだ `/SYSTEM/FONTS` の `.VFN`
-    /// （展開したもの）。無ければ -ENOENT
+    /// font_data(kind, buf, len) -> フォントの大きさ（バイト）。kind は FONT_VGA16 だけ。len がそれ以上なら buf に
+    /// 写す（足りなければ写さずに大きさだけ返す）。無ければ -ENOENT
     pub const FONT_DATA: u32 = 71;
-    /// icon_data(name, name_len, buf: *mut [u32; 256]) -> 0。16x16 のアイコン（事前に掛けたアルファの
-    /// 0xAARRGGBB）。無ければ -ENOENT
-    pub const ICON_DATA: u32 = 72;
     /// win_title(win, title, title_len) -> 0。ウィンドウのタイトルを変える（タイトルバーと上端のバーのボタン）
     pub const WIN_TITLE: u32 = 73;
     /// icon16_data(name, name_len, buf: *mut [u8; 256]) -> 0。16 色の 16x16 のアイコン（色番号、透明は 0xFF）。
     /// 無ければ -ENOENT
     pub const ICON16_DATA: u32 = 74;
 
-    /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
-    pub const GFX_OPEN: u32 = 16;
-    /// gfx_blit(buf: *const [u8; 64000]) -> 0。画面全体を書き換える
-    pub const GFX_BLIT: u32 = 17;
-    /// gfx_palette(start, count, rgb: *const [u8; 3]) -> 0（各 6bit）
-    pub const GFX_PALETTE: u32 = 18;
-    /// gfx_close() -> 0
-    pub const GFX_CLOSE: u32 = 19;
+    // 16〜19（gfx_open・gfx_blit・gfx_palette・gfx_close）・21（mouse）・48（win_palette）・72（icon_data）は
+    // 320x200 の全画面と 256 色・32 ビットの画面の欠番（docs/plans/vga16.md）
     /// getkey(nonblock) -> キーイベント（`KeyEvent::encode`）。nonblock で無ければ 0
     pub const GETKEY: u32 = 20;
-    /// mouse(&mut MouseState) -> 1 ならイベントあり, 0 なら無し（待たない）
-    pub const MOUSE: u32 = 21;
 }
 
 pub mod err {
@@ -389,15 +361,6 @@ pub const WIN_EVENT_KEY: u32 = 1;
 pub const WIN_EVENT_MOUSE: u32 = 2;
 /// [x] が押された（閉じるかどうかはアプリが決める）
 pub const WIN_EVENT_CLOSE: u32 = 3;
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct MouseState {
-    pub x: i32,
-    pub y: i32,
-    /// bit0 = 左, bit1 = 右, bit2 = 中
-    pub buttons: u32,
-}
 
 /// タスクの情報（proc_list）
 #[repr(C)]

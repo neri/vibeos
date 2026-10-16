@@ -1,7 +1,6 @@
 # Phase 34（デスクトップ D3）: 電卓。ボタンをマウスで押して計算し、結果が合う（画面とシリアル）。キーボードでも打てる
-# Phase 52（VGA C4）から 16 色の画面（video=vga）で。ウィンドウは中身 120,65 に 156x172（タイトルバー 45〜64、
+# Phase 52（VGA C4）から 16 色の画面で。ウィンドウは中身 120,65 に 156x172（タイトルバー 45〜64、
 # [x] 254〜273）。ボタンは 4 列 x 5 行で、列 c の左端は 128 + 36c（幅 32）、行 r の上端は 103 + 26r（高さ 22）
-boot-config video=vga
 timeout 30
 wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
