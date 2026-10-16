@@ -1,6 +1,5 @@
 # ユーザ空間のシェル S4: 起動時の /AUTORUN.SH、files から .SH を新しい端末で動かす、$(…)
-# デスクトップが要る（QEMU だけで流す）
-qemu-only
+# デスクトップが要る（キーだけで操作するので Bochs でも流す）
 disk-put tests/scripts/autorun.sh /AUTORUN.SH
 disk-put tests/scripts/hi.sh /DOCS/HI.SH
 timeout 30

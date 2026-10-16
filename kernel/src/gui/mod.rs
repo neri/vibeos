@@ -839,6 +839,13 @@ impl Screen {
         self.mark_rows(0, h);
     }
 
+    /// 画面全体を描き直すことにする（ktest で 1 枚の時間を測るため）
+    #[cfg(feature = "qemu-test")]
+    pub fn redraw_all(&mut self) {
+        let h = self.height;
+        self.mark_rows(0, h);
+    }
+
     /// 書き換えた矩形を重ね合わせて VRAM へ送る（x は 8 ピクセル単位に広げて）
     pub fn present(&mut self) {
         if self.bar_dirty && self.mode == Mode::Desktop {

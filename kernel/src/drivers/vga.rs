@@ -37,6 +37,14 @@ static HEIGHT: AtomicUsize = AtomicUsize::new(MAX_HEIGHT);
 static PITCH: AtomicUsize = AtomicUsize::new(MAX_WIDTH / 8);
 static VRAM: AtomicUsize = AtomicUsize::new(0);
 
+/// VRAM に今入っているバイトの写し（面ごとに 1 行 MAX_WIDTH / 8 バイト × MAX_HEIGHT 行）。同じバイトは書かない
+/// （ISA の VGA への書き込みは遅いため）。`init_planar` で VRAM を 0 にしてから使う
+const PLANE_BYTES: usize = MAX_WIDTH / 8 * MAX_HEIGHT;
+static SHADOW: BootCell<[u8; 4 * PLANE_BYTES]> = BootCell::new([0; 4 * PLANE_BYTES]);
+/// 書いたバイトと、同じだったので書かなかったバイトの数（ktest で効き目を見る）
+static WRITTEN: AtomicUsize = AtomicUsize::new(0);
+static SKIPPED: AtomicUsize = AtomicUsize::new(0);
+
 /// VGA の BIOS の 8x16 のフォントの写し（ローダが低いメモリに置いたものを、ページングの前に写す）
 static BIOS_FONT: BootCell<[u8; 256 * 16]> = BootCell::new([0; 256 * 16]);
 static BIOS_FONT_OK: AtomicBool = AtomicBool::new(false);
@@ -133,10 +141,26 @@ fn init_planar() {
             outb(DAC_DATA, c[2] & 0x3F);
         }
     }
+    // 4 枚の面を全部 0 にして、写し（0 で始まる）と合わせる（BIOS が消していることを当てにしない）
+    let vram = VRAM.load(Ordering::Relaxed);
+    if vram != 0 {
+        let len = PITCH.load(Ordering::Relaxed) * height();
+        for i in 0..len {
+            // SAFETY: マップマスクは 0x0F（4 枚の面に同時に書く）。i は VRAM の 1 枚の面の大きさの中
+            unsafe { ((vram + i) as *mut u8).write_volatile(0) };
+        }
+    }
+}
+
+/// 書いたバイトと、写しと同じだったので書かなかったバイトの数（起動してからの合計）
+#[allow(dead_code)]
+pub fn write_stats() -> (usize, usize) {
+    (WRITTEN.load(Ordering::Relaxed), SKIPPED.load(Ordering::Relaxed))
 }
 
 /// 画面の `y` 行目の、x が [x0, x1) の所（8 ピクセル単位に広げる）を書く。`row` は画面の幅の 1 行全部の色番号。
-/// 4 枚の面に分け、面ごとにマップマスクを切り替えて書く。VRAM は読まない（ISA では遅い）
+/// 4 枚の面に分け、面ごとにマップマスクを切り替えて書く。VRAM は読まず（ISA では遅い）、今入っているバイトの写し
+/// （`SHADOW`）と同じバイトは書かない。呼ぶのは画面のロック（`gui::SCREEN`）の中か、パニックのときだけ
 pub fn write_row4_span(y: usize, row: &[u8], x0: usize, x1: usize) {
     let vram = VRAM.load(Ordering::Relaxed);
     if vram == 0 || y >= height() {
@@ -150,17 +174,34 @@ pub fn write_row4_span(y: usize, row: &[u8], x0: usize, x1: usize) {
     let mut packed = [0u32; MAX_WIDTH / 8];
     let n = planar::pack_row(&row[b0 * 8..(b1 * 8).min(row.len())], &mut packed);
     let dst = (vram + y * PITCH.load(Ordering::Relaxed) + b0) as *mut u8;
+    // SAFETY: SHADOW は画面のロックの中（とパニックのとき）でだけ触る
+    let shadow = unsafe { &mut *SHADOW.as_ptr() };
+    let (mut written, mut skipped) = (0, 0);
     for plane in 0..4 {
+        let line = &mut shadow[plane * PLANE_BYTES + y * (MAX_WIDTH / 8) + b0..][..n];
+        if (0..n).all(|i| line[i] == planar::plane_byte(packed[i], plane)) {
+            skipped += n;
+            continue;
+        }
         // SAFETY: マップマスクを変えると、続く書き込みがその面にだけ入る
         unsafe {
             outb(SEQ_INDEX, SEQ_MAP_MASK);
             outb(SEQ_DATA, 1 << plane);
         }
         for (i, &p) in packed[..n].iter().enumerate() {
+            let b = planar::plane_byte(p, plane);
+            if line[i] == b {
+                skipped += 1;
+                continue;
+            }
+            line[i] = b;
+            written += 1;
             // SAFETY: b0 + i < width / 8 <= pitch（1 枚の面の 1 行のバイト数）。y は画面の中
-            unsafe { dst.add(i).write_volatile(planar::plane_byte(p, plane)) };
+            unsafe { dst.add(i).write_volatile(b) };
         }
     }
+    WRITTEN.fetch_add(written, Ordering::Relaxed);
+    SKIPPED.fetch_add(skipped, Ordering::Relaxed);
     // SAFETY: 全部の面に書く状態に戻す
     unsafe {
         outb(SEQ_INDEX, SEQ_MAP_MASK);

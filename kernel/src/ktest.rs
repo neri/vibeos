@@ -55,6 +55,8 @@ const TESTS: &[(&str, fn())] = &[
     ("fdc_read_matches_ramdisk", fdc_read_matches_ramdisk),
     ("fs_write_and_sync", fs_write_and_sync),
     ("vga16_assets", vga16_assets),
+    // デスクトップにするので最後に
+    ("gfx_frame_speed", gfx_frame_speed),
 ];
 
 pub fn run_all() -> ! {
@@ -731,4 +733,53 @@ fn vga16_assets() {
         assert!(px.iter().all(|&c| c < 16 || c == vibe_gfx::icons::TRANSPARENT));
         assert!(px.iter().any(|&c| c != vibe_gfx::icons::TRANSPARENT));
     }
+}
+
+/// デスクトップを 1 枚重ね合わせて 4 枚の面に送る時間（docs/plans/vga16.md の C6。遅くなったことに気づくため。
+/// QEMU の速さで見るので実機の保証ではない）: 背景・バー・ウィンドウ 4 つ（中身は 16 色の縞）・カーソル。
+/// 最後のテストで、ここでデスクトップにする
+fn gfx_frame_speed() {
+    use crate::gui::{self, SCREEN};
+    const FRAMES: u32 = 50;
+    gui::start_desktop();
+    let mut ids = Vec::new();
+    for i in 0..4u8 {
+        let mut s = SCREEN.lock();
+        let id = s.create_window(300, 200, "bench", None, None, "app");
+        ids.push(id);
+        if let Some(mut surf) = s.window_surface(id) {
+            for y in 0..200 {
+                surf.hline(0, y, 300, ((y as u8 / 8) + i) % 16);
+            }
+        }
+        s.mark_window_dirty(id, 0, 200);
+        s.present();
+    }
+    // 窓の中身を毎回変える（縞を 1 つずつずらす）1 枚と、何も変えずに描き直す 1 枚の時間
+    let frame_ms = |change: bool| {
+        let (w0, s0) = crate::drivers::vga::write_stats();
+        let start = pit::ticks();
+        for f in 0..FRAMES {
+            let mut s = SCREEN.lock();
+            if change {
+                for (i, &id) in ids.iter().enumerate() {
+                    if let Some(mut surf) = s.window_surface(id) {
+                        for y in 0..200 {
+                            surf.hline(0, y, 300, ((y as u32 / 8 + i as u32 + f + 1) % 16) as u8);
+                        }
+                    }
+                }
+            }
+            s.redraw_all();
+            s.present();
+        }
+        let ms = pit::ticks().wrapping_sub(start) * 1000 / pit::TICK_HZ / FRAMES;
+        let (w1, s1) = crate::drivers::vga::write_stats();
+        (ms, (w1 - w0) / FRAMES as usize, (s1 - s0) / FRAMES as usize)
+    };
+    let (changed, cw, cs) = frame_ms(true);
+    let (same, sw, ss) = frame_ms(false);
+    klog!("bench: 640x480 frame with 4 windows: {changed} ms when the windows change ({cw} bytes written, {cs} skipped), {same} ms when nothing changes ({sw} written, {ss} skipped)");
+    assert!(changed <= 100, "one frame took {changed} ms");
+    assert_eq!(sw, 0, "an unchanged frame wrote to VRAM");
 }
