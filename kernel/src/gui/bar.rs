@@ -21,33 +21,44 @@ use vibe_gfx::canvas::{Canvas, rgb};
 use vibe_gfx::theme;
 
 use super::deco::{self, SHADOW_MARGIN};
-use super::{BAR_H, Face, Screen, WinId, draw_label, label_fit, label_width};
+use super::{Face, bar_h, Screen, WinId, draw_label, label_fit, label_width};
 
 /// 「VibeOS」のボタンの幅（文字は x = 10 から）
-const MENU_BUTTON_W: i32 = 72;
+pub(super) const MENU_BUTTON_W: i32 = 72;
 const BUTTON_MAX_W: i32 = 140;
 const BUTTON_MIN_W: i32 = 32;
-const BUTTON_GAP: i32 = 2;
+pub(super) const BUTTON_GAP: i32 = 2;
 /// 状態の表示の右の余白
-const STATUS_PAD: i32 = 8;
+pub(super) const STATUS_PAD: i32 = 8;
 /// メニューのパネルの左上（バーの下）、1 項目の高さと上下の余白
-const MENU_X: i32 = 2;
-const MENU_Y: usize = BAR_H + 2;
+pub(super) const MENU_X: i32 = 2;
 const ITEM_H: usize = 22;
-const MENU_PAD: usize = 2;
+
+/// メニューのパネルの上端（バーの下）
+pub(super) fn menu_y() -> usize {
+    bar_h() + 2
+}
+
+/// メニューの 1 項目の高さ
+pub(super) fn item_h() -> usize {
+    if super::is_classic() { super::classic::MENU_ITEM_H } else { ITEM_H }
+}
+pub(super) const MENU_PAD: usize = 2;
 /// メニューの項目のアイコンと名前の位置（列の左端から）
 const ITEM_ICON_X: i32 = 10;
 const ITEM_TEXT_X: i32 = 34;
 
 pub(super) struct Menu {
     pub(super) items: Vec<String>,
-    hover: Option<usize>,
-    w: usize,
-    h: usize,
+    pub(super) hover: Option<usize>,
+    pub(super) w: usize,
+    pub(super) h: usize,
     /// 1 列の項目の数と列の幅
-    rows: usize,
-    col_w: usize,
+    pub(super) rows: usize,
+    pub(super) col_w: usize,
     buf: Vec<u32>,
+    /// 16 色の画面の中身（色番号。`buf` は空）
+    pub(super) buf8: Vec<u8>,
 }
 
 /// バーのどこを押したか
@@ -67,7 +78,7 @@ impl Screen {
     }
 
     /// ウィンドウのボタンの並び: (ウィンドウ, 左端, 幅)。作った順（番号の順）
-    fn bar_buttons(&self) -> Vec<(WinId, i32, i32)> {
+    pub(super) fn bar_buttons(&self) -> Vec<(WinId, i32, i32)> {
         let right = self.width as i32 - label_width(Face::Mono, &self.status_text) - 2 * STATUS_PAD;
         let n = self.windows.len() as i32;
         if n == 0 {
@@ -97,19 +108,19 @@ impl Screen {
     pub(super) fn render_bar(&mut self) {
         self.bar_dirty = false;
         let w = self.width;
-        if self.bar.len() != w * BAR_H {
+        if self.bar.len() != w * bar_h() {
             return;
         }
         let Some(deco) = &self.deco else { return };
         let focused = self.focused();
         let buttons = self.bar_buttons();
-        let h = BAR_H as i32;
+        let h = bar_h() as i32;
         let mut bar = core::mem::take(&mut self.bar);
         // 地: 背景の行そのもの（背景の画像なら黒を重ねる）
         for (y, row) in bar.chunks_exact_mut(w).enumerate() {
             self.background_row(y, row);
         }
-        let mut c = Canvas::new(&mut bar, w, BAR_H);
+        let mut c = Canvas::new(&mut bar, w, bar_h());
         if self.wallpaper.is_some() {
             c.fill_rect_alpha(0, 0, w as i32, h, rgb(0, 0, 0), theme::BAR_SHADE_ALPHA);
         }
@@ -138,30 +149,34 @@ impl Screen {
         let x = w as i32 - label_width(Face::Mono, &self.status_text) - STATUS_PAD;
         draw_label(&mut c, Face::Mono, x, 0, h, &self.status_text, theme::BAR_TEXT);
         self.bar = bar;
-        self.mark_rows(0, BAR_H);
+        self.mark_rows(0, bar_h());
     }
 
     pub(super) fn open_menu(&mut self, items: Vec<String>) {
         let longest = items.iter().map(|i| label_width(Face::Ui, i)).max().unwrap_or(0);
         let col_w = (longest as usize + ITEM_TEXT_X as usize + 20).max(130);
-        let room = self.height - MENU_Y - 2 * MENU_PAD - SHADOW_MARGIN as usize;
-        let rows = (room / ITEM_H).clamp(1, items.len().max(1));
+        let room = self.height - menu_y() - 2 * MENU_PAD - SHADOW_MARGIN as usize;
+        let rows = (room / item_h()).clamp(1, items.len().max(1));
         let cols = items.len().div_ceil(rows).max(1);
         let w = (cols * col_w).min(self.width);
-        let h = rows * ITEM_H + 2 * MENU_PAD;
-        self.menu = Some(Menu { items, hover: None, w, h, rows, col_w, buf: vec![0; w * h] });
+        let h = rows * item_h() + 2 * MENU_PAD;
+        let (buf, buf8) = if super::is_classic() { (Vec::new(), vec![0; w * h]) } else { (vec![0; w * h], Vec::new()) };
+        self.menu = Some(Menu { items, hover: None, w, h, rows, col_w, buf, buf8 });
         self.render_menu();
         self.bar_dirty = true;
     }
 
     pub(super) fn close_menu(&mut self) {
         if let Some(m) = self.menu.take() {
-            self.mark_rows(BAR_H, MENU_Y + m.h + SHADOW_MARGIN as usize);
+            self.mark_rows(bar_h(), menu_y() + m.h + SHADOW_MARGIN as usize);
             self.bar_dirty = true;
         }
     }
 
     fn render_menu(&mut self) {
+        if super::is_classic() {
+            return self.render_menu_classic();
+        }
         let Some(deco) = &self.deco else { return };
         let Some(m) = &mut self.menu else { return };
         let (w, h) = (m.w, m.h);
@@ -169,9 +184,9 @@ impl Screen {
         c.clear(theme::FACE);
         for (i, item) in m.items.iter().enumerate() {
             let x = (i / m.rows * m.col_w) as i32;
-            let y = (MENU_PAD + i % m.rows * ITEM_H) as i32;
+            let y = (MENU_PAD + i % m.rows * item_h()) as i32;
             let fg = if m.hover == Some(i) {
-                c.fill_round_rect(x + 4, y + 1, m.col_w as i32 - 8, ITEM_H as i32 - 2, &deco.corner_small, theme::ACCENT_LIGHT, 255);
+                c.fill_round_rect(x + 4, y + 1, m.col_w as i32 - 8, item_h() as i32 - 2, &deco.corner_small, theme::ACCENT_LIGHT, 255);
                 theme::ACCENT_TEXT
             } else {
                 theme::TEXT
@@ -179,21 +194,21 @@ impl Screen {
             let app = if item == super::MENU_TERMINAL { "terminal" } else { item.as_str() };
             if let Some(icon) = crate::gfx::icons::for_app(app) {
                 let s = crate::gfx::icons::SIZE as i32;
-                c.blit_alpha(x + ITEM_ICON_X, y + (ITEM_H as i32 - s) / 2, icon, s as usize);
+                c.blit_alpha(x + ITEM_ICON_X, y + (item_h() as i32 - s) / 2, icon, s as usize);
             }
-            draw_label(&mut c, Face::Ui, x + ITEM_TEXT_X, y, ITEM_H as i32, item, fg);
+            draw_label(&mut c, Face::Ui, x + ITEM_TEXT_X, y, item_h() as i32, item, fg);
         }
-        self.mark_rows(BAR_H, MENU_Y + h + SHADOW_MARGIN as usize);
+        self.mark_rows(bar_h(), menu_y() + h + SHADOW_MARGIN as usize);
     }
 
     /// (x, y) にあるメニューの項目。メニューの外なら None、中でも項目でなければ Some(None)
     pub(super) fn menu_item_at(&self, x: i32, y: i32) -> Option<Option<usize>> {
         let m = self.menu.as_ref()?;
-        let (mx, my) = (x - MENU_X, y - MENU_Y as i32);
+        let (mx, my) = (x - MENU_X, y - menu_y() as i32);
         if mx < 0 || my < 0 || mx >= m.w as i32 || my >= m.h as i32 {
             return None;
         }
-        let row = (my - MENU_PAD as i32).div_euclid(ITEM_H as i32);
+        let row = (my - MENU_PAD as i32).div_euclid(item_h() as i32);
         if my < MENU_PAD as i32 || row as usize >= m.rows {
             return Some(None);
         }
@@ -215,9 +230,9 @@ impl Screen {
     /// 重ね合わせ: メニュー（角の丸いパネルと影）の行を row に重ねる
     pub(super) fn draw_menu_row(&self, y: usize, row: &mut [u32]) {
         let (Some(m), Some(deco)) = (&self.menu, &self.deco) else { return };
-        let rect = (MENU_X, MENU_Y as i32, m.w as i32, m.h as i32);
+        let rect = (MENU_X, menu_y() as i32, m.w as i32, m.h as i32);
         let fill = |x0: i32, span: &mut [u32]| {
-            let r = y - MENU_Y;
+            let r = y - menu_y();
             let s0 = (x0 - MENU_X) as usize;
             let n = span.len().min(m.w - s0);
             span[..n].copy_from_slice(&m.buf[r * m.w + s0..r * m.w + s0 + n]);

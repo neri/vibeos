@@ -121,6 +121,10 @@ impl Terminal {
     fn fit(&mut self, screen: &Screen) {
         self.font = match crate::gfx::fonts::mono() {
             Some(f) if screen.window_is_rgb(self.win) => TermFont::Smooth(f),
+            // 16 色の画面のデスクトップは 8x16（VGA の BIOS のフォント）
+            _ if gui::is_classic() && screen.mode() == gui::Mode::Desktop => {
+                TermFont::Bitmap(crate::drivers::vga::font16())
+            }
             _ => TermFont::Bitmap(&FONT_8X8),
         };
         let (w, h) = screen.window_size(self.win).unwrap_or((0, 0));

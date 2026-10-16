@@ -40,6 +40,8 @@ static VRAM: AtomicUsize = AtomicUsize::new(0);
 /// VGA の BIOS の 8x16 のフォントの写し（ローダが低いメモリに置いたものを、ページングの前に写す）
 static BIOS_FONT: BootCell<[u8; 256 * 16]> = BootCell::new([0; 256 * 16]);
 static BIOS_FONT_OK: AtomicBool = AtomicBool::new(false);
+/// BIOS_FONT を使う `Font`（使えるときだけ、起動直後に作る）
+static FONT16: BootCell<Option<Font>> = BootCell::new(None);
 
 pub fn width() -> usize {
     WIDTH.load(Ordering::Relaxed)
@@ -87,20 +89,21 @@ fn copy_bios_font(addr: usize) {
     }
     // 'A' に絵が無ければ使えないものとみなす
     if font[b'A' as usize * 16..][..16].iter().any(|&b| b != 0) {
+        // SAFETY: 同上。BIOS_FONT はこの後書き換えないので &'static で渡してよい
+        unsafe { *FONT16.as_ptr() = Some(Font::vga16(&*BIOS_FONT.as_ptr())) };
         BIOS_FONT_OK.store(true, Ordering::Release);
     }
 }
 
-/// 8x16 のフォント: VGA の BIOS のもの。無ければ 8x8 を縦に 2 倍したもの（16 色のデスクトップの字。
-/// 使い始めるのは docs/plans/vga16.md の C3 から）
-#[allow(dead_code)]
-pub fn font16() -> Font {
+/// 8x16 のフォント: VGA の BIOS のもの。無ければ 8x8 を縦に 2 倍したもの（16 色のデスクトップの字）
+pub fn font16() -> &'static Font {
     if BIOS_FONT_OK.load(Ordering::Acquire) {
-        // SAFETY: BIOS_FONT は init（起動直後）の後は書き換えない
-        Font::vga16(unsafe { &*BIOS_FONT.as_ptr() })
-    } else {
-        vibe_font::FONT_8X16_TALL.clone()
+        // SAFETY: FONT16 は init（起動直後）の後は書き換えない
+        if let Some(f) = unsafe { &*FONT16.as_ptr() } {
+            return f;
+        }
     }
+    &vibe_font::FONT_8X16_TALL
 }
 
 /// VGA の BIOS の 8x16 のフォントを使えるか
@@ -163,13 +166,23 @@ pub fn write_row(y: usize, row: &[u8]) {
 /// 画面の `y` 行目に `row`（画面の幅、色番号 0〜15）を書く（モード 12h）。4 枚の面に分け、面ごとに
 /// マップマスクを切り替えて書く。VRAM は読まない
 pub fn write_row4(y: usize, row: &[u8]) {
+    write_row4_span(y, row, 0, row.len());
+}
+
+/// `write_row4` の、x が [x0, x1) の所だけ（8 ピクセル単位に広げる）を書く。`row` は画面の幅の 1 行全部
+pub fn write_row4_span(y: usize, row: &[u8], x0: usize, x1: usize) {
     let vram = VRAM.load(Ordering::Relaxed);
     if vram == 0 || y >= height() || bpp() != 4 {
         return;
     }
+    let row = &row[..row.len().min(width())];
+    let (b0, b1) = (x0 / 8, x1.min(row.len()).div_ceil(8));
+    if b0 >= b1 {
+        return;
+    }
     let mut packed = [0u32; MAX_WIDTH / 8];
-    let n = planar::pack_row(&row[..row.len().min(width())], &mut packed);
-    let dst = (vram + y * PITCH.load(Ordering::Relaxed)) as *mut u8;
+    let n = planar::pack_row(&row[b0 * 8..(b1 * 8).min(row.len())], &mut packed);
+    let dst = (vram + y * PITCH.load(Ordering::Relaxed) + b0) as *mut u8;
     for plane in 0..4 {
         // SAFETY: マップマスクを変えると、続く書き込みがその面にだけ入る
         unsafe {
@@ -177,7 +190,7 @@ pub fn write_row4(y: usize, row: &[u8]) {
             outb(SEQ_DATA, 1 << plane);
         }
         for (i, &p) in packed[..n].iter().enumerate() {
-            // SAFETY: 1 枚の面の 1 行は pitch >= width / 8 バイト。y は画面の中
+            // SAFETY: b0 + i < width / 8 <= pitch（1 枚の面の 1 行のバイト数）。y は画面の中
             unsafe { dst.add(i).write_volatile(planar::plane_byte(p, plane)) };
         }
     }

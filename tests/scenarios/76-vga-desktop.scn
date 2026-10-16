@@ -1,0 +1,82 @@
+# Phase 51（VGA C3）: 16 色の画面（モード 12h）のデスクトップ。メニューから clock を起動し、[_] で最小化して
+# バーのボタンから戻す。Alt+Tab、タイトルバーのドラッグ（離すまでは点線の枠だけが動く）、[x] で閉じる
+# 寸法（docs/plans/vga16.md §3.4）: 上端のバー 0〜19、タイトルバー 20（下の 1 行は黒い線）、ウィンドウの黒い枠 1。
+# 端末 1 の中身は 0,72 から 640x400（タイトルバーは 52〜71）。メニューは y=22 から、1 項目 18（Terminal が 24〜41、
+# clock は 7 つ目で 132〜149）。clock の中身は 120,65 から 136x170（タイトルバー 45〜64、[_] 212〜231、[x] 234〜253）。
+# バーのウィンドウのボタンは x=72 から 140 ずつ（Terminal 1 が 72〜211、Clock が 212〜351）。
+# バーの右（日時・空きメモリ）と時計の文字盤は時間で変わるので画面の比較に入れない
+boot-config video=vga
+timeout 30
+wait-serial gui: desktop 640x480
+wait-serial VibeOS shell
+sleep 300
+type echo hello
+key ret
+wait-serial hello
+sleep 300
+expect-screen vga-desktop 0 0 380 480
+# 「VibeOS」を押してメニューを開く（カーソル 320,240 → 20,10）
+mouse-move -300 -230
+mouse-button left down
+mouse-button left up
+sleep 300
+expect-screen vga-menu 0 0 380 480
+# clock を押す（→ 40,140）
+mouse-move 20 130
+mouse-button left down
+mouse-button left up
+wait-serial menu: started clock
+wait-serial clock: started
+sleep 300
+# フォーカスのある clock のタイトルバーは紫、端末のタイトルバーは濃い灰色
+expect-pixel 200 48 128 0 128
+expect-pixel 400 60 128 128 128
+# [_] で最小化する（→ 222,55）。ウィンドウは消えて背景（青緑）が見え、端末にフォーカスが移る
+mouse-move 182 -85
+mouse-button left down
+mouse-button left up
+sleep 300
+expect-pixel 200 48 0 128 128
+expect-pixel 400 60 128 0 128
+expect-screen vga-bar-minimized 0 0 380 20
+# バーの Clock のボタンを押すと戻る（→ 280,10）
+mouse-move 58 -45
+mouse-button left down
+mouse-button left up
+sleep 300
+expect-pixel 200 48 128 0 128
+expect-pixel 400 60 128 128 128
+# Alt+Tab で端末が前に出る。もう一度で clock に戻る
+key alt+tab
+sleep 300
+expect-pixel 400 60 128 0 128
+expect-pixel 200 48 128 128 128
+key alt+tab
+sleep 300
+expect-pixel 200 48 128 0 128
+# clock のタイトルバーをつかみ（→ 160,55）、150,100 動かす。離すまではウィンドウは元の所のまま、
+# 点線の枠（白と黒が 1 つおき）だけが新しい所（中身 270,165、枠の左端 269・上端 144）に出る
+mouse-move -120 45
+mouse-button left down
+mouse-move 75 50
+mouse-move 75 50
+sleep 300
+expect-pixel 200 48 128 0 128
+expect-pixel 269 250 255 255 255
+expect-pixel 270 250 0 0 0
+expect-screen vga-drag-outline 260 140 160 200
+# 離すとウィンドウが動き、枠は消える（左の枠は黒い線になる）
+mouse-button left up
+sleep 300
+expect-pixel 200 48 0 128 128
+expect-pixel 350 150 128 0 128
+expect-pixel 269 250 0 0 0
+# [x] で閉じる（→ 394,155）。後ろの端末（黒）が見える
+mouse-move 84 0
+mouse-button left down
+mouse-button left up
+wait-serial clock: closed
+sleep 300
+expect-pixel 350 150 0 0 0
+expect-screen vga-desktop-closed 0 0 380 20
+serial-absent PANIC

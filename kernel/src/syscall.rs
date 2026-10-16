@@ -6,6 +6,7 @@
 //! ユーザから渡されたポインタは、使う前に今のプロセスのページテーブルで「ユーザが読める（書ける）
 //! ページか」を確かめる。確かめた後はそのまま触る（今のアドレス空間はそのプロセスのもの）。
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -266,9 +267,21 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             }
             check_user(user, a, n * 4, false)?;
             // SAFETY: 上で今のプロセスが読めるページだと確かめた（4 バイトにそろっている）
-            let pixels = unsafe { core::slice::from_raw_parts(a as *const u32, n as usize) }.to_vec().into_boxed_slice();
+            let src = unsafe { core::slice::from_raw_parts(a as *const u32, n as usize) };
+            let (w, h) = (b as usize, c as usize);
+            // 16 色の画面では 1 回だけ誤差拡散して色番号で持つ
+            let (pixels, pixels8) = if gui::is_classic() {
+                let lut = vibe_gfx::dither::Lut16::new();
+                let px = vibe_gfx::dither::to_vga16(w, h, &lut, |x, y| {
+                    let p = src[y * w + x];
+                    [(p >> 16) as u8, (p >> 8) as u8, p as u8]
+                });
+                (Box::default(), px.into_boxed_slice())
+            } else {
+                (src.to_vec().into_boxed_slice(), Box::default())
+            };
             let mut s = SCREEN.lock();
-            s.set_wallpaper(Some(gui::Wallpaper { w: b as usize, h: c as usize, fit, pixels }));
+            s.set_wallpaper(Some(gui::Wallpaper { w, h, fit, pixels, pixels8 }));
             s.present();
             Ok(0)
         }

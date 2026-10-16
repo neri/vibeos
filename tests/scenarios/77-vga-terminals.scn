@@ -1,0 +1,55 @@
+# Phase 51（VGA C3）: 16 色の画面のデスクトップの端末 2 つ・クリップボード・背景の画像
+# 端末 1 の中身は 0,72 から（8x16 の 80x25。行 r は y = 72 + 16r、桁 c は x = 8c）。メニューの Terminal は 24〜41。
+# 端末 2 は中身 0,65 から（タイトルバー 45〜64）。端末 1 のタイトルバーは 52〜71
+boot-config video=vga
+timeout 30
+wait-serial gui: desktop 640x480
+wait-serial VibeOS shell
+type echo copy me please
+key ret
+wait-serial copy me please
+wait-serial copy me please
+sleep 300
+# 3 行目（出力）の "copy me"（0〜6 桁）をなぞる（カーソル 320,240 → 2,112 → 54,112）
+mouse-move -318 -128
+mouse-button left down
+mouse-move 26 0
+mouse-move 26 0
+mouse-button left up
+wait-serial term: copied 7 bytes
+sleep 200
+expect-screen vga-clip-selected 0 72 320 64
+# シェルで Ctrl+V
+type echo [
+key ctrl+v
+type ]
+key ret
+wait-serial [copy me]
+wait-serial [copy me]
+# メニューの Terminal で端末 2 を開く（→ 20,10 → 30,32）
+mouse-move -34 -102
+mouse-button left down
+mouse-button left up
+sleep 300
+mouse-move 10 22
+mouse-button left down
+mouse-button left up
+wait-serial term: opened terminal 2
+wait-serial VibeOS shell
+type echo two
+key ret
+wait-serial two
+sleep 300
+expect-pixel 400 50 128 0 128
+expect-screen vga-terminal2 0 0 380 480
+# Alt+Tab で端末 1 が前に出る
+key alt+tab
+sleep 300
+expect-pixel 400 60 128 0 128
+expect-pixel 400 50 128 128 128
+# 背景の画像（16 色に誤差拡散して敷き詰める）。バーとタイトルバーの間に見える
+type wallpaper /IMAGES/PLASMA.BMP tile
+key ret
+sleep 1500
+expect-screen vga-wallpaper 0 20 640 25
+serial-absent PANIC

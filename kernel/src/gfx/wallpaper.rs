@@ -2,6 +2,7 @@
 //!
 //! BOOT.CFG の `wallpaper=PATH [tile|center]` で起動時に、シェルの `wallpaper` でその場で変える。
 
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 
@@ -20,10 +21,15 @@ pub fn load(path: &str, fit: Fit) -> Result<(), String> {
     if bmp.width * bmp.height > vibe_abi::WALLPAPER_MAX_PIXELS {
         return Err(String::from("too large"));
     }
-    let pixels = bmp.to_rgb32().into_boxed_slice();
     let (w, h) = (bmp.width as usize, bmp.height as usize);
+    // 16 色の画面では読むときに 1 回だけ誤差拡散する（並べるときは色番号を写すだけ）
+    let (pixels, pixels8) = if gui::is_classic() {
+        (Box::default(), bmp.to_vga16(&vibe_gfx::dither::Lut16::new()).into_boxed_slice())
+    } else {
+        (bmp.to_rgb32().into_boxed_slice(), Box::default())
+    };
     let mut s = SCREEN.lock();
-    s.set_wallpaper(Some(gui::Wallpaper { w, h, fit, pixels }));
+    s.set_wallpaper(Some(gui::Wallpaper { w, h, fit, pixels, pixels8 }));
     s.present();
     Ok(())
 }
