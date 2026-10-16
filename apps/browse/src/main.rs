@@ -29,8 +29,9 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use vibe_rt::abi::{KeyEvent, key};
-use vibe_rt::gfx::{Event, Window32 as Window};
-use vibe_rt::gfx_lib::theme;
+use vibe_rt::gfx::{Event, Window};
+use vibe_rt::gfx_lib::palette::{DARK_GRAY, WHITE};
+use vibe_ui::draw::FACE;
 use vibe_rt::{println, sys};
 use vibe_ui::{Action, Button, Id, Input, Rect, ScrollBar, TextField, Ui};
 use vibe_web::charset;
@@ -45,8 +46,8 @@ vibe_rt::entry!(main);
 
 const TOOLBAR_H: i32 = 36;
 const STATUS_H: i32 = 20;
-/// 下の行の文字の左端（ウィンドウの丸い角から離す）
-const STATUS_X: i32 = 14;
+/// 下の行の文字の左端
+const STATUS_X: i32 = 6;
 const SCROLLBAR_W: i32 = 12;
 const BUTTON_W: i32 = 30;
 const GAP: i32 = 4;
@@ -141,11 +142,11 @@ fn main() -> i32 {
         }
         None => None,
     };
-    vibe_ui::set_fonts(vibe_rt::gfx::font(vibe_rt::abi::FONT_UI), vibe_rt::gfx::font(vibe_rt::abi::FONT_BOLD));
+    vibe_ui::set_font(vibe_rt::gfx::font16());
     let info = sys::sys_info();
-    // 上端のバー（24）・ドック（66）・タイトルバー（24）と少しの余白を除いた大きさ
-    let w = (info.screen_width as i32 - 16).clamp(320, MAX_W);
-    let h = (info.screen_height as i32 - 24 - 66 - 24 - 16).clamp(240, MAX_H);
+    // 上端のバー（20）・タイトルバー（20）・枠と少しの余白を除いた大きさ（640x480 で 636x416）
+    let w = (info.screen_width as i32 - 4).clamp(320, MAX_W);
+    let h = (info.screen_height as i32 - 64).clamp(240, MAX_H);
     let Some(mut win) = Window::open(w as usize, h as usize, "Browse") else {
         println!("browse: cannot open a window");
         return 1;
@@ -240,7 +241,7 @@ impl App {
         let content = self.content();
         let track = self.track();
         let (w, h) = (self.w, self.h);
-        let mut c = win.canvas();
+        let mut c = win.surface();
         match &self.page {
             Some(p) => {
                 let image = |i: u32| {
@@ -255,16 +256,16 @@ impl App {
         c.fill_rect(track.x, track.y, track.w, track.h, view::PAGE_BG);
         self.sb.draw(&mut c, track);
         // 上の道具の並びと下の行（本文の上に描く。はみ出した文字を隠す）
-        c.fill_rect(0, 0, w, TOOLBAR_H, theme::SUBTLE);
-        c.hline(0, TOOLBAR_H - 1, w, theme::HOVER);
+        c.fill_rect(0, 0, w, TOOLBAR_H, FACE);
+        c.hline(0, TOOLBAR_H - 1, w, DARK_GRAY);
         let sy = h - STATUS_H;
-        c.fill_rect(0, sy, w, STATUS_H, theme::SUBTLE);
-        c.hline(0, sy, w, theme::HOVER);
+        c.fill_rect(0, sy, w, STATUS_H, FACE);
+        c.hline(0, sy, w, WHITE);
         let status = match (self.hover, &self.page) {
             (Some(l), Some(p)) => p.link_text(l),
             _ => self.status.clone(),
         };
-        vibe_rt::gfx::draw_text(&mut c, vibe_rt::abi::FONT_UI, STATUS_X, sy + 2, &status, theme::TEXT_DIM);
+        c.draw_text(vibe_rt::gfx::font16(), STATUS_X, sy + 3, &status, DARK_GRAY, None);
         self.ui.draw(&mut c);
         win.present();
     }
@@ -717,10 +718,10 @@ fn poll_events(win: &Window, later: &mut Vec<Event>) -> bool {
 /// 下の行だけを描き直す（読み込みの途中）
 fn draw_status(win: &mut Window, msg: &str) {
     let (w, h) = (win.width() as i32, win.height() as i32);
-    let mut c = win.canvas();
+    let mut c = win.surface();
     let sy = h - STATUS_H;
-    c.fill_rect(0, sy + 1, w, STATUS_H - 1, theme::SUBTLE);
-    vibe_rt::gfx::draw_text(&mut c, vibe_rt::abi::FONT_UI, STATUS_X, sy + 2, msg, theme::TEXT_DIM);
+    c.fill_rect(0, sy + 1, w, STATUS_H - 1, FACE);
+    c.draw_text(vibe_rt::gfx::font16(), STATUS_X, sy + 3, msg, DARK_GRAY, None);
     win.present();
 }
 

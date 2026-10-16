@@ -34,10 +34,10 @@ sleep 300
 key ctrl+c
 wait-serial ^C
 sleep 300
-# 端末 2 に戻すと clock も前に出る（時計の文字盤の白）
+# 端末 2 に戻すと clock も前に出る（時計のウィンドウの明るい灰色の地）
 key alt+f2
 sleep 300
-expect-pixel 10 30 255 255 255
+expect-pixel 10 30 168 168 168
 key esc
 wait-serial clock: closed
 type echo back to "two"

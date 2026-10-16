@@ -9,7 +9,7 @@ wait-serial clock: started
 sleep 300
 # [x] の記号の真ん中（フォーカスのある濃い灰色）
 expect-pixel 243 60 44 44 42
-expect-pixel 125 86 255 255 255
+expect-pixel 125 86 168 168 168
 mouse-move -269 -324
 mouse-button left down
 mouse-button left up

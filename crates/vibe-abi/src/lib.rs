@@ -39,6 +39,9 @@ pub const FONT_BOLD: u32 = 1;
 pub const FONT_MONO: u32 = 2;
 /// 見出しの大きい太字（20px。ブラウザの h1・h2）
 pub const FONT_HEADING: u32 = 3;
+/// VGA の BIOS の 8x16 のフォント（256 字 × 16 バイト、bit 7 が左端。`vibe_font::Font::vga16`）。
+/// 16 色の画面のアプリの文字
+pub const FONT_VGA16: u32 = 4;
 /// icon_data のアイコンの 1 辺
 pub const ICON_SIZE: usize = 16;
 /// wallpaper_set の画像の画素の数の上限
@@ -203,6 +206,9 @@ pub mod nr {
     pub const ICON_DATA: u32 = 72;
     /// win_title(win, title, title_len) -> 0。ウィンドウのタイトルを変える（タイトルバーと上端のバーのボタン）
     pub const WIN_TITLE: u32 = 73;
+    /// icon16_data(name, name_len, buf: *mut [u8; 256]) -> 0。16 色の 16x16 のアイコン（色番号、透明は 0xFF）。
+    /// 無ければ -ENOENT
+    pub const ICON16_DATA: u32 = 74;
 
     /// gfx_open(flags) -> 0。全画面の画面を作って前面に出す（終了時に自動で閉じる）。flags は GFX_*
     pub const GFX_OPEN: u32 = 16;

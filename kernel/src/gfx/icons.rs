@@ -102,8 +102,7 @@ pub fn for_app(name: &str) -> Option<&'static [u32]> {
     get(name).or_else(|| get(GENERIC))
 }
 
-/// 名前 `name` の 16 色のアイコン（16x16 の色番号。モード 12h の画面用。使い始めるのは docs/plans/vga16.md の C3 から）
-#[allow(dead_code)]
+/// 名前 `name` の 16 色のアイコン（16x16 の色番号。モード 12h の画面用）
 pub fn get16(name: &str) -> Option<&'static [u8]> {
     let p = ICONS16.load(Ordering::Acquire);
     // SAFETY: 入れるのは Box::leak したものだけで、消さない

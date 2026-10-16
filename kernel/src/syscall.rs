@@ -79,6 +79,12 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             copy_to_user(user, c, &bytes)?;
             Ok(0)
         }
+        nr::ICON16_DATA => {
+            let name = user_str(user, a, b)?;
+            let icon = crate::gfx::icons::get16(&name).ok_or(err::ENOENT)?;
+            copy_to_user(user, c, icon)?;
+            Ok(0)
+        }
         nr::TERM_OPEN => {
             let cmd = user_str(user, a, b)?;
             let cmd = (!cmd.trim().is_empty()).then_some(cmd);

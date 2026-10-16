@@ -70,6 +70,7 @@ pub fn data(kind: u32) -> Option<&'static [u8]> {
         vibe_abi::FONT_BOLD => &UI_BOLD,
         vibe_abi::FONT_MONO => &MONO,
         vibe_abi::FONT_HEADING => &HEADING,
+        vibe_abi::FONT_VGA16 => return crate::drivers::vga::bios_font_bytes(),
         _ => return None,
     };
     loaded(slot).map(|l| l.data)

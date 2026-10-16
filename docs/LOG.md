@@ -752,3 +752,13 @@
 - 背景の画像は読むとき（`gfx::wallpaper::load` と `wallpaper_set` のシステムコール）に 1 回だけ 16 色に誤差拡散する（`vibe_gfx::wallpaper::fill_row` を色番号の行にも使えるようにした）
 - 詰まった所: 2 つ目からの端末のタイトルバーにアイコンが出なかった（タイトルバーを描いた後でアイコンを付けていた）。16 色の画面では付けた後に描き直す
 - シナリオ `76-vga-desktop`（メニュー・最小化・バーで戻す・Alt+Tab・枠のドラッグ・[x]）・`77-vga-terminals`（クリップボード・端末 2・背景の画像）。`74-vga-console` はデスクトップの端末で 16 色を確かめる形にした。期待画像 9 枚は目で確かめた。寸法と細かい見た目は D-073（オーナーに画像を見せる）
+
+## 2026-10-16 VGA C4: アプリを 16 色に（Phase 52、ブランチ `test/mode12`）
+
+- オーナーが C3 の見た目を確かめ（「The look is fine」）、C4 に進むよう指示した
+- システムコール: `font_data(FONT_VGA16)` で VGA の BIOS の 8x16 のフォント、`icon16_data`（74 番）で 16 色のアイコン。`vibe_rt::gfx` に `font16`・`icon16`・`draw_text16_centered`・`Window::set_title`
+- `vibe-ui`: 32 ビットの `Canvas` から 8 ビットの `Surface` へ。Windows 3.x 風の立体の部品（`draw::raised`・`pressed`・`sunken`・`focus_rect`）、固定幅のビットマップのフォント（`set_font`）。描画のテストを 16 色に書き直した（22 本）
+- アプリ: `calc`・`files`・`tasks` は部品の差し替えだけ。`clock`・`mines`・`blocks`・`paint`・`view`・`mandel`・`snake`・`browse` は 16 色で描き直した。`mandel`・`snake`・`view`・`paint` の全画面は無くしてウィンドウだけに。`life` はもとから 16 色
+- ブラウザは 8x16 の固定幅の字だけ（`Metrics` も固定幅）。画像は読んだときに 16 色に誤差拡散。640x480 では 636x416 のウィンドウ
+- シナリオをアプリごとに 16 色の画面に移した（D-074）。リンクの位置はページを描いて青い下線を探して決めた。`48-files` で files と view の出力が 1 行に混ざって待ちが外れることがあった（`71-browse-local` と同じ。起動したアプリの出力が println! の途中に割り込む）。混ざる前の所までを待つようにした
+- 期待画像（作り直したもの 30 枚ほど）はまとめて並べて目で確かめた。落ち物パズルの一時停止の比べる範囲が帯の上を切っていたので広げた

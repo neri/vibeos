@@ -1,12 +1,14 @@
 # Phase 48（ブラウザ B4）: ページの中の画像（PNG と 24 ビットの BMP）。画像は tests/web/make-images.py で作ったもの。
 # 同じ画像は 1 回だけ読む。width だけの画像は縦横の比を保って広げる。無い画像・壊れた PNG は [alt] のまま。
-# ウィンドウは中身 120,73 に 640x480。リンクの画像（TILE.BMP）は 127〜160, 288〜312
+# Phase 52（VGA C4）から 16 色の画面（video=vga）で。画像は 16 色に誤差拡散して出る。ウィンドウは中身 3,63 に
+# 636x416（71-browse-local と同じ）。リンクの画像（TILE.BMP）は 10〜43, 268〜292
 disk-put tests/web/IMG.HTM /DOCS/WEB/IMG.HTM
 disk-put tests/web/LOGO.PNG /DOCS/WEB/LOGO.PNG
 disk-put tests/web/TILE.BMP /DOCS/WEB/TILE.BMP
 disk-put tests/web/BAD.PNG /DOCS/WEB/BAD.PNG
+boot-config video=vga
 timeout 30
-wait-serial gui: desktop 1024x768
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
 type browse /DOCS/WEB/IMG.HTM &
 key ret
@@ -17,13 +19,13 @@ wait-serial browse: image file:///DOCS/WEB/NOPE.PNG: not found
 wait-serial browse: image file:///DOCS/WEB/BAD.PNG: broken PNG chunk
 wait-serial browse: images 4/6
 sleep 500
-expect-screen browse-images 120 49 640 490
-# リンクの画像を押すと、画像だけのページ（タイトルに大きさ）（カーソル 512,384 → 143,300）
-mouse-move -369 -84
+expect-screen browse-images 2 42 638 438
+# リンクの画像を押すと、画像だけのページ（タイトルに大きさ）（カーソル 320,240 → 26,280）
+mouse-move -294 40
 mouse-button left down
 mouse-button left up
 wait-serial browse: link file:///DOCS/WEB/LOGO.PNG
 wait-serial browse: loaded file:///DOCS/WEB/LOGO.PNG (1 lines) "LOGO.PNG (48x32)"
 sleep 300
-expect-screen browse-image-page 120 49 640 490
+expect-screen browse-image-page 2 42 638 438
 serial-absent PANIC

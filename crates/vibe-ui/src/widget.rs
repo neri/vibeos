@@ -4,12 +4,10 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use vibe_abi::key;
-use vibe_gfx::canvas::{Canvas, Color};
+use vibe_gfx::Surface;
+use vibe_gfx::icons::TRANSPARENT;
 
-use crate::draw::{
-    self, BUTTON_HOVER, BUTTON_PRESSED, Corners, FIELD, FOCUS, PRIMARY, PRIMARY_HOVER, PRIMARY_PRESSED, PRIMARY_TEXT,
-    SELECT, SELECT_INACTIVE, SELECT_TEXT, TEXT, TEXT_DISABLED, THUMB, Text,
-};
+use crate::draw::{self, DARK, FACE, FIELD, FOCUS, SELECT, SELECT_INACTIVE, SELECT_TEXT, TEXT, TEXT_DISABLED, Text};
 use crate::{Action, Id, KeyEvent, Rect};
 
 /// 一覧の 1 行の高さ・スクロールバーの幅
@@ -40,10 +38,10 @@ pub enum Widget {
 pub struct Label {
     pub text: String,
     pub align: Align,
-    pub color: Color,
+    pub color: u8,
     /// 背景の色（None なら塗らない）
-    pub bg: Option<Color>,
-    /// 角の丸い塗りの欄にする（電卓の表示など）
+    pub bg: Option<u8>,
+    /// へこんだ欄にする（電卓の表示など）
     pub sunken: bool,
 }
 
@@ -57,7 +55,7 @@ impl Label {
         self
     }
 
-    /// 薄い灰色の角の丸い塗り（表示欄）
+    /// 白い地のへこんだ欄（表示欄）
     pub fn display(mut self) -> Label {
         self.bg = Some(FIELD);
         self.sunken = true;
@@ -68,7 +66,7 @@ impl Label {
 pub struct Button {
     pub text: String,
     pub enabled: bool,
-    /// 既定のボタン（強調色の地に白い文字。ダイアログの Enter で押されるもの）
+    /// 既定のボタン（黒い太い縁。ダイアログの Enter で押されるもの）
     pub primary: bool,
 }
 
@@ -228,8 +226,8 @@ impl TextField {
 /// 一覧（スクロールバー付き）
 pub struct List {
     items: Vec<String>,
-    /// 項目のアイコン（16x16 の事前に掛けたアルファの ARGB。無ければアイコンの場所を空けない）
-    icons: Vec<Option<&'static [u32]>>,
+    /// 項目のアイコン（16 色の 16x16 の色番号、透明は `TRANSPARENT`。無ければアイコンの場所を空けない）
+    icons: Vec<Option<&'static [u8]>>,
     /// 列: 項目の文字をタブで分け、i 番目を (左端, 寄せ方) の列に描く（左端は文字の場所の左からの位置。
     /// 列の右端は次の列の左端か、文字の場所の右端）。空なら 1 列
     columns: Vec<(i32, Align)>,
@@ -273,7 +271,7 @@ impl List {
     }
 
     /// 項目のアイコン（`items` と同じ順。`set_items` で消える）
-    pub fn set_icons(&mut self, icons: Vec<Option<&'static [u32]>>) {
+    pub fn set_icons(&mut self, icons: Vec<Option<&'static [u8]>>) {
         self.icons = icons;
     }
 
@@ -448,15 +446,16 @@ impl Widget {
         }
     }
 
-    /// 描く。`hover` はマウスが乗っている（ボタンを押していない）とき
-    pub(crate) fn draw(&self, c: &mut Canvas, r: Rect, focused: bool, pressed: bool, hover: bool, k: &Corners) {
+    /// 描く。`hover` はマウスが乗っている（ボタンを押していない）とき（16 色の見た目では使わない）
+    pub(crate) fn draw(&self, s: &mut Surface, r: Rect, focused: bool, pressed: bool, _hover: bool) {
         let t = draw::text();
         match self {
             Widget::Label(l) => {
                 if l.sunken {
-                    draw::fill(c, r, k, l.bg.unwrap_or(FIELD));
+                    s.fill_rect(r.x, r.y, r.w, r.h, l.bg.unwrap_or(FIELD));
+                    draw::sunken(s, r);
                 } else if let Some(bg) = l.bg {
-                    c.fill_rect(r.x, r.y, r.w, r.h, bg);
+                    s.fill_rect(r.x, r.y, r.w, r.h, bg);
                 }
                 let lines: Vec<&str> = l.text.split('\n').collect();
                 let lh = t.height() + 2;
@@ -464,36 +463,39 @@ impl Widget {
                 let mut y = r.y + (r.h - total) / 2;
                 let inner = Rect::new(r.x + PAD, 0, r.w - 2 * PAD, lh);
                 for line in lines {
-                    t.draw_in(c, Rect::new(inner.x, y, inner.w, lh), line, l.align, l.color);
+                    t.draw_in(s, Rect::new(inner.x, y, inner.w, lh), line, l.align, l.color);
                     y += lh;
                 }
             }
             Widget::Button(b) => {
-                let primary = b.primary && b.enabled;
-                let bg = match (primary, b.enabled && pressed, b.enabled && hover) {
-                    (true, true, _) => PRIMARY_PRESSED,
-                    (true, false, true) => PRIMARY_HOVER,
-                    (true, false, false) => PRIMARY,
-                    (false, true, _) => BUTTON_PRESSED,
-                    (false, false, true) => BUTTON_HOVER,
-                    (false, false, false) => FIELD,
+                let down = b.enabled && pressed;
+                s.fill_rect(r.x, r.y, r.w, r.h, FACE);
+                // 既定のボタンは外側に黒い縁を足す
+                let body = if b.primary && b.enabled {
+                    s.rect(r.x, r.y, r.w, r.h, DARK);
+                    Rect::new(r.x + 1, r.y + 1, r.w - 2, r.h - 2)
+                } else {
+                    r
                 };
-                draw::fill(c, r, k, bg);
-                if focused {
-                    draw::focus_ring(c, r, k);
+                if down {
+                    draw::pressed(s, body);
+                } else {
+                    draw::raised(s, body);
                 }
-                let color = match (primary, b.enabled) {
-                    (true, _) => PRIMARY_TEXT,
-                    (false, true) => TEXT,
-                    (false, false) => TEXT_DISABLED,
-                };
-                t.draw_in(c, r, &b.text, Align::Center, color);
+                // 押している間は文字を 1 ピクセル右下へ
+                let off = if down { 1 } else { 0 };
+                let inner = Rect::new(body.x + off, body.y + off, body.w, body.h);
+                let color = if b.enabled { TEXT } else { TEXT_DISABLED };
+                t.draw_in(s, inner, &b.text, Align::Center, color);
+                if focused {
+                    let w = t.width(&b.text).min(body.w - 8);
+                    let fr = Rect::new(inner.x + (body.w - w) / 2 - 3, inner.y + (body.h - t.height()) / 2 - 1, w + 6, t.height() + 2);
+                    draw::focus_rect(s, fr);
+                }
             }
             Widget::TextField(f) => {
-                draw::fill(c, r, k, FIELD);
-                if focused {
-                    draw::focus_ring(c, r, k);
-                }
+                s.fill_rect(r.x, r.y, r.w, r.h, FIELD);
+                draw::sunken(s, r);
                 let mut f2 = TextField {
                     text: f.text.clone(),
                     cursor: f.cursor,
@@ -506,17 +508,19 @@ impl Widget {
                 let n = t.fit(&rest, r.w - 2 * PAD);
                 let shown: String = rest.chars().take(n).collect();
                 let top = r.y + (r.h - t.height()) / 2;
-                if f.all_selected && focused {
-                    c.fill_rect(r.x + PAD - 1, top, t.width(&shown) + 2, t.height(), SELECT);
+                let selected = f.all_selected && focused;
+                if selected {
+                    s.fill_rect(r.x + PAD - 1, top, t.width(&shown) + 2, t.height(), SELECT);
                 }
-                t.draw(c, r.x + PAD, top, &shown, TEXT);
+                t.draw(s, r.x + PAD, top, &shown, if selected { SELECT_TEXT } else { TEXT });
                 if focused && !f.all_selected {
                     let cx = r.x + PAD + t.prefix_width(&rest, f.cursor - f2.scroll);
-                    c.vline(cx.min(r.x + r.w - 3), top + 1, t.height() - 2, TEXT);
+                    s.vline(cx.min(r.x + r.w - 3), top, t.height(), TEXT);
                 }
             }
             Widget::List(l) => {
-                draw::fill(c, r, k, FIELD);
+                s.fill_rect(r.x, r.y, r.w, r.h, FIELD);
+                draw::sunken(s, r);
                 let rows = List::rows_in(r);
                 let top = l.top.min(l.items.len().saturating_sub(rows));
                 let scroll = l.items.len() > rows;
@@ -525,53 +529,61 @@ impl Widget {
                     let y = r.y + 2 + row as i32 * ROW_H;
                     let color = if l.selected == Some(i) {
                         let bg = if focused { SELECT } else { SELECT_INACTIVE };
-                        c.fill_round_rect(r.x + 3, y + 1, text_w - 2, ROW_H - 2, &k.outer, bg, 255);
+                        s.fill_rect(r.x + 2, y, text_w, ROW_H, bg);
                         if focused { SELECT_TEXT } else { TEXT }
                     } else {
                         TEXT
                     };
                     let mut x = r.x + PAD;
                     if let Some(icon) = l.icons.get(i).copied().flatten() {
-                        c.blit_alpha(x, y + (ROW_H - ICON) / 2, icon, ICON as usize);
+                        s.blit(x, y + (ROW_H - ICON) / 2, icon, ICON as usize, Some(TRANSPARENT));
                         x += ICON + 6;
                     }
                     let area = Rect::new(x, y, r.x + text_w - PAD - x, ROW_H);
                     if l.columns.is_empty() {
-                        t.draw_in(c, area, &l.items[i], Align::Left, color);
+                        t.draw_in(s, area, &l.items[i], Align::Left, color);
                     } else {
                         for (n, part) in l.items[i].split('\t').enumerate().take(l.columns.len()) {
                             let (x0, align) = l.columns[n];
                             let x1 = l.columns.get(n + 1).map_or(area.w, |c| c.0 - 4);
-                            t.draw_in(c, Rect::new(area.x + x0, y, x1 - x0, ROW_H), part, align, color);
+                            t.draw_in(s, Rect::new(area.x + x0, y, x1 - x0, ROW_H), part, align, color);
                         }
                     }
                 }
                 if scroll {
                     let (track, ty, th) = scrollbar_geometry(r, l.items.len(), rows, top);
-                    // 細いつまみ（溝は描かない。押せる所は溝の幅いっぱい）
-                    c.fill_round_rect(track.x + 2, ty + 1, track.w - 4, th - 2, &k.outer, THUMB, 255);
+                    draw_scrollbar(s, track, ty, th);
                 }
                 if focused && l.selected.is_none() {
-                    c.round_rect(r.x + 3, r.y + 3, text_w - 2, ROW_H - 2, &k.outer, FOCUS);
+                    draw::focus_rect(s, Rect::new(r.x + 2, r.y + 2, text_w, ROW_H));
                 }
             }
             Widget::Checkbox(cb) => {
-                let bx = Rect::new(r.x, r.y + (r.h - 14) / 2, 14, 14);
+                let bx = Rect::new(r.x, r.y + (r.h - 13) / 2, 13, 13);
+                s.fill_rect(bx.x, bx.y, bx.w, bx.h, FIELD);
+                draw::sunken(s, bx);
                 if cb.checked {
-                    c.fill_round_rect(bx.x, bx.y, bx.w, bx.h, &k.outer, FOCUS, 255);
-                    // チェックの印（白、2 ピクセルの太さ）
+                    // チェックの印（黒、2 ピクセルの太さ）
                     for d in 0..2 {
-                        c.line(bx.x + 3, bx.y + 7 + d, bx.x + 5, bx.y + 9 + d, PRIMARY_TEXT);
-                        c.line(bx.x + 5, bx.y + 9 + d, bx.x + 10, bx.y + 4 + d, PRIMARY_TEXT);
+                        s.line(bx.x + 3, bx.y + 5 + d, bx.x + 5, bx.y + 7 + d, FOCUS);
+                        s.line(bx.x + 5, bx.y + 7 + d, bx.x + 9, bx.y + 3 + d, FOCUS);
                     }
-                } else {
-                    draw::fill(c, bx, k, BUTTON_HOVER);
                 }
+                let label = Rect::new(r.x + 20, r.y, r.w - 20, r.h);
+                t.draw_in(s, label, &cb.text, Align::Left, TEXT);
                 if focused {
-                    draw::focus_ring(c, bx, k);
+                    let w = t.width(&cb.text).min(label.w);
+                    draw::focus_rect(s, Rect::new(label.x - 2, label.y + (label.h - t.height()) / 2 - 1, w + 4, t.height() + 2));
                 }
-                t.draw_in(c, Rect::new(r.x + 20, r.y, r.w - 20, r.h), &cb.text, Align::Left, TEXT);
             }
         }
     }
+}
+
+/// スクロールバー: 溝（明るい灰色）と、出っ張った立体のつまみ
+pub(crate) fn draw_scrollbar(s: &mut Surface, track: Rect, ty: i32, th: i32) {
+    s.fill_rect(track.x, track.y, track.w, track.h, FACE);
+    let thumb = Rect::new(track.x, ty, track.w, th);
+    s.fill_rect(thumb.x, thumb.y, thumb.w, thumb.h, FACE);
+    draw::raised(s, thumb);
 }

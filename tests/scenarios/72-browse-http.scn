@@ -1,6 +1,7 @@
 # Phase 47（ブラウザ B3）: HTTP のページを browse で表示する。テストランナーが 10.0.2.100:80 で返し、名前は
 # 偽の DNS（www.vibeos.test）。移動・chunked・https への移動・404・無い名前・つながらないポート・Esc で止める。
-# ウィンドウは中身 120,73 に 640x480。"a link to page 2" は 480,167
+# Phase 52（VGA C4）から 16 色の画面（video=vga）で。ウィンドウは中身 3,63 に 636x416（71-browse-local と同じ）。
+# "a link to page 2" は 480,148
 net
 qemu-only
 serve-http
@@ -12,16 +13,17 @@ www-raw SECURE.HTM HTTP/1.1 302 Found\r\nLocation: https://www.vibeos.test/\r\nC
 www-raw SLOW.HTM HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100\r\n\r\n<p>slow\w
 serve-dns www.vibeos.test=10.0.2.100
 boot-config dns=10.0.2.50
+boot-config video=vga
 timeout 30
 wait-serial net: address 10.0.2.15
 wait-serial VibeOS shell
 type browse http://www.vibeos.test/INDEX.HTM &
 key ret
-wait-serial browse: loaded http://www.vibeos.test/INDEX.HTM (32 lines) "Browse test page"
+wait-serial browse: loaded http://www.vibeos.test/INDEX.HTM (34 lines) "Browse test page"
 sleep 500
-expect-screen browse-http-index 120 49 640 490
-# 相対のリンクで同じサーバの 2 ページ目へ（カーソル 512,384 → 480,167）
-mouse-move -32 -217
+expect-screen browse-http-index 2 42 638 438
+# 相対のリンクで同じサーバの 2 ページ目へ（カーソル 320,240 → 480,148）
+mouse-move 160 -92
 mouse-button left down
 mouse-button left up
 wait-serial browse: loaded http://www.vibeos.test/PAGE2.HTM (
@@ -37,7 +39,7 @@ type http://www.vibeos.test/CHUNKED.HTM
 key ret
 wait-serial browse: loaded http://www.vibeos.test/CHUNKED.HTM (2 lines) "Chunked page"
 sleep 300
-expect-screen browse-chunked 120 49 640 490
+expect-screen browse-chunked 2 42 638 438
 # https への移動は開かずにエラーのページ
 key ctrl+l
 type http://www.vibeos.test/SECURE.HTM
@@ -45,8 +47,8 @@ key ret
 wait-serial browse: http://www.vibeos.test/SECURE.HTM: The page moved to https://www.vibeos.test/, but HTTPS is not supported.
 wait-serial browse: loaded http://www.vibeos.test/SECURE.HTM (
 sleep 300
-expect-screen browse-https-redirect 120 49 640 490
-expect-screen browse-https-redirect-status 134 535 500 17
+expect-screen browse-https-redirect 2 42 638 438
+expect-screen browse-https-redirect-status 6 460 500 18
 # 404
 key ctrl+l
 type http://www.vibeos.test/MISSING.HTM

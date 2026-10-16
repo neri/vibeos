@@ -7,8 +7,8 @@ type clock
 key ret
 wait-serial clock: started
 sleep 300
-# 時計の文字盤（白）が左上から出ている（画面は 2 倍で取れる）
-expect-pixel 10 30 255 255 255
+# 時計のウィンドウ（明るい灰色の地）が左上から出ている（画面は 2 倍で取れる。Phase 52 から時計は 16 色の絵）
+expect-pixel 10 30 168 168 168
 key esc
 wait-serial clock: closed
 type echo back to shell

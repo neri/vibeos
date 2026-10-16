@@ -106,6 +106,12 @@ pub fn font16() -> &'static Font {
     &vibe_font::FONT_8X16_TALL
 }
 
+/// VGA の BIOS の 8x16 のフォントのバイト列（アプリに渡す。256 字 × 16 バイト）
+pub fn bios_font_bytes() -> Option<&'static [u8]> {
+    // SAFETY: BIOS_FONT は init（起動直後）の後は書き換えない
+    has_bios_font().then(|| unsafe { (&*BIOS_FONT.as_ptr()).as_slice() })
+}
+
 /// VGA の BIOS の 8x16 のフォントを使えるか
 pub fn has_bios_font() -> bool {
     BIOS_FONT_OK.load(Ordering::Acquire)

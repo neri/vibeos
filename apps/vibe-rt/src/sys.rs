@@ -211,6 +211,11 @@ pub fn icon_data(name: &str, buf: &mut [u32; vibe_abi::ICON_SIZE * vibe_abi::ICO
     syscall(nr::ICON_DATA, name.as_ptr() as u32, name.len() as u32, buf.as_mut_ptr() as u32, 0, 0)
 }
 
+/// 16 色の 16x16 のアイコン（色番号、透明は 0xFF）
+pub fn icon16_data(name: &str, buf: &mut [u8; vibe_abi::ICON_SIZE * vibe_abi::ICON_SIZE]) -> i32 {
+    syscall(nr::ICON16_DATA, name.as_ptr() as u32, name.len() as u32, buf.as_mut_ptr() as u32, 0, 0)
+}
+
 /// イベントを待つ。timeout_ms = 0 なら待たない、u32::MAX ならいつまでも
 pub fn win_event(win: i32, timeout_ms: u32) -> Option<vibe_abi::WinEvent> {
     let mut ev = vibe_abi::WinEvent::default();

@@ -1,26 +1,21 @@
-# Phase 8: BMP 画像を全画面で表示し、キーでコンソールに戻る
-# 期待画像は 320x200 のもの
-boot-config video=320x200
+# Phase 8: BMP 画像を表示し、キーで閉じる。Phase 52（VGA C4）から 16 色の画面（video=vga）のウィンドウで
+# （画面の比較は 51-paint-view）。BMP でないファイルはエラーになる
+boot-config video=vga
 timeout 20
-wait-serial VIBEOS READY
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
-# 8 ビット（画像のパレットをそのまま使う）
+# 8 ビット
 type view /images/plasma.bmp
 key ret
 wait-serial view: showing 320x200
 sleep 300
-expect-screen view-plasma
 key esc
 wait-serial view: closed (320x200 8-bit)
-# コンソールに戻り、標準パレットに戻っている（ステータスバーの青）
-sleep 200
-expect-pixel 4 4 0 0 168
-# 24 ビット（標準パレットの近い色に置き換える）
+# 24 ビット（相対パス）。Space でも閉じる
 type view images/gradient.bmp
 key ret
 wait-serial view: showing 160x100
 sleep 300
-expect-screen view-gradient
 key spc
 wait-serial view: closed (160x100 true color)
 type view /hello.txt

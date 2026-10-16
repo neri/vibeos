@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use vibe_calc::{Calc, Key, Op};
 use vibe_rt::abi::key;
-use vibe_rt::gfx::{Event, Window32 as Window};
+use vibe_rt::gfx::{Event, Window};
 use vibe_rt::{println, sys};
 use vibe_ui::{Action, Align, Button, Id, Input, Label, Rect, Ui};
 
@@ -57,7 +57,7 @@ struct App {
 }
 
 fn main() -> i32 {
-    vibe_ui::set_fonts(vibe_rt::gfx::font(vibe_rt::abi::FONT_UI), vibe_rt::gfx::font(vibe_rt::abi::FONT_BOLD));
+    vibe_ui::set_font(vibe_rt::gfx::font16());
     let Some(mut win) = Window::open(W, H, "Calc") else {
         println!("calc: cannot open a window");
         return 1;
@@ -118,9 +118,9 @@ impl App {
     fn draw(&mut self, win: &mut Window) {
         let text = self.calc.display();
         self.ui.set_text(self.display, &text);
-        let mut c = win.canvas();
-        c.clear(vibe_rt::gfx_lib::theme::FACE);
-        self.ui.draw(&mut c);
+        let mut s = win.surface();
+        s.clear(vibe_ui::draw::FACE);
+        self.ui.draw(&mut s);
         win.present();
     }
 }

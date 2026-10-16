@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use vibe_abi::{GFX_CURSOR, SCREEN_HEIGHT, SCREEN_WIDTH};
-use vibe_font::VFont;
+use vibe_font::{Font, VFont};
 use vibe_gfx::Surface;
 use vibe_gfx::canvas::Canvas;
 
@@ -90,8 +90,17 @@ impl Window {
         Surface::new(&mut self.buf, self.w, self.h)
     }
 
+    pub fn pixels(&self) -> &[u8] {
+        &self.buf
+    }
+
     pub fn present(&self) {
         sys::win_blit(self.id, &self.buf);
+    }
+
+    /// タイトルを変える
+    pub fn set_title(&self, title: &str) {
+        sys::win_title(self.id, title);
     }
 
     /// ウィンドウ独自のパレット（各 6bit）。デスクトップでは標準のパレットの近い色で出る
@@ -231,6 +240,53 @@ pub fn draw_text_centered(c: &mut Canvas, kind: u32, x: i32, w: i32, top: i32, s
 pub fn icon(name: &str) -> Option<Vec<u32>> {
     let mut buf = [0u32; vibe_abi::ICON_SIZE * vibe_abi::ICON_SIZE];
     (sys::icon_data(name, &mut buf) == 0).then(|| buf.to_vec())
+}
+
+static FONT16: AtomicPtr<Font> = AtomicPtr::new(core::ptr::null_mut());
+
+/// 8x16 のフォント（VGA の BIOS のもの。カーネルから最初に使うときに写し、ずっと持つ）。無ければ 8x8 を
+/// 縦に 2 倍したもの。16 色の画面のアプリの文字
+pub fn font16() -> &'static Font {
+    let p = FONT16.load(Ordering::Acquire);
+    if !p.is_null() {
+        // SAFETY: 入れるのは Box::leak したものだけで、消さない
+        return unsafe { &*p };
+    }
+    let mut buf = Box::new([0u8; 256 * 16]);
+    let font = if sys::font_data(vibe_abi::FONT_VGA16, &mut buf[..]) == buf.len() as i32 {
+        Font::vga16(Box::leak(buf))
+    } else {
+        vibe_font::FONT_8X16_TALL.clone()
+    };
+    let f: &'static Font = Box::leak(Box::new(font));
+    FONT16.store(f as *const _ as *mut _, Ordering::Release);
+    f
+}
+
+/// 8x16 の文字列の幅
+pub fn text16_width(s: &str) -> i32 {
+    (s.chars().count() * font16().width) as i32
+}
+
+/// 8x16 の文字列を `x`〜`x + w` の真ん中に描く（`bold` なら重ね打ち）
+pub fn draw_text16_centered(s: &mut Surface, x: i32, w: i32, y: i32, text: &str, color: u8, bold: bool) {
+    let x = x + (w - text16_width(text)) / 2;
+    if bold {
+        s.draw_text_bold(font16(), x, y, text, color);
+    } else {
+        s.draw_text(font16(), x, y, text, color, None);
+    }
+}
+
+/// 16 色の 16x16 のアイコン（色番号、透明は `vibe_gfx::icons::TRANSPARENT`）。無ければ None
+pub fn icon16(name: &str) -> Option<Vec<u8>> {
+    let mut buf = [0u8; vibe_abi::ICON_SIZE * vibe_abi::ICON_SIZE];
+    (sys::icon16_data(name, &mut buf) == 0).then(|| buf.to_vec())
+}
+
+/// 16 色のアイコンを (x, y) に置く（透明の画素は描かない）
+pub fn draw_icon16(s: &mut Surface, x: i32, y: i32, icon: &[u8]) {
+    s.blit(x, y, icon, vibe_abi::ICON_SIZE, Some(vibe_gfx::icons::TRANSPARENT));
 }
 
 /// 画面がデスクトップ（ウィンドウを重ねて出す）か。320x200 の全画面なら false
