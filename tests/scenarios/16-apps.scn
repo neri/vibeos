@@ -1,22 +1,22 @@
 # Phase 10: アプリ群（mandel / snake / more）
-# 期待画像は 320x200 のもの
-boot-config video=320x200
+# Phase 52（VGA C4）から 16 色の画面で。mandel と snake は 320x200 のウィンドウ
+# （1 つ目は中身 120,65、2 つ目は 144,85）
 timeout 40
-wait-serial VIBEOS READY
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
 # マンデルブロ集合（決まった絵になる）
 type mandel
 key ret
 wait-serial mandel: rendered
 sleep 200
-expect-screen mandel
+expect-screen mandel 120 65 320 200
 key esc
 sleep 300
 # ヘビのゲーム: 動き続け、矢印で曲がり、Esc で終わる
 type snake
 key ret
 wait-serial snake: started
-expect-change 0 40 640 360 500
+expect-change 144 105 320 180 500
 key up
 sleep 300
 key left

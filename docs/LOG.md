@@ -10,7 +10,7 @@
 | 2026-10-11 | png（ホスト） | 0.17 | vibe-run の画面比較 | ホスト側ツール |
 | 2026-10-11 | font8x8 | 0.3（default-features なし） | 8×8 フォントのデータ | DESIGN.md §3.4 で可としたもの。描画は自作 |
 | 2026-10-12 | miniz_oxide | 0.9（default-features なし） | アプリ（gzip）の deflate の展開（`crates/vibe-pack` 経由でカーネルが使う） | DESIGN.md §3.4 で可としたもの（D-035）。gzip の枠は自作。ホストのテストでは deflate の圧縮にも使う |
-| 2026-10-13 | ab_glyph（ホスト） | 0.2.32 | `tools/vibe-fontgen` で TrueType をラスタライズする | ホスト側ツール（ブランチ `modern-look`、M3）。カーネル・アプリには入れない |
+| 2026-10-13 | ab_glyph（ホスト） | 0.2.32 | `tools/vibe-fontgen` で TrueType をラスタライズする | ホスト側ツール（ブランチ `modern-look`、M3）。カーネル・アプリには入れない。2026-10-16 の VGA C5 で `vibe-fontgen` ごと外した |
 | 2026-10-14 | miniz_oxide（使う所を足した） | 0.9（default-features なし） | `crates/vibe-web` の PNG の zlib の展開（ブラウザ `browse`） | 新しいクレートではなく、上の行のものを `vibe-web` からも使う（ブランチ `browser`、B4）。PNG の塊・フィルタ・色の読み方は自作 |
 
 ---
@@ -718,3 +718,64 @@
 ## 2026-10-15 browser を main に合流
 
 - オーナーの「この構図でコミットして、main に合流して」で、スクリーンショットの構図（D-069）と画像を別々にコミットし、ブランチ `browser` を main に合流した（D-070。マージのコミット。push はしていない）。ブランチは残す
+
+## 2026-10-16 VGA のモード 12h だけにする計画書（ブランチ `test/mode12`）
+
+- オーナーの「VGA mode12 (640x480x16) 用に UI を構成し直す計画書を作って」で [plans/vga16.md](plans/vga16.md) を書いた。最初はモダンを残してモード 12h を 3 つ目のモードにする案だった
+- オーナーの質問「モード 12 対応はモード 13 対応より難しい？」に答えた。ドライバは少し難しい程度（4 枚の面への並べ替え・アトリビュートのパレット・1 画面が 2.4 倍）で、手間の大半は 16 色しか無いことのほう
+- オーナーの「既存との互換性は考慮しなくて良い」と範囲の選択（VGA だけにする）で、VESA・今風の見た目・320x200 のレトロを無くす計画に書き直した（D-071）。§6 はすべて推奨のまま（D-072）。まだ PLAN.md の Phase には割り当てていない
+
+## 2026-10-16 VGA C1: モード 12h の画面（Phase 49、ブランチ `test/mode12`）
+
+- オーナーの「C1〜C6 を PLAN.md の Phase に割り当てて、C1 から実装を始めて」で、C1〜C6 を Phase 49〜54 にした
+- ローダ: `video=vga` で `int 10h AX=0012h`、ブート情報は 640x480・`bpp = 4`・`pitch = 80`。切り替えた後は BIOS の文字表示を使わない（画面を汚さないため）
+- `vibe_gfx::planar`（8 ピクセル → 4 枚の面の並べ替え。ホストのテスト 6 本）と `palette::VGA16`・`nearest16`・`map16`（テスト 3 本）
+- `vga::write_row4` と `init_planar`（グラフィックスコントローラ・アトリビュートのパレット・DAC を明示して設定）。全画面の経路で、前面のウィンドウのパレットの色番号を 16 色に直して出す
+- シナリオ `74-vga-console`（端末の 16 色の表を `head` で出し、画面と 2 点の色を比べる。表は `tests/scripts/colors.txt`）・`75-vga-panic`。期待画像 `vga-console`・`vga-panic` は目で確かめた
+- 最初の試しでそのまま映った。16 色は QEMU の画面で Windows の 16 色の値そのもの（DAC の 32 → 128、48 → 192）
+
+## 2026-10-16 VGA C2: 16 色の素材（Phase 50、ブランチ `test/mode12`）
+
+- ローダが VGA の BIOS の 8x16 のフォント（`int 10h AX=1130h BH=06h`）を `0x3000` に写し、ブート情報の `font16` で渡す。カーネルは `vga::init` で自分の中に写す（`vga::font16`。無ければ 8x8 を縦に 2 倍した `FONT_8X16_TALL`）
+  - 詰まった所: 最初は答えの CX（1 字のバイト数）が 16 かで確かめていたが、SeaVGABIOS は CX に「今の画面の字の高さ」（モード 13h なので 8）を返し、いつも無しになった。Ralf Brown の割り込みの一覧にも同じ注意がある。ES:BP を 0:0 にしてから呼び、変わったかで確かめるようにした
+- `vibe-font`: `Font` を 8x8・8x8 を縦に 2 倍・VGA の BIOS の並び（bit 7 が左端、256 字）の 3 種類に。BIOS のフォントは ASCII の表示できる字だけを使う
+- `vibe-gfx`: `dither`（4096 項目の近い色の表 `Lut16` と Floyd–Steinberg）・`Bmp::to_vga16`、`Surface` の `bevel`・`circle`・`fill_circle`・`thick_line`・`draw_text_bold`
+- 16 色のアイコン: `.VIA` に 1 画素 1 バイトの `VIA4` を足し、`vibe-icongen --vga16` で `assets/icons/ICONS4.VIA`（19 個、5,100 バイト）を作る。最初は近い色だけで選んだので、青みのある灰色の縁が紺や青緑の点になった（`mines`・`terminal`・`script`・`app`）。灰色に近い色は黒・灰・白から選ぶようにした。どれも何の絵か分かる（`calc` はオリーブ、`edit` は灰色になる。見た目は C3 でオーナーに見せる）
+- ktest `vga16_assets`（BIOS のフォントの字・16 色のアイコン）。ホストのテストは vibe-font 3 本・vibe-gfx 8 本を足した
+
+## 2026-10-16 VGA C3: 16 色のデスクトップ（Phase 51、ブランチ `test/mode12`）
+
+- `gui/classic.rs`: Windows 3.x 風のタイトルバー・バー・メニュー・背景・カーソルと、色番号の 1 行の重ね合わせ。`start_desktop` がモード 12h ならこちらにする（`gui::is_classic`）。タイトルバーとバーの高さは `title_h()`・`bar_h()` にした（今風の画面は 24 のまま）
+- 端末は 8 ビットのウィンドウで 8x16（VGA の BIOS のフォント）の 80x25。幅が 640 なので x = 0 に置く（左右の枠は画面の外）
+- ドラッグは点線の枠だけを動かし、離したときにウィンドウを動かす。書き換えた範囲は x の範囲も持ち（`mark_rect`）、`vga::write_row4_span` で必要なバイトだけを送る
+- アプリの 32 ビットのウィンドウは、重ねるときに近い色の表（`Lut16`）で 16 色に（C4 まで）。clock は思ったより崩れずに出る
+- 背景の画像は読むとき（`gfx::wallpaper::load` と `wallpaper_set` のシステムコール）に 1 回だけ 16 色に誤差拡散する（`vibe_gfx::wallpaper::fill_row` を色番号の行にも使えるようにした）
+- 詰まった所: 2 つ目からの端末のタイトルバーにアイコンが出なかった（タイトルバーを描いた後でアイコンを付けていた）。16 色の画面では付けた後に描き直す
+- シナリオ `76-vga-desktop`（メニュー・最小化・バーで戻す・Alt+Tab・枠のドラッグ・[x]）・`77-vga-terminals`（クリップボード・端末 2・背景の画像）。`74-vga-console` はデスクトップの端末で 16 色を確かめる形にした。期待画像 9 枚は目で確かめた。寸法と細かい見た目は D-073（オーナーに画像を見せる）
+
+## 2026-10-16 VGA C4: アプリを 16 色に（Phase 52、ブランチ `test/mode12`）
+
+- オーナーが C3 の見た目を確かめ（「The look is fine」）、C4 に進むよう指示した
+- システムコール: `font_data(FONT_VGA16)` で VGA の BIOS の 8x16 のフォント、`icon16_data`（74 番）で 16 色のアイコン。`vibe_rt::gfx` に `font16`・`icon16`・`draw_text16_centered`・`Window::set_title`
+- `vibe-ui`: 32 ビットの `Canvas` から 8 ビットの `Surface` へ。Windows 3.x 風の立体の部品（`draw::raised`・`pressed`・`sunken`・`focus_rect`）、固定幅のビットマップのフォント（`set_font`）。描画のテストを 16 色に書き直した（22 本）
+- アプリ: `calc`・`files`・`tasks` は部品の差し替えだけ。`clock`・`mines`・`blocks`・`paint`・`view`・`mandel`・`snake`・`browse` は 16 色で描き直した。`mandel`・`snake`・`view`・`paint` の全画面は無くしてウィンドウだけに。`life` はもとから 16 色
+- ブラウザは 8x16 の固定幅の字だけ（`Metrics` も固定幅）。画像は読んだときに 16 色に誤差拡散。640x480 では 636x416 のウィンドウ
+- シナリオをアプリごとに 16 色の画面に移した（D-074）。リンクの位置はページを描いて青い下線を探して決めた。`48-files` で files と view の出力が 1 行に混ざって待ちが外れることがあった（`71-browse-local` と同じ。起動したアプリの出力が println! の途中に割り込む）。混ざる前の所までを待つようにした
+- 期待画像（作り直したもの 30 枚ほど）はまとめて並べて目で確かめた。落ち物パズルの一時停止の比べる範囲が帯の上を切っていたので広げた
+
+## 2026-10-16 VGA C5: モード 12h だけにする（Phase 53、ブランチ `test/mode12`）
+
+- 途中でセッションの利用の上限で止まり、オーナーの「続けて」で再開した
+- ローダ: VESA のモードの選び方・EDID・`video=`・Shift を消し、いつもモード 12h（`set_video`）。テストランナーの `video=1024x768` を足す処理も消した
+- カーネル: `gui` を 16 色だけに書き直した（`gui/mod.rs`。見た目は `classic.rs` を `draw.rs` にした、`deco.rs`・`dock.rs` は消した）。`vga.rs` はモード 12h だけ、`gfx/fonts.rs`（`.VFN`）を消し、`gfx/icons.rs` は 16 色だけ。端末は 8 ビットのウィンドウだけ、Alt+F1〜F4 は無し。装置のメモリの窓を消した。消したシステムコールと、プロセスの全画面（`display`）も無くした
+- ライブラリとツール: `vibe-gfx` の `canvas`・`panel`・`backdrop`・`dock`・`theme`・256 色の標準のパレットを消し、`.VIA` は 16 色（`VIA4`）だけ。`vibe-font` の `vfn`、`vibe-fontgen`・`fetch-fonts.sh`・`assets/fonts`（Noto と OFL.TXT）・`dock-cfg.sh`・`make fonts`・`make test-dock-cfg` を消した。外部クレートの `ab_glyph` は使わなくなった
+- `vibe-rt`: `Screen`・`Window32`・`.VFN` のフォントと 32 ビットのアイコンの関数を消した
+- シナリオは D-075 のとおり（60 本に）。期待画像は 15 枚を消し、変わった 12 枚を作り直して目で確かめた。`more` の画面は最後の行の割合がビルドごとに変わるので比べる範囲から外した
+- 大きさ（`make size-report`）: KERNEL.SYS は 396,240 バイト（圧縮して 178,014 = 44.9%）、アプリは gzip で 630,541 バイト、フロッピーの空きは 512,000 バイト（C1 の前は 430,080。フォントと 32 ビットの描き方が無くなった分）
+
+## 2026-10-16 VGA C6: 速さと Bochs（Phase 54、ブランチ `test/mode12`）
+
+- ktest `gfx_frame_speed`（最後のテスト。そこでデスクトップにする）: ウィンドウ 4 つの 1 枚を 50 回描き直す時間と、VRAM に書いたバイト数を測る。最初は 1 枚 10ms 前後で、毎回 153,600 バイト全部を書いていた
+- `vga::write_row4_span` に VRAM の写し（153,600 バイト、BSS）を足し、同じバイトは書かないようにした（D-076）。中身が変わる 1 枚で 5ms・17,622 バイト、変わらない 1 枚で 2ms・0 バイト（QEMU）。Bochs では どちらも 10ms
+- `make test-bochs`: モード 12h で起動してデスクトップになり、キーで端末が動く（26 本が通り、画面の比較・マウス・QEMU の設定の要るものは今までどおり飛ばす）。`54-pipe` が 1 回だけ落ちた: 打った `"` が Bochs の中で 2 回届いて引用符が閉じなかった。続けて 2 回流すと通ったので、Bochs への打鍵（RFB）がたまに重なるもの。`59-sh-autorun-files` はキーだけで動くので Bochs でも流すようにした（前はレトロの画面になるので QEMU だけだった）
+- 計画書 [plans/vga16.md](plans/vga16.md) の C1〜C6 が終わった（§9）。main に合流するかはオーナーに聞く

@@ -1,7 +1,7 @@
-//! vibe-icongen: 手で書いた SVG のアイコンを 16x16（`--size` で変える。ドックは 32x32）にラスタライズし、
-//! 1 つのファイル（`.VIA`。crates/vibe-gfx の icons）にまとめる。
+//! vibe-icongen: 手で書いた SVG のアイコンを 16x16 にラスタライズし、VGA の 16 色にして（アルファは半分で切り、
+//! 色は一番近い 16 色。`vibe_gfx::icons::quantize16`）1 つのファイル（`.VIA`。crates/vibe-gfx の icons）にまとめる。
 //!
-//! 使い方: vibe-icongen [--size N] OUT SVG...（アイコンの名前はファイル名から拡張子を除いたもの、最大 12 文字）
+//! 使い方: vibe-icongen OUT SVG...（アイコンの名前はファイル名から拡張子を除いたもの、最大 12 文字）
 //!
 //! SVG は自分で読む（外部のクレートを使わない）。対応するのはアイコンに使う一部だけ:
 //! - `<svg viewBox="0 0 W H">`（正方形）
@@ -14,18 +14,14 @@
 
 use std::path::Path;
 
-const DEFAULT_SIZE: usize = 16;
+const SIZE: usize = 16;
 const SS: usize = 8;
 
 fn main() {
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let mut size = DEFAULT_SIZE;
-    if args.first().is_some_and(|a| a == "--size") && args.len() > 1 {
-        size = args[1].parse().unwrap_or(0);
-        args.drain(..2);
-    }
-    if args.len() < 2 || !(8..=64).contains(&size) {
-        eprintln!("usage: vibe-icongen [--size N] OUT SVG...");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let size = SIZE;
+    if args.len() < 2 {
+        eprintln!("usage: vibe-icongen OUT SVG...");
         std::process::exit(2);
     }
     let mut icons = Vec::new();
@@ -36,6 +32,7 @@ fn main() {
         icons.push((name, pixels));
     }
     icons.sort_by(|a, b| a.0.cmp(&b.0));
+    let icons: Vec<(String, Vec<u8>)> = icons.iter().map(|(n, px)| (n.clone(), vibe_gfx::icons::quantize16(px))).collect();
     let out = vibe_gfx::icons::encode(size as u16, &icons);
     std::fs::write(&args[0], &out).unwrap_or_else(|e| panic!("{}: {e}", args[0]));
     eprintln!("{}: {} icons, {} bytes", args[0], icons.len(), out.len());

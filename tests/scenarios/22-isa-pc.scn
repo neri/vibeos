@@ -1,11 +1,19 @@
-# PCI の無い古い ISA の PC（QEMU の isapc）でも起動し、キーボード・マウス・フロッピーが使える
+# PCI の無い古い ISA の PC（QEMU の isapc）でも起動し、キーボード・マウス・フロッピーが使える。
+# 画面は標準の VGA と同じモード 12h のデスクトップ（Phase 53）
 qemu-arg -M
 qemu-arg isapc
 timeout 20
+wait-serial video: 640x480x4
 wait-serial ps2: keyboard true, mouse true
 wait-serial fdc: drive A ready
 wait-serial VIBEOS READY
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
+type echo hello
+key ret
+wait-serial hello
+sleep 300
+expect-screen vga-desktop 0 0 380 480
 type ls /bin
 key ret
 wait-serial HELLO.ELF

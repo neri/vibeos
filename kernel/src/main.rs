@@ -126,9 +126,13 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     klog!("interrupts enabled");
     // フロッピーの初期化は割り込みを待つので、割り込みを許可してから
     drivers::fdc::init();
-    // なめらかなフォントとアイコン（デスクトップの飾り。ファイルシステムの後、デスクトップにする前。
+    // アイコン（デスクトップの飾り。ファイルシステムの後、デスクトップにする前。
     // ネットワークより先に読む: DHCP の知らせが VIBEOS READY より前に出ないように）
-    gfx::fonts::load();
+    if drivers::vga::has_bios_font() {
+        klog!("fonts: 8x16 from the VGA BIOS");
+    } else {
+        klog!("fonts: 8x16 is the 8x8 font doubled (no font in the VGA BIOS)");
+    }
     gfx::icons::load();
     // ネットワーク（BOOT.CFG を読むのでファイルシステムの後。アドレスは裏で DHCP がもらう）
     net::init();
@@ -141,11 +145,11 @@ extern "C" fn kmain(magic: u32, loader_info: &'static BootInfo) -> ! {
     #[cfg(not(feature = "qemu-test"))]
     {
         // 画面が広ければデスクトップ（ウィンドウ）にして、コンソールを端末のウィンドウに合わせる
-        if gui::start_desktop() {
-            gfx::console::init();
-            klog!("gui: desktop {}x{}", drivers::vga::width(), drivers::vga::height());
-            gfx::wallpaper::load_from_config();
-        }
+        // デスクトップにして、コンソールを端末のウィンドウに合わせる
+        gui::start_desktop();
+        gfx::console::init();
+        klog!("gui: desktop {}x{}", drivers::vga::width(), drivers::vga::height());
+        gfx::wallpaper::load_from_config();
         gfx::statusbar::start();
         task::spawn("shell", || shell::run_terminal(None));
     }

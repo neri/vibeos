@@ -1,8 +1,8 @@
 # Phase 37（デスクトップ D6）: クリップボード。端末の文字をマウスでなぞって写し、シェル（Ctrl+V）と edit（Ctrl+U）に
 # 貼り付ける。edit で切り取った行（Ctrl+K）も端末に貼り付けられる
-# 端末 1 の中身は 8,294 から（ドックの上）。文字は 8x16（行 r は y = 294 + 16r、桁 c は x = 8 + 8c）
+# 端末 1 の中身は 0,72 から。文字は 8x16（行 r は y = 72 + 16r、桁 c は x = 8c）
 timeout 30
-wait-serial gui: desktop 1024x768
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
 type echo copy me please
 key ret
@@ -10,15 +10,15 @@ key ret
 wait-serial copy me please
 wait-serial copy me please
 sleep 300
-# 3 行目（出力）の "copy me"（0〜6 桁）をなぞる（カーソル 512,384 → 10,334 → 60,334）
-mouse-move -502 -50
+# 3 行目（出力）の "copy me"（0〜6 桁）をなぞる（カーソル 320,240 → 2,112 → 54,112）
+mouse-move -318 -128
 mouse-button left down
-mouse-move 25 0
-mouse-move 25 0
+mouse-move 26 0
+mouse-move 26 0
 mouse-button left up
 wait-serial term: copied 7 bytes
 sleep 200
-expect-screen clip-selected 8 294 200 64
+expect-screen clip-selected 0 72 200 64
 # シェルで Ctrl+V
 type echo [
 key ctrl+v
@@ -34,7 +34,7 @@ key ctrl+u
 type edited line
 key ctrl+k
 sleep 200
-expect-screen clip-edit 8 294 640 48
+expect-screen clip-edit 0 72 640 48
 key ctrl+q
 key ctrl+q
 # 切り取った行を端末に貼り付ける

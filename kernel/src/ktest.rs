@@ -54,8 +54,9 @@ const TESTS: &[(&str, fn())] = &[
     ("shell_kill_closes_only_its_terminal", shell_kill_closes_only_its_terminal),
     ("fdc_read_matches_ramdisk", fdc_read_matches_ramdisk),
     ("fs_write_and_sync", fs_write_and_sync),
-    ("gfx_compose_speed", gfx_compose_speed),
-    ("fonts_loaded", fonts_loaded),
+    ("vga16_assets", vga16_assets),
+    // デスクトップにするので最後に
+    ("gfx_frame_speed", gfx_frame_speed),
 ];
 
 pub fn run_all() -> ! {
@@ -650,7 +651,7 @@ fn process_wait_opt() {
 
 /// 端末の sh を止めても、その端末が閉じるだけでカーネルは動き続ける
 fn shell_kill_closes_only_its_terminal() {
-    let win = crate::gfx::console::open_terminal(None, None).expect("open a terminal");
+    let win = crate::gfx::console::open_terminal(None).expect("open a terminal");
     let find_sh = || {
         sched::tasks()
             .into_iter()
@@ -711,82 +712,74 @@ fn fs_write_and_sync() {
     fs::sync().unwrap();
 }
 
-/// 1024x768 の 32 ビットのデスクトップを 1 枚重ね合わせる時間（M2。遅くなったことに気づくため。
-/// QEMU の速さで見るので実機の保証ではない）: グラデーションの背景、影と角の丸い枠の付いたウィンドウ 4 つ
-/// （中身は 8 ビットを表で直す）
-fn gfx_compose_speed() {
-    use vibe_gfx::canvas::{Corner, Shadow, rgb};
-    use vibe_gfx::panel::{PanelStyle, ShadowLayer, panel_row};
-    const W: usize = 1024;
-    const H: usize = 768;
-    const FRAMES: u32 = 10;
-    const CW: usize = 400;
-    const CH: usize = 300;
-    const TH: usize = 24;
-    // デスクトップと同じく 1 行ずつ: 既定の背景（紫の地に円） → 4 つのウィンドウ（影・タイトルバー・8 ビットの中身）
-    let mut screen = vec![0u32; W * H];
-    let client = vec![7u8; CW * CH];
-    let titlebar = vec![rgb(250, 250, 251); CW * TH];
-    let lut = vibe_gfx::palette::lut32(&vibe_gfx::palette::standard());
-    // デスクトップと同じ角・2 層の影（フォーカスのある濃さ）・縁なし
-    use vibe_gfx::theme;
-    let corner = Corner::new(theme::RADIUS);
-    let (near, far) = (Shadow::new(theme::SHADOW_NEAR_BLUR), Shadow::new(theme::SHADOW_FAR_BLUR));
-    let shadows = [
-        ShadowLayer { shadow: &far, dy: theme::SHADOW_FAR_DY, alpha: theme::SHADOW_ALPHA.1 },
-        ShadowLayer { shadow: &near, dy: theme::SHADOW_NEAR_DY, alpha: theme::SHADOW_ALPHA.0 },
-    ];
-    let style = PanelStyle { corner: &corner, shadows: &shadows, shadow_color: theme::SHADOW_COLOR, border: None };
-    let start = pit::ticks();
-    for f in 0..FRAMES as i32 {
-        for (y, row) in screen.chunks_exact_mut(W).enumerate() {
-            vibe_gfx::backdrop::fill_row(row, y, H, theme::DESKTOP, &theme::DESKTOP_CIRCLES);
-            for i in 0..4 {
-                let (x, top) = (60 + i * 150 + f, 60 + i * 100);
-                let rect = (x, top, CW as i32, (TH + CH) as i32);
-                panel_row(row, y as i32, rect, &style, |x0, span| {
-                    let r = y as i32 - top;
-                    if r < 0 || r >= (TH + CH) as i32 {
-                        return;
-                    }
-                    let (s0, s1) = ((x0 - x).max(0) as usize, ((x0 + span.len() as i32 - x) as usize).min(CW));
-                    if s0 >= s1 {
-                        return;
-                    }
-                    let d = &mut span[(x + s0 as i32 - x0) as usize..(x + s1 as i32 - x0) as usize];
-                    let r = r as usize;
-                    if r < TH {
-                        d.copy_from_slice(&titlebar[r * CW + s0..r * CW + s1]);
-                    } else {
-                        let r = r - TH;
-                        for (p, &c) in d.iter_mut().zip(&client[r * CW + s0..r * CW + s1]) {
-                            *p = lut[c as usize];
-                        }
-                    }
-                });
-            }
-        }
+/// モード 12h 用の素材（docs/plans/vga16.md の C2）: VGA の BIOS の 8x16 のフォントと 16 色のアイコン
+fn vga16_assets() {
+    use crate::drivers::vga;
+    use crate::gfx::icons;
+    // QEMU の VGA BIOS には 8x16 のフォントがある
+    assert!(vga::has_bios_font(), "no 8x16 font from the VGA BIOS");
+    let f = vga::font16();
+    assert_eq!((f.width, f.height), (8, 16));
+    // ASCII の表示できる字は空白を除いてどれも絵があり、'A' と 'B' は違う絵
+    for c in '!'..='~' {
+        assert!((0..16).any(|y| f.row_bits(c, y) != 0), "no glyph for {c:?}");
     }
-    let ms = pit::ticks().wrapping_sub(start) * 1000 / pit::TICK_HZ / FRAMES;
-    klog!("bench: compose 1024x768 with 4 windows: {} ms per frame", ms);
-    assert!(screen[W * H / 2] != 0);
-    assert!(ms <= 100, "composing one frame took {ms} ms");
+    assert!((0..16).any(|y| f.row_bits('A', y) != f.row_bits('B', y)));
+    assert!((0..16).all(|y| f.row_bits(' ', y) == 0));
+    // 16 色のアイコン: 16x16 の色番号（0〜15 か透明）
+    for name in ["app", "terminal", "folder", "calc"] {
+        let px = icons::get(name).unwrap_or_else(|| panic!("16-color icon {name}"));
+        assert_eq!(px.len(), icons::SIZE * icons::SIZE);
+        assert!(px.iter().all(|&c| c < 16 || c == vibe_gfx::icons::TRANSPARENT));
+        assert!(px.iter().any(|&c| c != vibe_gfx::icons::TRANSPARENT));
+    }
 }
 
-/// /SYSTEM/FONTS のフォント（gzip）を起動時に読み込めた（M3）
-fn fonts_loaded() {
-    use crate::gfx::fonts;
-    let ui = fonts::ui().expect("UI.VFN");
-    let bold = fonts::ui_bold().expect("UIBOLD.VFN");
-    let mono = fonts::mono().expect("MONO.VFN");
-    assert_eq!((mono.cell_width, mono.line_height), (8, 16));
-    assert_eq!(mono.measure("VibeOS"), 48);
-    assert!(ui.measure("VibeOS") > 30 && ui.measure("VibeOS") < 60, "{}", ui.measure("VibeOS"));
-    assert!(bold.measure("VibeOS") >= ui.measure("VibeOS"));
-    // ASCII の字はすべてある
-    assert!((' '..='~').all(|c| ui.glyph(c).is_some() && mono.glyph(c).is_some()));
-    // 見出し（ブラウザ。アプリに渡すだけ）
-    let head = vibe_font::VFont::parse(fonts::data(vibe_abi::FONT_HEADING).expect("HEAD.VFN")).unwrap();
-    assert_eq!(head.size, 20);
-    assert!(head.measure("VibeOS") > bold.measure("VibeOS"));
+/// デスクトップを 1 枚重ね合わせて 4 枚の面に送る時間（docs/plans/vga16.md の C6。遅くなったことに気づくため。
+/// QEMU の速さで見るので実機の保証ではない）: 背景・バー・ウィンドウ 4 つ（中身は 16 色の縞）・カーソル。
+/// 最後のテストで、ここでデスクトップにする
+fn gfx_frame_speed() {
+    use crate::gui::{self, SCREEN};
+    const FRAMES: u32 = 50;
+    gui::start_desktop();
+    let mut ids = Vec::new();
+    for i in 0..4u8 {
+        let mut s = SCREEN.lock();
+        let id = s.create_window(300, 200, "bench", None, None, "app");
+        ids.push(id);
+        if let Some(mut surf) = s.window_surface(id) {
+            for y in 0..200 {
+                surf.hline(0, y, 300, ((y as u8 / 8) + i) % 16);
+            }
+        }
+        s.mark_window_dirty(id, 0, 200);
+        s.present();
+    }
+    // 窓の中身を毎回変える（縞を 1 つずつずらす）1 枚と、何も変えずに描き直す 1 枚の時間
+    let frame_ms = |change: bool| {
+        let (w0, s0) = crate::drivers::vga::write_stats();
+        let start = pit::ticks();
+        for f in 0..FRAMES {
+            let mut s = SCREEN.lock();
+            if change {
+                for (i, &id) in ids.iter().enumerate() {
+                    if let Some(mut surf) = s.window_surface(id) {
+                        for y in 0..200 {
+                            surf.hline(0, y, 300, ((y as u32 / 8 + i as u32 + f + 1) % 16) as u8);
+                        }
+                    }
+                }
+            }
+            s.redraw_all();
+            s.present();
+        }
+        let ms = pit::ticks().wrapping_sub(start) * 1000 / pit::TICK_HZ / FRAMES;
+        let (w1, s1) = crate::drivers::vga::write_stats();
+        (ms, (w1 - w0) / FRAMES as usize, (s1 - s0) / FRAMES as usize)
+    };
+    let (changed, cw, cs) = frame_ms(true);
+    let (same, sw, ss) = frame_ms(false);
+    klog!("bench: 640x480 frame with 4 windows: {changed} ms when the windows change ({cw} bytes written, {cs} skipped), {same} ms when nothing changes ({sw} written, {ss} skipped)");
+    assert!(changed <= 100, "one frame took {changed} ms");
+    assert_eq!(sw, 0, "an unchanged frame wrote to VRAM");
 }

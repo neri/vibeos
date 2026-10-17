@@ -3,10 +3,9 @@
 //! 全体の高さ `total` のうち `page` だけが見え、その先頭が `pos`。溝を押すと 1 画面ずつ動き、つまみは
 //! ドラッグで動かせる。見た目は一覧（`List`）のスクロールバーと同じ（溝は描かず、細い丸いつまみだけ）。
 
-use vibe_gfx::canvas::Canvas;
+use vibe_gfx::Surface;
 
 use crate::Rect;
-use crate::draw::{Corners, THUMB};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScrollBar {
@@ -89,12 +88,12 @@ impl ScrollBar {
         self.set_pos(pos as i32)
     }
 
-    pub fn draw(&self, c: &mut Canvas, track: Rect) {
+    /// 溝とつまみを描く（全体が見えていれば何も描かない）
+    pub fn draw(&self, s: &mut Surface, track: Rect) {
         if !self.needed() {
             return;
         }
-        let k = Corners::new();
         let (ty, th) = self.thumb(track);
-        c.fill_round_rect(track.x + 2, ty + 1, track.w - 4, th - 2, &k.outer, THUMB, 255);
+        crate::widget::draw_scrollbar(s, track, ty, th);
     }
 }

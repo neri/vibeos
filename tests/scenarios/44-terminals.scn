@@ -1,8 +1,9 @@
 # Phase 32（デスクトップ D1）: 端末を何個でも開ける。出力はそれぞれの端末に出る。edit は端末の大きさ（80x25）を使う。
 # 端末を閉じると、その端末のプロセスも止まる
-# 端末 1 は中身 8,294 から 640x400（ドックの上）。端末 2 は中身 120,73 から 640x400（タイトルバー y=49〜72、[x] は 738〜757）
+# 端末 1 は中身 0,72 から 640x400（タイトルバー y=52〜71）。端末 2 は中身 0,65 から 640x400（タイトルバー y=45〜64、
+# [x] は 618〜637）。端末 2 が前にあると、端末 1 は下の 466〜471 の行と、端末 2 のタイトルバーの上は 45〜50 の行だけが見える
 timeout 30
-wait-serial gui: desktop 1024x768
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
 type term
 key ret
@@ -13,8 +14,8 @@ sleep 300
 type echo in "two"
 key ret
 wait-serial in two
-# 端末 1 の見えている所をクリックして前に出す（カーソル 512,384 → 60,600）
-mouse-move -452 216
+# 端末 1 の見えている所をクリックして前に出す（カーソル 320,240 → 60,469）
+mouse-move -260 229
 mouse-button left down
 mouse-button left up
 sleep 200
@@ -23,16 +24,16 @@ key ret
 wait-serial in one
 sleep 300
 # 上端のバー（時計）を除いて比べる
-expect-screen terminals-two 0 24 1024 744
+expect-screen terminals-two 0 20 640 460
 # edit は 80 桁 x 25 行を使う（1 行目にファイル名、25 行目にキーの説明）
 type edit /new.txt
 key ret
 wait-serial /new.txt (new)
 sleep 300
-expect-screen terminals-edit 8 294 640 400
+expect-screen terminals-edit 0 72 640 400
 key ctrl+q
-# 端末 2 をクリックして前に出し（→ 400,100）、裏で clock、前面で life を動かす
-mouse-move 340 -500
+# 端末 2 のタイトルバーの見えている所をクリックして前に出し（→ 300,47）、裏で clock、前面で life を動かす
+mouse-move 240 -422
 mouse-button left down
 mouse-button left up
 sleep 200
@@ -40,8 +41,7 @@ type clock &
 key ret
 wait-serial clock: started
 sleep 200
-# 新しいウィンドウ（clock）にフォーカスが移るので、端末 2 をもう一度クリックする（→ 500,150）
-mouse-move 100 50
+# 新しいウィンドウ（clock）にフォーカスが移るので、端末 2 のタイトルバーをもう一度クリックする（同じ所）
 mouse-button left down
 mouse-button left up
 sleep 200
@@ -49,18 +49,17 @@ type life
 key ret
 wait-serial life: started
 sleep 300
-# 端末 2 の [x]（→ 747,60）で閉じると、clock と life も止まり、シェルが終わってウィンドウが消える
-mouse-move 247 -90
+# 端末 2 の [x]（→ 627,55）で閉じると、clock と life も止まり、シェルが終わってウィンドウが消える
+mouse-move 327 8
 mouse-button left down
 mouse-button left up
 wait-serial term: stopping clock.ELF
 wait-serial term: stopping life.ELF
 wait-serial term: closed terminal 2
 sleep 500
-# 端末 2・clock・life のあった所は既定の背景に戻る（600,100 は右上の大きな円の中、ほかは地の色）
-expect-pixel 600 100 83 74 183
-expect-pixel 200 150 60 52 137
-expect-pixel 300 200 60 52 137
+# 端末 2 のタイトルバーのあった所（端末 1 の上）は背景（青緑）に戻る
+expect-pixel 300 47 0 128 128
+expect-pixel 600 47 0 128 128
 # フォーカスは端末 1 に戻る
 type echo "still" here
 key ret

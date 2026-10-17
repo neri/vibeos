@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use alloc::sync::Arc;
 
 use vibe_abi::{
-    ArpEntry, DirEntry, FsInfo, KeyEvent, MouseState, NetInfo, PciInfo, PollFd, ProcInfo, SockAddr, SockInfo, SpawnArgs,
+    ArpEntry, DirEntry, FsInfo, KeyEvent, NetInfo, PciInfo, PollFd, ProcInfo, SockAddr, SockInfo, SpawnArgs,
     Stat, SysInfo, WinEvent, err, nr,
 };
 use vibe_net::Ipv4;
@@ -26,9 +26,6 @@ use crate::net;
 use crate::process::{self, UserRef};
 use crate::task::{self, sched};
 
-/// アプリの画面（gfx_open）の大きさ
-const APP_W: usize = 320;
-const APP_H: usize = 200;
 
 type SysResult = Result<u32, i32>;
 
@@ -65,23 +62,23 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
         }
         nr::DETACH => process::detach_child(a).map(|_| 0),
         nr::FONT_DATA => {
-            let data = crate::gfx::fonts::data(a).ok_or(err::ENOENT)?;
+            // VGA の BIOS の 8x16 のフォントだけ（FONT_VGA16）
+            let data = (a == vibe_abi::FONT_VGA16).then(crate::drivers::vga::bios_font_bytes).flatten().ok_or(err::ENOENT)?;
             if c as usize >= data.len() {
                 copy_to_user(user, b, data)?;
             }
             Ok(data.len() as u32)
         }
-        nr::ICON_DATA => {
+        nr::ICON16_DATA => {
             let name = user_str(user, a, b)?;
             let icon = crate::gfx::icons::get(&name).ok_or(err::ENOENT)?;
-            let bytes: alloc::vec::Vec<u8> = icon.iter().flat_map(|p| p.to_le_bytes()).collect();
-            copy_to_user(user, c, &bytes)?;
+            copy_to_user(user, c, icon)?;
             Ok(0)
         }
         nr::TERM_OPEN => {
             let cmd = user_str(user, a, b)?;
             let cmd = (!cmd.trim().is_empty()).then_some(cmd);
-            crate::gfx::console::open_terminal(None, cmd).ok_or(err::ENOMEM)
+            crate::gfx::console::open_terminal(cmd).ok_or(err::ENOMEM)
         }
         nr::PROC_LIST => {
             let list = sched::tasks();
@@ -141,20 +138,6 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             let title = user_str(user, b, c)?;
             let mut s = SCREEN.lock();
             s.set_window_title(id, &title);
-            s.present();
-            Ok(0)
-        }
-        nr::WIN_PALETTE => {
-            let id = own_window(user, a)?;
-            let (start, count) = (b as usize, c as usize);
-            if start + count > 256 {
-                return Err(err::EINVAL);
-            }
-            check_user(user, d, (count * 3) as u32, false)?;
-            // SAFETY: 上で確かめた
-            let rgb = unsafe { core::slice::from_raw_parts(d as *const [u8; 3], count) };
-            let mut s = SCREEN.lock();
-            s.set_window_palette(id, start, rgb);
             s.present();
             Ok(0)
         }
@@ -266,9 +249,16 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             }
             check_user(user, a, n * 4, false)?;
             // SAFETY: 上で今のプロセスが読めるページだと確かめた（4 バイトにそろっている）
-            let pixels = unsafe { core::slice::from_raw_parts(a as *const u32, n as usize) }.to_vec().into_boxed_slice();
+            let src = unsafe { core::slice::from_raw_parts(a as *const u32, n as usize) };
+            let (w, h) = (b as usize, c as usize);
+            // 1 回だけ 16 色に誤差拡散して色番号で持つ
+            let lut = vibe_gfx::dither::Lut16::new();
+            let pixels = vibe_gfx::dither::to_vga16(w, h, &lut, |x, y| {
+                let p = src[y * w + x];
+                [(p >> 16) as u8, (p >> 8) as u8, p as u8]
+            });
             let mut s = SCREEN.lock();
-            s.set_wallpaper(Some(gui::Wallpaper { w: b as usize, h: c as usize, fit, pixels }));
+            s.set_wallpaper(Some(gui::Wallpaper { w, h, fit, pixels: pixels.into_boxed_slice() }));
             s.present();
             Ok(0)
         }
@@ -361,67 +351,6 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             copy_to_user(user, c, bytes)?;
             Ok(count as u32)
         }
-        nr::GFX_OPEN => {
-            let mut u = user.lock();
-            let mut s = SCREEN.lock();
-            if u.display.is_none() {
-                // タイトルはプログラムの名前（拡張子を除く）
-                let name = sched::current_name();
-                let title = name.rsplit_once('.').map_or(name.as_str(), |(base, _)| base);
-                let app = title.to_ascii_lowercase();
-                let id = s.create_window(
-                    APP_W,
-                    APP_H,
-                    title,
-                    Some(sched::current_id()),
-                    true,
-                    Some(sched::current_tty()),
-                    &app,
-                    false,
-                );
-                u.display = Some(id);
-            }
-            s.set_cursor_visible(a & vibe_abi::GFX_CURSOR != 0);
-            s.present();
-            let id = u.display.unwrap();
-            drop(s);
-            gui::clear_mouse(id);
-            Ok(0)
-        }
-        nr::GFX_BLIT => {
-            let len = (APP_W * APP_H) as u32;
-            check_user(user, a, len, false)?;
-            let u = user.lock();
-            let id = u.display.ok_or(err::EINVAL)?;
-            // SAFETY: 上で今のプロセスが読めるページだと確かめた
-            let src = unsafe { core::slice::from_raw_parts(a as *const u8, len as usize) };
-            let mut s = SCREEN.lock();
-            if let Some(mut surf) = s.window_surface(id) {
-                surf.blit(0, 0, src, APP_W, None);
-            }
-            s.mark_window_dirty(id, 0, APP_H);
-            s.present();
-            Ok(0)
-        }
-        nr::GFX_PALETTE => {
-            let (start, count) = (a as usize, b as usize);
-            if start + count > 256 {
-                return Err(err::EINVAL);
-            }
-            check_user(user, c, (count * 3) as u32, false)?;
-            let u = user.lock();
-            let id = u.display.ok_or(err::EINVAL)?;
-            // SAFETY: 上で確かめた
-            let rgb = unsafe { core::slice::from_raw_parts(c as *const [u8; 3], count) };
-            let mut s = SCREEN.lock();
-            s.set_window_palette(id, start, rgb);
-            s.present();
-            Ok(0)
-        }
-        nr::GFX_CLOSE => {
-            process::close_display(&mut user.lock());
-            Ok(0)
-        }
         nr::WIN_OPEN => {
             let (w, h) = (a as usize, b as usize);
             if w == 0 || h == 0 || w > 640 || h > 480 {
@@ -432,8 +361,7 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             // アイコンはプログラムの名前（小文字、拡張子を除く）から
             let name = sched::current_name().to_ascii_lowercase();
             let app = name.rsplit_once('.').map_or(name.as_str(), |(base, _)| base);
-            let rgb = e & vibe_abi::WIN_RGB32 != 0;
-            let id = SCREEN.lock().create_window(w, h, &title, Some(sched::current_id()), false, tty, app, rgb);
+            let id = SCREEN.lock().create_window(w, h, &title, Some(sched::current_id()), tty, app);
             user.lock().windows.push(id);
             SCREEN.lock().present();
             Ok(id)
@@ -441,25 +369,12 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
         nr::WIN_BLIT => {
             let id = own_window(user, a)?;
             let (w, h) = window_size(id).ok_or(err::EINVAL)?;
-            let rgb = SCREEN.lock().window_is_rgb(id);
-            check_user(user, b, (w * h * if rgb { 4 } else { 1 }) as u32, false)?;
+            check_user(user, b, (w * h) as u32, false)?;
             let mut s = SCREEN.lock();
-            match s.window_pixels(id) {
-                Some(gui::WinPixels::P8(mut surf)) if !rgb => {
-                    // SAFETY: 上で今のプロセスが読めるページだと確かめた
-                    let src = unsafe { core::slice::from_raw_parts(b as *const u8, w * h) };
-                    surf.blit(0, 0, src, w, None);
-                }
-                Some(gui::WinPixels::P32(mut c, _)) if rgb => {
-                    if b % 4 != 0 {
-                        return Err(err::EINVAL);
-                    }
-                    // SAFETY: 上で今のプロセスが読めるページだと確かめた（4 バイトにそろっている）
-                    let src = unsafe { core::slice::from_raw_parts(b as *const u32, w * h) };
-                    c.blit(0, 0, src, w);
-                }
-                _ => return Err(err::EINVAL),
-            }
+            let mut surf = s.window_surface(id).ok_or(err::EINVAL)?;
+            // SAFETY: 上で今のプロセスが読めるページだと確かめた
+            let src = unsafe { core::slice::from_raw_parts(b as *const u8, w * h) };
+            surf.blit(0, 0, src, w, None);
             s.mark_window_dirty(id, 0, h);
             s.present();
             Ok(0)
@@ -499,23 +414,12 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             Ok(0)
         }
         nr::GETKEY => {
-            // 画面（ウィンドウ）を開いていればそこへのキー、なければ端末へのキー
-            let win = user.lock().display.unwrap_or_else(sched::current_tty);
+            // 端末へのキー（ウィンドウのアプリは win_event で受け取る）
+            let win = sched::current_tty();
             let ev = if a != 0 { gui::try_read_key(win) } else { gui::read_key(win) };
             Ok(ev.map_or(0, |e| {
                 KeyEvent::encode(e.ch, e.key.0, e.pressed, e.mods.shift(), e.mods.ctrl(), e.mods.alt())
             }))
-        }
-        nr::MOUSE => {
-            let Some(win) = user.lock().display else { return Ok(0) };
-            match gui::poll_mouse(win) {
-                Some(m) => {
-                    let st = MouseState { x: m.x, y: m.y, buttons: m.buttons as u32 };
-                    copy_to_user(user, a, as_bytes(&st))?;
-                    Ok(1)
-                }
-                None => Ok(0),
-            }
         }
         _ => Err(err::ENOSYS),
     }

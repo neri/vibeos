@@ -1,4 +1,4 @@
-//! デスクトップの背景の画像（BMP を読んで 32 ビットにし、並べ方と一緒に gui に渡す。並べるのは gui が 1 行ずつ）
+//! デスクトップの背景の画像（BMP を読んで 16 色に誤差拡散し、並べ方と一緒に gui に渡す。並べるのは gui が 1 行ずつ）
 //!
 //! BOOT.CFG の `wallpaper=PATH [tile|center]` で起動時に、シェルの `wallpaper` でその場で変える。
 
@@ -6,6 +6,7 @@ use alloc::format;
 use alloc::string::String;
 
 use vibe_gfx::bmp::Bmp;
+use vibe_gfx::dither::Lut16;
 use vibe_gfx::wallpaper::{self, Fit};
 
 use crate::gui::{self, SCREEN};
@@ -20,15 +21,16 @@ pub fn load(path: &str, fit: Fit) -> Result<(), String> {
     if bmp.width * bmp.height > vibe_abi::WALLPAPER_MAX_PIXELS {
         return Err(String::from("too large"));
     }
-    let pixels = bmp.to_rgb32().into_boxed_slice();
     let (w, h) = (bmp.width as usize, bmp.height as usize);
+    // 読むときに 1 回だけ誤差拡散する（並べるときは色番号を写すだけ）
+    let pixels = bmp.to_vga16(&Lut16::new()).into_boxed_slice();
     let mut s = SCREEN.lock();
     s.set_wallpaper(Some(gui::Wallpaper { w, h, fit, pixels }));
     s.present();
     Ok(())
 }
 
-/// 背景をグラデーションに戻す
+/// 背景を青緑の単色に戻す
 pub fn clear() {
     let mut s = SCREEN.lock();
     s.set_wallpaper(None);

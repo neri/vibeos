@@ -1,15 +1,17 @@
 //! ページの中の画像（PNG と BMP）
 //!
 //! 中身の先頭で形式を見分ける（PNG の印・"BM"）。1 枚は 1024x1024 まで。透明な所はページの地の色にする。
+//! 読んだら VGA の 16 色に誤差拡散して持つ（描くときは色番号を写すだけ）。
 //! 表示する大きさは `<img>` の width・height（片方だけなら縦横の比を保つ）、無ければ画像の大きさ。
 
 use alloc::vec::Vec;
 
 use vibe_rt::gfx_lib::bmp::Bmp;
+use vibe_rt::gfx_lib::dither::{self, Lut16};
 use vibe_web::doc;
 use vibe_web::png;
 
-use crate::view::PAGE_BG;
+use crate::view::PAGE_BG_RGB;
 
 /// 1 枚の大きさの上限（1 辺）
 pub const MAX_SIDE: usize = 1024;
@@ -17,18 +19,23 @@ pub const MAX_SIDE: usize = 1024;
 pub struct Picture {
     pub w: usize,
     pub h: usize,
-    /// 0x00RRGGBB
-    pub pixels: Vec<u32>,
+    /// 16 色の番号
+    pub pixels: Vec<u8>,
 }
 
 /// 画像のファイルを読む
 pub fn decode(data: &[u8]) -> Result<Picture, &'static str> {
     if png::is_png(data) {
-        let img = png::decode(data, MAX_SIDE * MAX_SIDE, PAGE_BG).map_err(|e| e.message())?;
+        let img = png::decode(data, MAX_SIDE * MAX_SIDE, PAGE_BG_RGB).map_err(|e| e.message())?;
         if img.width > MAX_SIDE || img.height > MAX_SIDE {
             return Err("image too large");
         }
-        return Ok(Picture { w: img.width, h: img.height, pixels: img.pixels });
+        let (w, h) = (img.width, img.height);
+        let pixels = dither::to_vga16(w, h, &Lut16::new(), |x, y| {
+            let p = img.pixels[y * w + x];
+            [(p >> 16) as u8, (p >> 8) as u8, p as u8]
+        });
+        return Ok(Picture { w, h, pixels });
     }
     if data.starts_with(b"BM") {
         let bmp = Bmp::parse(data).map_err(|_| "broken BMP file")?;
@@ -36,7 +43,7 @@ pub fn decode(data: &[u8]) -> Result<Picture, &'static str> {
         if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE {
             return Err("image too large");
         }
-        return Ok(Picture { w, h, pixels: bmp.to_rgb32() });
+        return Ok(Picture { w, h, pixels: bmp.to_vga16(&Lut16::new()) });
     }
     Err("not a PNG or BMP image")
 }

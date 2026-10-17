@@ -1,6 +1,5 @@
 # Phase 12: テキストエディタ（新しいファイルを作って保存、既存のファイルを編集、探す・切り取り・貼り付け）
-# 期待画像は 320x200 のもの
-boot-config video=320x200
+# 画面はデスクトップの端末 1（中身は 0,72 から 8x16 の 80x25）
 writable
 timeout 40
 wait-serial VIBEOS READY
@@ -16,7 +15,7 @@ key up
 key end
 type !
 sleep 200
-expect-screen edit-new 0 16 640 64
+expect-screen edit-new 0 72 640 64
 key ctrl+s
 wait-serial Saved 26 bytes
 key ctrl+q

@@ -14,8 +14,7 @@
 #   make lzsa-bench  自作の LZSA と本家の圧縮後の大きさの表
 #   make lzsa-ref    本家の lzsa を GitHub から取ってきてビルドする（build/ext/lzsa。DECISIONS.md D-033）
 #   make size-report KERNEL.SYS の圧縮前後の大きさとフロッピーの空き
-#   make fonts    assets/fonts の .VFN を Noto のフォントから作り直す（make fonts-fetch で GitHub から取ってくる。tools/vibe-fontgen）
-#   make icons    assets/icons/ICONS.VIA（と、ドック用の 32x32 の ICONS32.VIA）を手で書いた SVG から作り直す（tools/vibe-icongen）
+#   make icons    assets/icons/ICONS.VIA（16 色の 16x16）を手で書いた SVG から作り直す（tools/vibe-icongen）
 #   make COMPRESS=0  カーネルとアプリを圧縮しないイメージを作る（ローダは印の無い KERNEL.SYS を
 #                    そのまま写し、カーネルは gzip でない ELF をそのまま読む）。アプリは RAW_APPS だけ
 #   make clean
@@ -61,7 +60,7 @@ SCENARIOS  := $(sort $(wildcard tests/scenarios/*.scn))
 
 LOADER_MAX_BYTES := 32256   # 0x8000 に読み込む。中継バッファ（0x10000）の手前まで
 
-.PHONY: all fonts fonts-fetch icons run debug bochs test test-host test-qemu test-dock-cfg test-bochs test-lan test-wan test-lzsa test-lzsa-ref test-apps-gz lzsa-bench lzsa-ref size-report screenshots clean FORCE
+.PHONY: all icons run debug bochs test test-host test-qemu test-bochs test-lan test-wan test-lzsa test-lzsa-ref test-apps-gz lzsa-bench lzsa-ref size-report screenshots clean FORCE
 
 all: $(IMG)
 
@@ -197,49 +196,21 @@ APPS_IMG_DIR := $(RAW_APPS_DIR)
 APPS_IMG_STAMP := $(RAW_APPS_STAMP)
 endif
 
-# ドックに並べるアプリ（/SYSTEM/DOCK.CFG。左から順に）。アイコン（assets/icons/NAME.svg）のある、引数なしで
-# ウィンドウを開く GUI のアプリ。GUI かどうかは ELF から分からないのでここに並べる。SVG の無い名前があれば
-# ビルドを止める（tools/dock-cfg.sh）。新しい GUI のアプリにアイコンを足したらここにも足し、make icons で
-# ICONS32.VIA を作り直す（DECISIONS.md D-058・D-059）
-DOCK_APPS := terminal files browse calc clock tasks mines blocks paint life snake mandel
-
-# ビルド時に生成してディスクに入れるもの（tools/mkassets）と、/SYSTEM/FONTS のフォント（assets/fonts。
-# フォントは COMPRESS に関係なくいつも gzip で入れる。DECISIONS.md D-047。許諾の OFL.TXT はそのまま）
+# ビルド時に生成してディスクに入れるもの（tools/mkassets）と、アイコン（いつも gzip で入れる）
 GEN_ROOTFS := $(BUILD)/rootfs-gen
 GEN_STAMP := $(GEN_ROOTFS)/.stamp
-FONT_FILES := $(wildcard assets/fonts/*.VFN)
 
-$(GEN_STAMP): $(shell find tools/mkassets -type f) $(FONT_FILES) assets/fonts/OFL.TXT assets/icons/ICONS.VIA \
-		assets/icons/ICONS32.VIA tools/dock-cfg.sh Makefile | $(BUILD)
+$(GEN_STAMP): $(shell find tools/mkassets -type f) assets/icons/ICONS.VIA Makefile | $(BUILD)
 	rm -rf $(GEN_ROOTFS)
 	$(CARGO) run -q --release -p mkassets -- $(GEN_ROOTFS)
-	mkdir -p $(GEN_ROOTFS)/SYSTEM/FONTS
-	for f in $(FONT_FILES); do gzip -9 -n -c $$f > $(GEN_ROOTFS)/SYSTEM/FONTS/$$(basename $$f) || exit 1; done
-	cp assets/fonts/OFL.TXT $(GEN_ROOTFS)/SYSTEM/FONTS/
+	mkdir -p $(GEN_ROOTFS)/SYSTEM
 	gzip -9 -n -c assets/icons/ICONS.VIA > $(GEN_ROOTFS)/SYSTEM/ICONS.VIA
-	gzip -9 -n -c assets/icons/ICONS32.VIA > $(GEN_ROOTFS)/SYSTEM/ICONS32.VIA
-	tools/dock-cfg.sh $(GEN_ROOTFS)/SYSTEM/DOCK.CFG assets/icons $(DOCK_APPS)
 	touch $@
 
-# assets/icons/ICONS.VIA を手で書いた SVG（assets/icons/*.svg）から作り直す（tools/vibe-icongen）。
-# ドック用の 32x32 の ICONS32.VIA は DOCK_APPS の分だけ
+# assets/icons/ICONS.VIA を手で書いた SVG（assets/icons/*.svg）から作り直す（tools/vibe-icongen。16 色の 16x16）
 icons:
 	$(CARGO) build -q --release -p vibe-icongen
 	target/release/vibe-icongen assets/icons/ICONS.VIA assets/icons/*.svg
-	target/release/vibe-icongen --size 32 assets/icons/ICONS32.VIA $(addprefix assets/icons/,$(addsuffix .svg,$(DOCK_APPS)))
-
-# assets/fonts の .VFN を作り直す（ふだんのビルドでは使わない）。Noto のフォントは GitHub の公式の置き場所から
-# 版を決めて取ってくる（tools/fetch-fonts.sh。SHA-256 を確かめる。DECISIONS.md D-052）
-NOTO_DIR ?= $(BUILD)/ext/noto
-fonts-fetch:
-	tools/fetch-fonts.sh $(NOTO_DIR)
-
-fonts: fonts-fetch
-	$(CARGO) build -q --release -p vibe-fontgen
-	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Regular.ttf 13 assets/fonts/UI.VFN
-	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Bold.ttf 13 assets/fonts/UIBOLD.VFN
-	target/release/vibe-fontgen $(NOTO_DIR)/NotoSans-Bold.ttf 20 assets/fonts/HEAD.VFN
-	target/release/vibe-fontgen $(NOTO_DIR)/NotoSansMono-Regular.ttf 13 assets/fonts/MONO.VFN 8x16 12
 
 $(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(KERNEL_FILE) $(COMPRESS_STAMP) $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
 	$(call make-image,$@,$(KERNEL_FILE),$(APPS_IMG_DIR))
@@ -289,16 +260,10 @@ bochs: $(IMG)
 		BOCHS_DISPLAY=x BOCHS_DISPLAY_OPTIONS= bochs -q -f tools/bochs/bochsrc.txt -rc tools/bochs/continue.rc
 
 # --- テスト -----------------------------------------------------------------
-test: test-host test-qemu test-lzsa test-apps-gz test-dock-cfg
+test: test-host test-qemu test-lzsa test-apps-gz
 
 test-host:
 	$(CARGO) test --workspace --exclude kernel --exclude vibe-rt $(addprefix --exclude ,$(APPS))
-
-# DOCK.CFG を作るとき、アイコンの無いアプリの名前があれば止まる（D-058）
-test-dock-cfg:
-	tools/dock-cfg.sh $(BUILD)/dock-test.cfg assets/icons $(DOCK_APPS)
-	! tools/dock-cfg.sh $(BUILD)/dock-test.cfg assets/icons calc nosuchapp 2>/dev/null
-	rm -f $(BUILD)/dock-test.cfg
 
 $(VIBE_RUN): FORCE
 	$(CARGO) build --release -p vibe-run

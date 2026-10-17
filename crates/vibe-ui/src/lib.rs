@@ -2,7 +2,7 @@
 //!
 //! 部品（`Widget`）を位置（`Rect`）と一緒に `Ui` に登録し、キー・マウスの入力（`Input`）を
 //! `Ui::handle` に渡すと、部品の状態が変わり、アプリが知るべきこと（`Action`: ボタンが押された・
-//! 一覧で選んだ など）が返る。描画は `Ui::draw` で 32 ビットの `vibe_gfx::canvas::Canvas` に行う
+//! 一覧で選んだ など）が返る。描画は `Ui::draw` で 8 ビットの `vibe_gfx::Surface` に VGA の 16 色で行う
 //! （明るい地・強調色の青・角の丸い枠。文字は `set_fonts` で渡したなめらかなフォント）。
 //!
 //! 入力から状態への変化は画面やシステムコールに触らない純粋な処理なので、ホストの `cargo test` で
@@ -37,9 +37,9 @@ use alloc::vec::Vec;
 
 pub use vibe_abi::KeyEvent;
 use vibe_abi::key;
-use vibe_gfx::canvas::Canvas;
+use vibe_gfx::Surface;
 
-pub use draw::set_fonts;
+pub use draw::set_font;
 pub use scroll::ScrollBar;
 pub use widget::{Align, Button, Checkbox, Label, List, TextField, Widget};
 
@@ -428,8 +428,7 @@ impl Ui {
     }
 
     /// 全部の部品を描く（背景は描かないので、先に塗っておく）
-    pub fn draw(&self, c: &mut Canvas) {
-        let k = draw::Corners::new();
+    pub fn draw(&self, s: &mut Surface) {
         let over = self.hit(self.mouse.0, self.mouse.1);
         for (id, it) in self.items.iter().enumerate() {
             if !it.visible {
@@ -439,7 +438,7 @@ impl Ui {
             let inside = it.rect.contains(self.mouse.0, self.mouse.1);
             let pressed = self.pressed == Some(id) && self.buttons & 1 != 0 && inside;
             let hover = over == Some(id) && self.buttons == 0;
-            it.widget.draw(c, it.rect, focused, pressed, hover, &k);
+            it.widget.draw(s, it.rect, focused, pressed, hover);
         }
     }
 

@@ -9,10 +9,11 @@
 
 use vibe_games::blocks::{self, Blocks, Move};
 use vibe_rt::abi::key;
-use vibe_rt::abi::{FONT_BOLD, FONT_UI};
-use vibe_rt::gfx::{Event, Window32 as Window, draw_text, draw_text_centered, text_height};
-use vibe_rt::gfx_lib::canvas::{Canvas, Color, Corner, rgb};
-use vibe_rt::gfx_lib::theme;
+use vibe_rt::gfx::{Event, Window, draw_text16_centered, font16};
+use vibe_rt::gfx_lib::Surface;
+use vibe_rt::gfx_lib::palette::{
+    BLACK, DARK_GRAY, LIGHT_BLUE, LIGHT_CYAN, LIGHT_GRAY, LIGHT_GREEN, LIGHT_MAGENTA, LIGHT_RED, MAGENTA, WHITE, YELLOW,
+};
 use vibe_rt::{format_fixed, println, sys};
 
 vibe_rt::entry!(main);
@@ -25,18 +26,10 @@ const W: usize = 152;
 const H: usize = (BOARD_Y * 2 + blocks::H as i32 * CELL) as usize;
 
 /// 形ごとの色（I O T S Z J L）
-const COLORS: [Color; 7] = [
-    rgb(34, 211, 238),
-    rgb(250, 204, 21),
-    rgb(192, 132, 252),
-    rgb(74, 222, 128),
-    rgb(248, 113, 113),
-    rgb(96, 165, 250),
-    rgb(251, 146, 60),
-];
+const COLORS: [u8; 7] = [LIGHT_CYAN, YELLOW, LIGHT_MAGENTA, LIGHT_GREEN, LIGHT_RED, LIGHT_BLUE, LIGHT_GRAY];
 /// 盤面の地と、止まる位置の影
-const BOARD: Color = rgb(30, 32, 38);
-const GHOST: Color = rgb(90, 95, 106);
+const BOARD: u8 = BLACK;
+const GHOST: u8 = DARK_GRAY;
 
 fn main() -> i32 {
     let mut seed = vibe_rt::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or_else(sys::ticks);
@@ -49,7 +42,7 @@ fn main() -> i32 {
     println!("blocks: started (seed {seed})");
     let mut next_fall = sys::ticks() + game.fall_interval_ms() / 10;
     loop {
-        draw(&mut win.canvas(), &game, paused);
+        draw(&mut win.surface(), &game, paused);
         win.present();
         let wait = if game.is_over() || paused { None } else { Some(next_fall.saturating_sub(sys::ticks()) * 10) };
         let mv = match win.event(wait) {
@@ -98,24 +91,27 @@ fn main() -> i32 {
     0
 }
 
-/// 1 マス: 角の丸いブロックに、上の縁を明るく
-fn cell(c: &mut Canvas, k: &Corner, x: i32, y: i32, color: Color) {
-    let (px, py) = (BOARD_X + x * CELL, BOARD_Y + y * CELL);
-    c.fill_round_rect(px, py, CELL - 1, CELL - 1, k, color, 255);
-    c.hline(px + 2, py, CELL - 5, vibe_rt::gfx_lib::canvas::blend(color, rgb(255, 255, 255), 110));
+/// 1 マス（7x7）: 色の塗りに、左と上の縁を白、右と下の縁を濃い灰色
+fn block(s: &mut Surface, px: i32, py: i32, color: u8) {
+    s.fill_rect(px, py, CELL - 1, CELL - 1, color);
+    s.bevel(px, py, CELL - 1, CELL - 1, WHITE, DARK_GRAY);
 }
 
-fn draw(c: &mut Canvas, g: &Blocks, paused: bool) {
-    let k = Corner::new(2);
-    let panel = Corner::new(4);
-    c.clear(theme::FACE);
+fn cell(s: &mut Surface, x: i32, y: i32, color: u8) {
+    block(s, BOARD_X + x * CELL, BOARD_Y + y * CELL, color);
+}
+
+fn draw(s: &mut Surface, g: &Blocks, paused: bool) {
+    let f = font16();
+    s.clear(LIGHT_GRAY);
     let (bw, bh) = (blocks::W as i32 * CELL, blocks::H as i32 * CELL);
-    c.fill_round_rect(BOARD_X - 2, BOARD_Y - 2, bw + 4, bh + 4, &panel, BOARD, 255);
+    s.fill_rect(BOARD_X - 1, BOARD_Y - 1, bw + 2, bh + 2, BOARD);
+    s.bevel(BOARD_X - 2, BOARD_Y - 2, bw + 4, bh + 4, DARK_GRAY, WHITE);
     for y in 0..blocks::H {
         for x in 0..blocks::W {
             let v = g.cell(x, y);
             if v != 0 {
-                cell(c, &k, x as i32, y as i32, COLORS[v as usize - 1]);
+                cell(s, x as i32, y as i32, COLORS[v as usize - 1]);
             }
         }
     }
@@ -123,33 +119,32 @@ fn draw(c: &mut Canvas, g: &Blocks, paused: bool) {
         // 止まる位置の影と、落ちているブロック
         for (x, y) in g.ghost() {
             if y >= 0 {
-                c.round_rect(BOARD_X + x * CELL, BOARD_Y + y * CELL, CELL - 1, CELL - 1, &k, GHOST);
+                s.rect(BOARD_X + x * CELL, BOARD_Y + y * CELL, CELL - 1, CELL - 1, GHOST);
             }
         }
         let (cells, color) = g.piece();
         for (x, y) in cells {
             if y >= 0 {
-                cell(c, &k, x, y, COLORS[color as usize - 1]);
+                cell(s, x, y, COLORS[color as usize - 1]);
             }
         }
     }
     // 右側: 次の形・点数・列・レベル
-    let lh = text_height(FONT_UI);
-    draw_text(c, FONT_UI, PANEL_X, BOARD_Y - 4, "NEXT", theme::TEXT_DIM);
-    c.fill_round_rect(PANEL_X, BOARD_Y + 14, 40, 24, &panel, BOARD, 255);
+    s.draw_text(f, PANEL_X, BOARD_Y - 4, "NEXT", DARK_GRAY, None);
+    s.fill_rect(PANEL_X, BOARD_Y + 14, 40, 24, BOARD);
+    s.bevel(PANEL_X - 1, BOARD_Y + 13, 42, 26, DARK_GRAY, WHITE);
     let next = g.next_kind();
     for (x, y) in blocks::shape_cells(next, 0) {
-        let (px, py) = (PANEL_X + 4 + x * CELL, BOARD_Y + 18 + y * CELL);
-        c.fill_round_rect(px, py, CELL - 1, CELL - 1, &k, COLORS[next as usize], 255);
+        block(s, PANEL_X + 4 + x * CELL, BOARD_Y + 18 + y * CELL, COLORS[next as usize]);
     }
     let rows = [("SCORE", g.score()), ("LINES", g.lines()), ("LEVEL", g.level())];
     for (i, (label, value)) in rows.iter().enumerate() {
         let y = BOARD_Y + 44 + i as i32 * 36;
-        draw_text(c, FONT_UI, PANEL_X, y, label, theme::TEXT_DIM);
-        draw_text(c, FONT_BOLD, PANEL_X, y + lh - 2, &format_fixed::<12>(format_args!("{value}")), theme::TEXT);
+        s.draw_text(f, PANEL_X, y, label, DARK_GRAY, None);
+        s.draw_text_bold(f, PANEL_X, y + f.height as i32, &format_fixed::<12>(format_args!("{value}")), BLACK);
     }
     let banner = if g.is_over() {
-        Some(("GAME OVER", "Enter: again"))
+        Some(("GAME OVER", "[Enter]"))
     } else if paused {
         Some(("PAUSED", "P: resume"))
     } else {
@@ -157,8 +152,8 @@ fn draw(c: &mut Canvas, g: &Blocks, paused: bool) {
     };
     if let Some((big, small)) = banner {
         let y = BOARD_Y + bh / 2 - 20;
-        c.fill_round_rect(BOARD_X + 2, y, bw - 4, 40, &panel, theme::ACCENT, 240);
-        draw_text_centered(c, FONT_BOLD, BOARD_X, bw, y + 2, big, rgb(255, 255, 255));
-        draw_text_centered(c, FONT_UI, BOARD_X, bw, y + 20, small, theme::ACCENT_LIGHT);
+        s.fill_rect(BOARD_X, y, bw, 40, MAGENTA);
+        draw_text16_centered(s, BOARD_X, bw, y + 3, big, WHITE, true);
+        draw_text16_centered(s, BOARD_X, bw, y + 21, small, LIGHT_GRAY, false);
     }
 }

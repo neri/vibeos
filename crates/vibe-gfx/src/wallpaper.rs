@@ -25,10 +25,10 @@ pub fn from_config(text: &str) -> Option<&str> {
     text.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(k, _)| k.trim() == "wallpaper").map(|(_, v)| v.trim())
 }
 
-/// 画面の `y` 行目（背景の画像の領域の中の行）に、`iw` × `ih` の画像（0x00RRGGBB）を並べた 1 行を書く。
+/// 画面の `y` 行目（背景の画像の領域の中の行）に、`iw` × `ih` の画像（0x00RRGGBB か、16 色の画面では色番号）を並べた 1 行を書く。
 /// `row` の長さが画面の幅 `sw`、背景の領域の高さが `sh`。真ん中に置くときに画像の無い所は書かない
 /// （先に既定の背景を描いておく）。画面の大きさの画素を作らずに 1 行ずつ並べるので、大きな画面でもメモリを使わない
-pub fn fill_row(row: &mut [u32], y: usize, img: &[u32], iw: usize, ih: usize, sh: usize, fit: Fit) {
+pub fn fill_row<T: Copy>(row: &mut [T], y: usize, img: &[T], iw: usize, ih: usize, sh: usize, fit: Fit) {
     let sw = row.len();
     if iw == 0 || ih == 0 || img.len() < iw * ih {
         return;

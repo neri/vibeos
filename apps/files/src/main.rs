@@ -18,7 +18,7 @@ use alloc::vec::Vec;
 
 use vibe_files::{Entry, Opener};
 use vibe_rt::abi::{self, DirEntry, KeyEvent, err, key};
-use vibe_rt::gfx::{Event, Window32 as Window};
+use vibe_rt::gfx::{Event, Window};
 use vibe_rt::{println, sys};
 use vibe_ui::dialog::Dialog;
 use vibe_ui::{Action, Button, Id, Input, Label, List, Rect, Ui};
@@ -42,8 +42,8 @@ struct App {
     folder: Id,
     dir: String,
     entries: Vec<Entry>,
-    /// 一覧のアイコン（名前 → 16x16）。起動時にカーネルから 1 回取る
-    icons: Vec<(&'static str, Option<&'static [u32]>)>,
+    /// 一覧のアイコン（名前 → 16 色の 16x16）。起動時にカーネルから 1 回取る
+    icons: Vec<(&'static str, Option<&'static [u8]>)>,
 }
 
 /// 一覧に出すアイコン（vibe_files::icon_name が返す名前）
@@ -51,7 +51,7 @@ const ICON_NAMES: [&str; 6] = ["folder", "file", "image", "script", "app", "brow
 
 fn main() -> i32 {
     let start = vibe_rt::args().nth(1).map(|p| vibe_files::resolve("/", p)).unwrap_or_else(|| String::from("/"));
-    vibe_ui::set_fonts(vibe_rt::gfx::font(vibe_rt::abi::FONT_UI), vibe_rt::gfx::font(vibe_rt::abi::FONT_BOLD));
+    vibe_ui::set_font(vibe_rt::gfx::font16());
     let Some(mut win) = Window::open(W, H, "Files") else {
         println!("files: cannot open a window");
         return 1;
@@ -94,7 +94,7 @@ impl App {
         ui.set_focus(list);
         let icons = ICON_NAMES
             .iter()
-            .map(|&n| (n, vibe_rt::gfx::icon(n).map(|px| &*alloc::boxed::Box::leak(px.into_boxed_slice()))))
+            .map(|&n| (n, vibe_rt::gfx::icon16(n).map(|px| &*alloc::boxed::Box::leak(px.into_boxed_slice()))))
             .collect();
         App {
             ui,
@@ -113,9 +113,9 @@ impl App {
     }
 
     fn draw(&mut self, win: &mut Window) {
-        let mut c = win.canvas();
-        c.clear(vibe_rt::gfx_lib::theme::FACE);
-        self.ui.draw(&mut c);
+        let mut s = win.surface();
+        s.clear(vibe_ui::draw::FACE);
+        self.ui.draw(&mut s);
         win.present();
     }
 
@@ -134,7 +134,7 @@ impl App {
         self.ui.set_text(self.path_label, &self.dir.clone());
         let items = vibe_files::list_items(&self.dir, &self.entries);
         let icon = |name: &str| self.icons.iter().find(|i| i.0 == name).and_then(|i| i.1);
-        let mut icons: Vec<Option<&'static [u32]>> = Vec::new();
+        let mut icons: Vec<Option<&'static [u8]>> = Vec::new();
         if items.len() > self.entries.len() {
             icons.push(icon("folder")); // ".."
         }
@@ -348,7 +348,7 @@ fn run_dialog(d: &mut Dialog) -> Option<usize> {
     let (w, h) = d.size();
     let mut win = Window::open(w, h, "Files")?;
     loop {
-        d.draw(&mut win.canvas());
+        d.draw(&mut win.surface());
         win.present();
         let input = match win.event(None)? {
             Event::Close => return None,

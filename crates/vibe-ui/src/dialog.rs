@@ -7,7 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use vibe_abi::key;
-use vibe_gfx::canvas::Canvas;
+use vibe_gfx::Surface;
 
 use crate::draw::{self, FACE};
 use crate::{Action, Align, Button, Id, Input, Label, Rect, TextField, Ui};
@@ -139,8 +139,8 @@ impl Dialog {
         }
     }
 
-    pub fn draw(&self, c: &mut Canvas) {
-        c.clear(FACE);
-        self.ui.draw(c);
+    pub fn draw(&self, s: &mut Surface) {
+        s.clear(FACE);
+        self.ui.draw(s);
     }
 }

@@ -18,5 +18,6 @@ BI_SCREEN_H     equ 0x31A               ; u16
 BI_KERNEL_ADDR  equ 0x31C               ; u32
 BI_KERNEL_SIZE  equ 0x320               ; u32
 BI_PITCH        equ 0x324               ; u32（画面 1 行のバイト数）
-BI_BPP          equ 0x328               ; u32（1 ピクセルのビット数: 8 か 32）
-BI_SIZE         equ 0x32C
+BI_BPP          equ 0x328               ; u32（1 ピクセルのビット数: 8・32、モード 12h は 4）
+BI_FONT16       equ 0x32C               ; u32（VGA の BIOS の 8x16 のフォント 4096 バイトの場所。無ければ 0）
+BI_SIZE         equ 0x330

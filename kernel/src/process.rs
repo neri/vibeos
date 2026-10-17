@@ -24,8 +24,6 @@ use crate::task::sched::{self, TaskId};
 /// プロセスが持つもの（タスクから `Arc` で参照する）
 pub struct UserProc {
     pub space: AddressSpace,
-    /// gfx_open で作った画面（ウィンドウ）
-    pub display: Option<WinId>,
     /// win_open で作ったウィンドウ（終了時にすべて閉じる）
     pub windows: Vec<WinId>,
 }
@@ -136,7 +134,7 @@ pub fn spawn_ex(path: &str, args: &[&str], env: &[&str], stdio: Option<fs::Stdio
     let esp = push_args(&space, args, env).ok_or(err::ENOMEM)?;
 
     let name = path.rsplit('/').next().unwrap_or(path);
-    let user = Arc::new(Mutex::new(UserProc { space, display: None, windows: Vec::new() }));
+    let user = Arc::new(Mutex::new(UserProc { space, windows: Vec::new() }));
     Ok(sched::spawn_user(name, user, entry, esp, stdio))
 }
 
@@ -243,7 +241,7 @@ pub fn exit_current(code: i32) -> ! {
     crate::drivers::speaker::off();
     let _ = catch_ctrl_c(false);
     if let Some(user) = sched::current_user() {
-        close_display(&mut user.lock());
+        close_windows(&mut user.lock());
     }
     // パイプの片側などを閉じる（終了コードを待っている親より先に、読む側に終わりが届くように）
     fs::close_all();
@@ -268,13 +266,9 @@ pub fn kill_current(reason: &str, eip: u32, addr: Option<u32>) -> ! {
     exit_current(EXIT_KILLED)
 }
 
-/// プロセスの画面（ウィンドウ）を閉じる。パレットは gui が前に出ているウィンドウのものに戻す
-pub fn close_display(p: &mut UserProc) {
+/// プロセスのウィンドウをすべて閉じる
+pub fn close_windows(p: &mut UserProc) {
     let mut s = SCREEN.lock();
-    if let Some(id) = p.display.take() {
-        s.destroy_window(id);
-        s.set_cursor_visible(false);
-    }
     for id in p.windows.drain(..) {
         s.destroy_window(id);
     }

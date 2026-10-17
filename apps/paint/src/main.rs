@@ -1,13 +1,12 @@
 //! お絵かき: マウスの左ボタンで線を描く。上の色の並びをクリックで色を選ぶ。
 //! C で全部消す、Esc で終わる。
 //!
-//! デスクトップでは好きな大きさのキャンバスのウィンドウ（`paint 幅 高さ`、既定は 320x200。[x] でも終わる）、
-//! 320x200 では全画面。
+//! 好きな大きさのキャンバスのウィンドウ（`paint 幅 高さ`、既定は 320x200。[x] でも終わる）。色は VGA の 16 色
 
 #![no_std]
 #![no_main]
 
-use vibe_rt::gfx::{Event, HEIGHT, Screen, WIDTH, Window};
+use vibe_rt::gfx::{Event, HEIGHT, WIDTH, Window};
 use vibe_rt::gfx_lib::{Surface, palette};
 use vibe_rt::{abi, println, sys};
 
@@ -20,21 +19,16 @@ const MIN_W: usize = 160;
 const MIN_H: usize = 40;
 
 fn main() -> i32 {
-    if vibe_rt::gfx::is_desktop() {
-        let mut args = vibe_rt::args().skip(1).map(|a| a.parse::<usize>().ok());
-        let w = args.next().flatten().unwrap_or(WIDTH);
-        let h = args.next().flatten().unwrap_or(HEIGHT);
-        return run_window(w, h);
-    }
-    run_fullscreen()
+    let mut args = vibe_rt::args().skip(1).map(|a| a.parse::<usize>().ok());
+    let w = args.next().flatten().unwrap_or(WIDTH);
+    let h = args.next().flatten().unwrap_or(HEIGHT);
+    run_window(w, h)
 }
 
 /// 描いている状態（色と、前のマウスの位置）
 struct Paint {
     color: u8,
     last: Option<(i32, i32)>,
-    /// デスクトップのウィンドウ（今風の明るい色の並び。320x200 の全画面は前のまま）
-    modern: bool,
 }
 
 impl Paint {
@@ -52,26 +46,18 @@ impl Paint {
     fn toolbar(&self, s: &mut Surface) {
         let w = s.width() as i32;
         let sw = Self::swatch(w);
-        if !self.modern {
-            s.fill_rect(0, 0, w, TOOLBAR_H, palette::DARK_GRAY);
-            for i in 0..16 {
-                s.fill_rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, i as u8);
-                if i as u8 == self.color {
-                    s.rect(i * sw, 0, sw, TOOLBAR_H, palette::YELLOW);
-                }
-            }
-            return;
-        }
-        // 明るい灰色の地に色の並び。選んだ色は強調色（青）の枠（画面のテーマに合わせる）
-        s.fill_rect(0, 0, w, TOOLBAR_H, palette::GRAY_BASE + 14);
-        let accent = palette::rgb(37, 99, 235);
+        // 明るい灰色の地に、へこんだ枠の色の並び。選んだ色は黒と白の 2 重の枠
+        s.fill_rect(0, 0, w, TOOLBAR_H, palette::LIGHT_GRAY);
         for i in 0..16 {
-            s.fill_rect(i * sw + 2, 2, sw - 4, TOOLBAR_H - 4, i as u8);
+            s.fill_rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, i as u8);
             if i as u8 == self.color {
-                s.rect(i * sw, 0, sw, TOOLBAR_H, accent);
-                s.rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, accent);
+                s.rect(i * sw, 0, sw, TOOLBAR_H, palette::BLACK);
+                s.rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, palette::WHITE);
+            } else {
+                s.bevel(i * sw, 0, sw, TOOLBAR_H, palette::DARK_GRAY, palette::WHITE);
             }
         }
+        s.hline(0, TOOLBAR_H - 1, w, palette::DARK_GRAY);
     }
 
     /// マウスの状態を 1 つ処理する。描き直したら true
@@ -120,7 +106,7 @@ fn run_window(w: usize, h: usize) -> i32 {
         println!("paint: cannot open a window");
         return 1;
     };
-    let mut p = Paint { color: palette::BLACK, last: None, modern: true };
+    let mut p = Paint { color: palette::BLACK, last: None };
     p.clear(&mut win.surface());
     win.present();
     println!("paint: started ({w}x{h})");
@@ -138,37 +124,6 @@ fn run_window(w: usize, h: usize) -> i32 {
         }
     }
     drop(win);
-    println!("paint: closed");
-    0
-}
-
-fn run_fullscreen() -> i32 {
-    let Some(mut screen) = Screen::open(true) else {
-        println!("paint: cannot open the screen");
-        return 1;
-    };
-    let mut p = Paint { color: palette::BLACK, last: None, modern: false };
-    p.clear(&mut screen.surface());
-    screen.present();
-    println!("paint: started");
-    'main: loop {
-        let mut changed = false;
-        while let Some(k) = sys::getkey(true) {
-            match p.key(&mut screen.surface(), k) {
-                Err(()) => break 'main,
-                Ok(c) => changed |= c,
-            }
-        }
-        while let Some(m) = sys::mouse() {
-            changed |= p.mouse(&mut screen.surface(), m.x, m.y, m.buttons);
-        }
-        if changed {
-            screen.present();
-        } else {
-            sys::sleep(10);
-        }
-    }
-    drop(screen);
     println!("paint: closed");
     0
 }

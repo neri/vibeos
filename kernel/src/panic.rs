@@ -25,7 +25,7 @@ fn panic(info: &PanicInfo) -> ! {
 
     // SAFETY: 同上
     let screen = unsafe { gui::SCREEN.force_get() };
-    // ウィンドウが出ていたり独自のパレットにしていても、全画面のコンソールに戻して見えるようにする
+    // ウィンドウが出ていても、全画面のコンソールに戻して見えるようにする
     screen.panic_takeover();
     {
         let font = &FONT_8X8;

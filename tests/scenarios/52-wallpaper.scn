@@ -1,44 +1,40 @@
-# Phase 37（デスクトップ D6）: デスクトップの背景の画像（BOOT.CFG の wallpaper= と、シェルの wallpaper）
-# 640x480 では端末（中身 8,54 から 638x352、タイトルバー y=30〜53）がほぼ全体を覆うので、敷き詰めはドックの右の
-# 空いている所（626〜639, 440〜479。端末とドックの影の外）で見る。
-# 背景の画像は画面全体に並べ、上端のバーはその上に黒を 35% 重ねて白い文字を描く（A3）
-boot-config video=640x480
+# Phase 37（デスクトップ D6）: デスクトップの背景の画像（BOOT.CFG の wallpaper= と、シェルの wallpaper）。
+# 画像は読むときに 16 色に誤差拡散し、画面全体に並べる（上端のバーは画像の上に描く）。
+# 端末 1（中身 0,72 から 640x400、タイトルバー y=52〜71）がほぼ全体を覆うので、敷き詰めはバーと端末の間
+# （y=20〜50）で見る
 boot-config wallpaper=/IMAGES/PLASMA.BMP tile
 timeout 30
 wait-serial gui: desktop 640x480
 wait-serial gui: wallpaper /IMAGES/PLASMA.BMP
 wait-serial VibeOS shell
 sleep 300
-# ドックの右の空いている所（敷き詰めた plasma）
-expect-screen wallpaper-tile 626 440 14 40
-# 画像の上のバー（黒を重ねて文字が読める。右の時計は除く）
-expect-screen wallpaper-bar 0 0 300 24
-# 真ん中に 1 枚（160x100 の gradient を画面の真ん中 240,190 に）。周りは既定の背景
+expect-screen wallpaper-tile 0 20 640 31
+# 真ん中に 1 枚（160x100 の gradient を画面の真ん中 240,190 に）。周りは背景の色（青緑）
 type wallpaper /images/gradient.bmp center
 key ret
 sleep 500
-# 端末が重なるので [_]（624〜639, 30〜53）で最小化して見る（カーソル 320,240 → 630,42）
-mouse-move 310 -198
+# 端末が重なるので [_]（618〜637, 52〜71）で最小化して見る（カーソル 320,240 → 627,61）
+mouse-move 307 -179
 mouse-button left down
 mouse-button left up
 sleep 300
 expect-screen wallpaper-center 236 186 168 108
-# 真ん中に置いた画像の周りは既定の背景（右上の大きな円）
-expect-pixel 600 30 83 74 183
-# バーの Terminal 1 のボタン（→ 100,10）で戻す
-mouse-move -530 -32
+expect-pixel 600 30 0 128 128
+# バーの Terminal 1 のボタン（→ 100,10）で戻す。カーソルは比べる所の外へ（→ 100,300）
+mouse-move -527 -51
 mouse-button left down
 mouse-button left up
+mouse-move 0 290
 sleep 300
-# 敷き詰めてから背景の画像をやめる（ドックの右の所が plasma → 既定の背景）
+# 敷き詰めてから背景の画像をやめる（バーと端末の間が plasma → 背景の色）
 type wallpaper /images/plasma.bmp tile
 key ret
 sleep 300
-expect-screen wallpaper-tile 626 440 14 40
+expect-screen wallpaper-tile 0 20 640 31
 type wallpaper none
 key ret
 sleep 300
-expect-pixel 630 450 60 52 137
+expect-pixel 630 30 0 128 128
 type wallpaper /hello.txt
 key ret
 wait-serial wallpaper: /hello.txt: not a BMP file

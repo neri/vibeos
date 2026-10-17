@@ -1,5 +1,5 @@
-//! ヘビのゲーム: 矢印キーで向きを変え、えさを食べると伸びる。壁か自分に当たると終わり。
-//! Esc で終わる。終わったら Enter でもう一度。
+//! ヘビのゲーム（320x200 のウィンドウ）: 矢印キーで向きを変え、えさを食べると伸びる。壁か自分に当たると終わり。
+//! Esc か [x] で終わる。終わったら Enter でもう一度。
 
 #![no_std]
 #![no_main]
@@ -9,8 +9,7 @@ extern crate alloc;
 use alloc::collections::VecDeque;
 use alloc::format;
 
-use vibe_rt::font::FONT_8X8;
-use vibe_rt::gfx::{Screen, WIDTH};
+use vibe_rt::gfx::{Event, HEIGHT, WIDTH, Window, font16};
 use vibe_rt::gfx_lib::palette;
 use vibe_rt::{Rng, abi, println, sys};
 
@@ -86,13 +85,14 @@ impl Game {
         }
     }
 
-    fn draw(&self, screen: &mut Screen) {
-        let mut s = screen.surface();
+    fn draw(&self, win: &mut Window) {
+        let f = font16();
+        let mut s = win.surface();
         s.clear(palette::BLACK);
         s.fill_rect(0, 0, WIDTH as i32, TOP - 2, palette::BLUE);
-        s.draw_text(&FONT_8X8, 4, 5, "SNAKE", palette::YELLOW, None);
+        s.draw_text_bold(f, 4, 1, "SNAKE", palette::YELLOW);
         let score = format!("SCORE {}", self.score);
-        s.draw_text(&FONT_8X8, WIDTH as i32 - 4 - score.len() as i32 * 8, 5, &score, palette::WHITE, None);
+        s.draw_text(f, WIDTH as i32 - 4 - score.len() as i32 * 8, 1, &score, palette::WHITE, None);
         let cell = |s: &mut vibe_rt::gfx_lib::Surface, p: P, c: u8| {
             s.fill_rect(p.0 * CELL + 1, TOP + p.1 * CELL + 1, CELL - 2, CELL - 2, c);
         };
@@ -103,57 +103,58 @@ impl Game {
         if self.over {
             let msg = "GAME OVER - ENTER: again  ESC: quit";
             let x = (WIDTH as i32 - msg.len() as i32 * 8) / 2;
-            s.fill_rect(x - 4, 96, msg.len() as i32 * 8 + 8, 16, palette::RED);
-            s.draw_text(&FONT_8X8, x, 100, msg, palette::WHITE, None);
+            s.fill_rect(x - 4, 92, msg.len() as i32 * 8 + 8, 20, palette::RED);
+            s.draw_text(f, x, 94, msg, palette::WHITE, None);
         }
     }
 }
 
 fn main() -> i32 {
-    let Some(mut screen) = Screen::open(false) else {
-        println!("snake: cannot open the screen");
+    let Some(mut win) = Window::open(WIDTH, HEIGHT, "Snake") else {
+        println!("snake: cannot open a window");
         return 1;
     };
     let mut rng = Rng::new(sys::ticks() ^ 0x5EED);
     let mut game = Game::new(&mut rng);
     let mut best = 0;
     let mut last_step = sys::ticks();
-    game.draw(&mut screen);
-    screen.present();
+    game.draw(&mut win);
+    win.present();
     println!("snake: started");
-    'main: loop {
-        while let Some(k) = sys::getkey(true) {
-            if !k.pressed() {
-                continue;
-            }
-            match k.key() {
-                abi::key::ESCAPE => break 'main,
+    loop {
+        // 次の 1 歩まで（終わっていればいつまでも）キーを待つ
+        let wait = (!game.over).then(|| STEP_TICKS.saturating_sub(sys::ticks().wrapping_sub(last_step)) * 10);
+        match win.event(wait) {
+            Some(Event::Close) => break,
+            Some(Event::Key(k)) if k.pressed() => match k.key() {
+                abi::key::ESCAPE => break,
                 abi::key::UP => game.turn(P(0, -1)),
                 abi::key::DOWN => game.turn(P(0, 1)),
                 abi::key::LEFT => game.turn(P(-1, 0)),
                 abi::key::RIGHT => game.turn(P(1, 0)),
                 abi::key::ENTER if game.over => {
                     game = Game::new(&mut rng);
-                    game.draw(&mut screen);
-                    screen.present();
+                    last_step = sys::ticks();
+                    game.draw(&mut win);
+                    win.present();
                 }
                 _ => {}
-            }
+            },
+            _ => {}
         }
         let now = sys::ticks();
         if !game.over && now.wrapping_sub(last_step) >= STEP_TICKS {
             last_step = now;
             game.step(&mut rng);
             best = best.max(game.score);
-            game.draw(&mut screen);
-            screen.present();
+            game.draw(&mut win);
+            win.present();
             if game.over {
                 println!("snake: game over, score {}", game.score);
             }
         }
-        sys::sleep(10);
     }
-    drop(screen);
+    drop(win);
     println!("snake: best score {best}");
     0
 }

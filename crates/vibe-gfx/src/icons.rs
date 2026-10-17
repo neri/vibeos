@@ -1,19 +1,21 @@
 //! アイコンをまとめたファイル `.VIA`（ホストのツール `tools/vibe-icongen` が手で書いた SVG から作る）。
 //!
-//! すべてリトルエンディアン:
+//! VGA の 16 色の 16x16（`palette::VGA16` の番号、透明は `TRANSPARENT`）。すべてリトルエンディアン:
 //!
 //! | 位置 | 大きさ | 中身 |
 //! |---|---|---|
-//! | 0 | 4 | `"VIA1"` |
+//! | 0 | 4 | `"VIA4"` |
 //! | 4 | 2 | 1 辺のピクセル数 s |
 //! | 6 | 2 | アイコンの数 n |
-//! | 8 | (12 + 4s²) × n | 名前（ASCII、12 バイトに足りない分は 0）と、s × s の 0xAARRGGBB（色にアルファを掛けたもの）。名前の順 |
+//! | 8 | (12 + s²) × n | 名前（ASCII、12 バイトに足りない分は 0）と、s × s の色番号（1 画素 1 バイト）。名前の順 |
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-pub const MAGIC: &[u8; 4] = b"VIA1";
+pub const MAGIC: &[u8; 4] = b"VIA4";
 pub const NAME_LEN: usize = 12;
+/// 透明な画素
+pub const TRANSPARENT: u8 = 0xFF;
 const HEADER_SIZE: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,14 +41,14 @@ impl<'a> IconSet<'a> {
         }
         let size = u16::from_le_bytes([data[4], data[5]]) as usize;
         let count = u16::from_le_bytes([data[6], data[7]]) as usize;
-        if data.len() < HEADER_SIZE + count * (NAME_LEN + 4 * size * size) {
+        if data.len() < HEADER_SIZE + count * (NAME_LEN + size * size) {
             return Err(ViaError::TooShort);
         }
         Ok(IconSet { data, size, count })
     }
 
     fn entry(&self, i: usize) -> (&'a str, &'a [u8]) {
-        let len = NAME_LEN + 4 * self.size * self.size;
+        let len = NAME_LEN + self.size * self.size;
         let e = &self.data[HEADER_SIZE + i * len..HEADER_SIZE + (i + 1) * len];
         let name = &e[..NAME_LEN];
         let end = name.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
@@ -66,16 +68,43 @@ impl<'a> IconSet<'a> {
         (0..self.count).map(|i| self.entry(i).0)
     }
 
-    /// 名前 `name` のアイコンのピクセル（s × s の 0xAARRGGBB）
-    pub fn get(&self, name: &str) -> Option<Vec<u32>> {
-        (0..self.count).map(|i| self.entry(i)).find(|(n, _)| *n == name).map(|(_, px)| {
-            px.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
-        })
+    /// 名前 `name` のアイコンのピクセル（s × s の色番号、透明は `TRANSPARENT`）
+    pub fn get(&self, name: &str) -> Option<&'a [u8]> {
+        (0..self.count).map(|i| self.entry(i)).find(|(n, _)| *n == name).map(|(_, px)| px)
     }
 }
 
+/// 成分の差がこれ以下の色は灰色とみなす（8bit）
+const GRAYISH: u8 = 48;
+
+/// アルファ付きのアイコン（事前に掛けたアルファの 0xAARRGGBB。SVG をラスタライズしたもの）を 16 色にする:
+/// アルファが半分より小さい画素は透明、ほかはアルファを戻した色に一番近い 16 色。灰色に近い色（青みのある暗い灰
+/// など）は黒・灰・白の中から選ぶ（そうしないと縁が紺や青緑の点になる）。誤差拡散はしない（小さな絵では点が
+/// ざらつくため）
+pub fn quantize16(px: &[u32]) -> Vec<u8> {
+    use crate::palette::{BLACK, DARK_GRAY, LIGHT_GRAY, VGA16, WHITE, nearest16};
+    px.iter()
+        .map(|&p| {
+            let a = p >> 24;
+            if a < 128 {
+                return TRANSPARENT;
+            }
+            let c: [u8; 3] = core::array::from_fn(|i| (((p >> (16 - 8 * i)) & 0xFF) * 255 / a).min(255) as u8);
+            let (lo, hi) = (c.iter().min().copied().unwrap_or(0), c.iter().max().copied().unwrap_or(0));
+            if hi - lo <= GRAYISH {
+                let v = (c[0] as i32 * 3 + c[1] as i32 * 4 + c[2] as i32 * 2) / 9 >> 2;
+                return *[BLACK, DARK_GRAY, LIGHT_GRAY, WHITE]
+                    .iter()
+                    .min_by_key(|&&g| (VGA16[g as usize][0] as i32 - v).abs())
+                    .unwrap_or(&BLACK);
+            }
+            nearest16(c.map(|v| v >> 2))
+        })
+        .collect()
+}
+
 /// `.VIA` を組み立てる（名前は 12 バイトまで。ホストのツールとテスト用）
-pub fn encode(size: u16, icons: &[(String, Vec<u32>)]) -> Vec<u8> {
+pub fn encode(size: u16, icons: &[(String, Vec<u8>)]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&size.to_le_bytes());
@@ -85,9 +114,7 @@ pub fn encode(size: u16, icons: &[(String, Vec<u32>)]) -> Vec<u8> {
         let mut n = [0u8; NAME_LEN];
         n[..name.len()].copy_from_slice(name.as_bytes());
         out.extend_from_slice(&n);
-        for p in px {
-            out.extend_from_slice(&p.to_le_bytes());
-        }
+        out.extend_from_slice(px);
     }
     out
 }
@@ -100,14 +127,25 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let icons = vec![("calc".to_string(), vec![0xFF00_00FFu32; 4]), ("folder".to_string(), vec![0x8000_4000; 4])];
+        let icons = vec![("app".to_string(), vec![1, 2, 3, TRANSPARENT]), ("calc".to_string(), vec![15; 4])];
         let data = encode(2, &icons);
+        assert_eq!(data.len(), 8 + 2 * (NAME_LEN + 4));
         let set = IconSet::parse(&data).unwrap();
         assert_eq!((set.size, set.len()), (2, 2));
-        assert_eq!(set.names().collect::<Vec<_>>(), ["calc", "folder"]);
-        assert_eq!(set.get("folder").unwrap(), vec![0x8000_4000; 4]);
+        assert_eq!(set.names().collect::<Vec<_>>(), ["app", "calc"]);
+        assert_eq!(set.get("app"), Some(&[1u8, 2, 3, TRANSPARENT][..]));
         assert!(set.get("nothing").is_none());
         assert_eq!(IconSet::parse(&data[..data.len() - 1]).err(), Some(ViaError::TooShort));
-        assert_eq!(IconSet::parse(b"VIAX\x02\x00\x00\x00").err(), Some(ViaError::BadMagic));
+        assert_eq!(IconSet::parse(b"VIA1\x02\x00\x00\x00").err(), Some(ViaError::BadMagic));
+    }
+
+    #[test]
+    fn quantize16_thresholds_alpha_and_finds_colors() {
+        use crate::palette::{BLACK, BLUE, LIGHT_GRAY, WHITE};
+        // 透明・半分より薄い・白・半分の濃さの紺（事前に掛けたアルファ）・明るい灰
+        let px = [0x0000_0000, 0x7F7F_7F7F, 0xFFFF_FFFF, 0x8000_0040, 0xFFC0_C0C0];
+        assert_eq!(quantize16(&px), [TRANSPARENT, TRANSPARENT, WHITE, BLUE, LIGHT_GRAY]);
+        // 青みのある暗い灰は紺ではなく黒、青みのある明るい灰は明るい灰
+        assert_eq!(quantize16(&[0xFF28_3046, 0xFF9C_A8BC]), [BLACK, LIGHT_GRAY]);
     }
 }

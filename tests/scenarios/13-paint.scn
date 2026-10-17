@@ -1,15 +1,15 @@
 # Phase 8: マウスで動くカーソルと、マウスで線を描くお絵かき
-# 期待画像は 320x200 のもの
-boot-config video=320x200
+# Phase 52（VGA C4）から 16 色の画面のウィンドウで。既定の大きさは中身 120,65 に 320x212
+# （上の 12 ピクセルは色の並び、1 色 20 ピクセル）
 timeout 20
 wait-serial ps2: keyboard true, mouse true
-wait-serial VIBEOS READY
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
 type paint
 key ret
 wait-serial paint: started
 sleep 300
-# カーソルは画面の真ん中（160,100）から始まる。少し動かしてから左ボタンを押したまま右へ 40 動かす
+# カーソルは画面の真ん中（320,240）から始まる。少し動かしてから左ボタンを押したまま右へ 40 動かす
 mouse-move -20 0
 mouse-button left down
 mouse-move 10 0
@@ -18,13 +18,13 @@ mouse-move 10 0
 mouse-move 10 0
 mouse-button left up
 sleep 300
-# 黒い線が y=100 の x=140〜180 に描かれている（画面は 2 倍で取れる）
-expect-pixel 300 201 0 0 0
-expect-pixel 340 201 0 0 0
+# 黒い線が y=240 の x=300〜340 に描かれている
+expect-pixel 300 240 0 0 0
+expect-pixel 340 240 0 0 0
 # 線の外は白いキャンバスのまま
-expect-pixel 300 240 255 255 255
-# 上の色の並びの 6 番目（5 番 = 紫）をクリックして、縦の線
-mouse-move -80 -95
+expect-pixel 300 250 255 255 255
+# 上の色の並びの 6 番目（5 番 = 紫、→ 230,71）をクリックして、縦の線（230,121 から下へ 20）
+mouse-move -110 -169
 mouse-button left down
 mouse-button left up
 mouse-move 0 50
@@ -32,7 +32,8 @@ mouse-button left down
 mouse-move 0 20
 mouse-button left up
 sleep 300
-expect-screen paint-lines
+expect-pixel 230 131 128 0 128
+expect-screen paint-lines 119 44 322 234
 key esc
 wait-serial paint: closed
 serial-absent PANIC

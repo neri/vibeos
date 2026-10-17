@@ -15,7 +15,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use vibe_rt::abi::{self, ProcInfo, err, key};
-use vibe_rt::gfx::{Event, Window32 as Window};
+use vibe_rt::gfx::{Event, Window};
 use vibe_rt::{println, sys};
 use vibe_ui::dialog::Dialog;
 use vibe_ui::{Action, Align, Button, Id, Input, Label, List, Rect, Ui};
@@ -49,7 +49,7 @@ struct App {
 }
 
 fn main() -> i32 {
-    vibe_ui::set_fonts(vibe_rt::gfx::font(vibe_rt::abi::FONT_UI), vibe_rt::gfx::font(vibe_rt::abi::FONT_BOLD));
+    vibe_ui::set_font(vibe_rt::gfx::font16());
     let Some(mut win) = Window::open(W, H, "Tasks") else {
         println!("tasks: cannot open a window");
         return 1;
@@ -97,7 +97,7 @@ impl App {
         // 見出し（一覧の列と同じ位置。ラベルは中で 6 ピクセル空けて描く）
         for (x0, x1, align, name) in COLUMNS {
             let mut l = Label::new(name).align(align);
-            l.color = vibe_rt::gfx_lib::theme::TEXT_DIM;
+            l.color = vibe_ui::draw::TEXT_DISABLED;
             ui.add(Rect::new(TEXT_X + x0 - 6, 4, x1 - x0 + 12, 20), l);
         }
         let list = ui.add(Rect::new(8, 26, W as i32 - 16, H as i32 - 62), List::new(Vec::new()));
@@ -109,8 +109,8 @@ impl App {
     }
 
     fn draw(&mut self, win: &mut Window) {
-        let mut c = win.canvas();
-        c.clear(vibe_rt::gfx_lib::theme::FACE);
+        let mut c = win.surface();
+        c.clear(vibe_ui::draw::FACE);
         self.ui.draw(&mut c);
         win.present();
     }
@@ -182,7 +182,7 @@ fn run_dialog(d: &mut Dialog) -> Option<usize> {
     let (w, h) = d.size();
     let mut win = Window::open(w, h, "Tasks")?;
     loop {
-        d.draw(&mut win.canvas());
+        d.draw(&mut win.surface());
         win.present();
         let input = match win.event(None)? {
             Event::Close => return None,

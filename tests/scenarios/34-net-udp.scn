@@ -18,9 +18,9 @@ expect-packet dhcp-reply 10.0.2.2 255.255.255.255
 wait-serial VibeOS shell
 # ステータスバーに IP アドレスが出る（1 秒ごとに描き直す）
 sleep 1500
-# デスクトップではアドレスはバーの右側（固定幅の文字で、日時などの幅はそろえてあるので位置は変わらない。
-# 40 文字 × 8 ピクセルを右端から 8 ピクセル空けて置くので、アドレスは x=696 から）
-expect-screen net-statusbar-ip 696 0 80 24
+# アドレスはバーの右側（8x16 の固定幅の文字で、日時などの幅はそろえてあるので位置は変わらない。
+# 40 文字 × 8 ピクセルを右端から 8 ピクセル空けて置くので、アドレスは x=312 から）
+expect-screen net-statusbar-ip 312 0 72 20
 type net
 key ret
 wait-serial dns:  10.0.2.50

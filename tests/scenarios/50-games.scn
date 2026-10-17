@@ -1,43 +1,44 @@
 # Phase 36（デスクトップ D5）: マインスイーパと落ち物パズル（どちらも種を指定して同じ盤面にする）
-# mines のウィンドウは中身 120,73 に 156x186。マス (x, y) の中心は (134 + 16x, 117 + 16y)。
+# Phase 52（VGA C4）から 16 色の画面で。mines のウィンドウは中身 120,65 に 156x186。
+# マス (x, y) の中心は (134 + 16x, 109 + 16y)。
 # 種 5 で (4,4) を最初に開くと、地雷は (6,1) (2,2) (1,4) (2,4) (6,4) (0,5) (1,5) (4,8) (5,8) (7,8)
 timeout 30
-wait-serial gui: desktop 1024x768
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
 type mines 5 &
 key ret
 wait-serial mines: started (seed 5)
 sleep 300
-# (4,4) を開く（カーソル 512,384 → 198,181）。周りの 0 のマスがまとめて開く
-mouse-move -314 -203
+# (4,4) を開く（カーソル 320,240 → 198,173）。周りの 0 のマスがまとめて開く
+mouse-move -122 -67
 mouse-button left down
 mouse-button left up
 sleep 300
-expect-screen mines-open 126 109 144 144
-# 地雷 (6,1) に右クリックで旗（→ 230,133）。残りの数が 9 になる
+expect-screen mines-open 126 101 144 144
+# 地雷 (6,1) に右クリックで旗（→ 230,125）。残りの数が 9 になる
 mouse-move 32 -48
 mouse-button right down
 mouse-button right up
 sleep 300
 # 右上の時間（230〜269）は比べない
-expect-screen mines-flag 126 109 144 144
-expect-screen mines-counter 126 79 90 24
-# 地雷 (2,2) を開くと負け（→ 166,149）
+expect-screen mines-flag 126 101 144 144
+expect-screen mines-counter 126 71 90 24
+# 地雷 (2,2) を開くと負け（→ 166,141）
 mouse-move -64 16
 mouse-button left down
 mouse-button left up
 wait-serial mines: lost
 sleep 300
-expect-screen mines-lost 126 109 144 144
-expect-screen mines-sad 126 79 90 24
-# 顔（186〜209, 79〜102）を押すと新しいゲーム（→ 198,91）
+expect-screen mines-lost 126 101 144 144
+expect-screen mines-sad 126 71 90 24
+# 顔（186〜209, 71〜94）を押すと新しいゲーム（→ 198,83）
 mouse-move 32 -58
 mouse-button left down
 mouse-button left up
 wait-serial mines: new game
 key esc
 wait-serial mines: closed
-# 落ち物パズル（2 つ目のウィンドウなので中身 144,93 に 152x176。盤面は 152,101 から 80x160）
+# 落ち物パズル（2 つ目のウィンドウなので中身 144,85 に 152x176。盤面は 152,93 から 80x160）
 type blocks 3 &
 key ret
 wait-serial blocks: started (seed 3)
@@ -53,11 +54,11 @@ key up
 key spc
 sleep 300
 # 止まったブロックと影の見える盤面の下の方（落ちているブロックの高さは時間で変わるので比べない）
-expect-screen blocks-bottom 151 196 82 66
+expect-screen blocks-bottom 151 188 82 66
 # P で一時停止
 key p
 sleep 300
-expect-screen blocks-paused 152 169 80 26
+expect-screen blocks-paused 152 153 80 40
 key esc
 wait-serial blocks: quit, score
 serial-absent PANIC

@@ -1,41 +1,38 @@
-# Phase 36（デスクトップ D5）: デスクトップでは view は画像の大きさのウィンドウ、paint は好きな大きさのキャンバスのウィンドウ
+# Phase 36（デスクトップ D5）: view は画像の大きさのウィンドウ、paint は好きな大きさのキャンバスのウィンドウ
+# Phase 52（VGA C4）から 16 色の画面で。画像は 24 ビットも 8 ビットも 16 色に誤差拡散して出る
 timeout 30
-wait-serial gui: desktop 1024x768
+wait-serial gui: desktop 640x480
 wait-serial VibeOS shell
-# 24 ビットの画像（160x100）。ウィンドウは中身 120,73
+# 24 ビットの画像（160x100）。ウィンドウは中身 120,65
 type view /images/gradient.bmp &
 key ret
 wait-serial view: showing 160x100
 sleep 300
-expect-screen view-window-gradient 119 48 162 126
-# 24 ビットの画像は誤差拡散せずにそのままの色で出る（画像の (x, y) は画面の (120 + x, 73 + y)。色は mkassets の式から）
-expect-pixel 130 83 16 25 235
-expect-pixel 200 123 128 128 127
-expect-pixel 270 163 240 231 20
+expect-screen view-window-gradient 119 44 162 122
 key esc
 wait-serial view: closed (160x100 true color)
-# 8 ビットの画像（独自のパレットの色のまま出る）。2 つ目のウィンドウは中身 144,93 に 320x200
+# 8 ビットの画像。2 つ目のウィンドウは中身 144,85 に 320x200
 type view /images/plasma.bmp &
 key ret
 wait-serial view: showing 320x200
 sleep 300
-expect-screen view-window-plasma 143 68 322 226
+expect-screen view-window-plasma 143 64 322 222
 key esc
 wait-serial view: closed (320x200 8-bit)
-# paint 200 100: 3 つ目のウィンドウは中身 168,113 に 200x112（上の 12 ピクセルは色の並び、1 色 12 ピクセル）
+# paint 200 100: 3 つ目のウィンドウは中身 168,105 に 200x112（上の 12 ピクセルは色の並び、1 色 12 ピクセル）
 type paint 200 100 &
 key ret
 wait-serial paint: started (200x100)
 sleep 300
-# 黒で横の線（カーソル 512,384 → 200,176 から右へ 40）
-mouse-move -312 -208
+# 黒で横の線（カーソル 320,240 → 200,168 から右へ 40）
+mouse-move -120 -72
 mouse-button left down
 mouse-move 20 0
 mouse-move 20 0
 mouse-button left up
 sleep 200
-expect-pixel 220 176 0 0 0
-# 赤（4 番、222,119）を選んで縦の線（→ 222,119 → 222,146 から下へ 40）
+expect-pixel 220 168 0 0 0
+# えんじ（4 番、222,111）を選んで縦の線（→ 222,111 → 222,138 から下へ 40）
 mouse-move -18 -57
 mouse-button left down
 mouse-button left up
@@ -45,8 +42,8 @@ mouse-move 0 20
 mouse-move 0 20
 mouse-button left up
 sleep 300
-expect-pixel 222 176 168 0 0
-expect-screen paint-window 167 88 202 138
+expect-pixel 222 168 128 0 0
+expect-screen paint-window 167 84 202 134
 key esc
 wait-serial paint: closed
 serial-absent PANIC
