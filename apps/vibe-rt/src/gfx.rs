@@ -1,4 +1,5 @@
-//! ウィンドウ（win_open / win_blit / win_event）と、アプリの文字（8x16）・アイコン（16 色）
+//! ウィンドウ（win_open / win_blit / win_event）と、アプリの文字（8x16）・アイコン（16x16）。
+//! 色は 16 色の番号で描く（画面は白黒で、黒と白以外は明るさの模様になる。docs/plans/mono.md）
 
 use alloc::boxed::Box;
 use alloc::vec;
@@ -118,13 +119,13 @@ pub fn draw_text16_centered(s: &mut Surface, x: i32, w: i32, y: i32, text: &str,
     }
 }
 
-/// 16 色の 16x16 のアイコン（色番号、透明は `vibe_gfx::icons::TRANSPARENT`）。無ければ None
+/// 16x16 のアイコン（色番号。今の絵は黒と白だけ。透明は `vibe_gfx::icons::TRANSPARENT`）。無ければ None
 pub fn icon16(name: &str) -> Option<Vec<u8>> {
     let mut buf = [0u8; vibe_abi::ICON_SIZE * vibe_abi::ICON_SIZE];
     (sys::icon16_data(name, &mut buf) == 0).then(|| buf.to_vec())
 }
 
-/// 16 色のアイコンを (x, y) に置く（透明の画素は描かない）
+/// アイコンを (x, y) に置く（透明の画素は描かない）
 pub fn draw_icon16(s: &mut Surface, x: i32, y: i32, icon: &[u8]) {
     s.blit(x, y, icon, vibe_abi::ICON_SIZE, Some(vibe_gfx::icons::TRANSPARENT));
 }

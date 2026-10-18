@@ -115,7 +115,7 @@ struct Window {
     closable: bool,
     /// タイトルバー（色番号、幅 × TITLE_H）
     titlebar: Vec<u8>,
-    /// タイトルバー・上端のバーのボタンに出すアイコン（16 色の 16x16）
+    /// タイトルバー・上端のバーのボタンに出すアイコン（白黒の 16x16）
     icon: Option<&'static [u8]>,
     /// アプリが忙しい間に打たれたキーも落とさないよう、押す・離すで 128 打鍵分
     keys: Ring<KeyEvent, 256>,

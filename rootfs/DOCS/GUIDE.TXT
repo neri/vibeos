@@ -3,9 +3,9 @@ VibeOS GUIDE
 
 VibeOS is a small operating system for
 32-bit x86 PCs. It boots from a 1.44MB
-floppy disk. The screen is 640x480 with
-16 colors (VGA mode 12h), so it works
-on any VGA card.
+floppy disk. The screen is 640x480 in
+black and white (VGA mode 12h). It
+runs on any VGA card.
 
 DESKTOP
 -------

@@ -64,7 +64,7 @@ impl Metrics for Fonts {
 }
 
 /// 文書を `area` に描く（文書の y = `scroll` が枠の上端）。`hover` のリンクは色を変える。
-/// `image` は画像の番号から画素（16 色の番号, 幅, 高さ）。無ければ枠だけ
+/// `image` は画像の番号から画素（白黒の色番号, 幅, 高さ）。無ければ枠だけ
 pub fn draw_page<'a>(
     s: &mut Surface,
     fonts: &Fonts,

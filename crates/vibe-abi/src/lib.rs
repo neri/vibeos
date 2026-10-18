@@ -86,7 +86,8 @@ pub mod nr {
     /// win_open(w, h, title, title_len, flags) -> ウィンドウ番号。デスクトップの枠付きのウィンドウ
     /// （640x480 まで。flags は今は使わない）
     pub const WIN_OPEN: u32 = 26;
-    /// win_blit(win, buf) -> 0。中身全体を w*h バイトの色番号（VGA の 16 色）で書き換える
+    /// win_blit(win, buf) -> 0。中身全体を w*h バイトの色番号（VGA の 16 色）で書き換える。画面は白黒なので、
+    /// 黒（0）と白（15）はそのまま、ほかの色は明るさの模様で出る（docs/plans/mono.md）
     pub const WIN_BLIT: u32 = 27;
     /// win_event(win, &mut WinEvent, timeout_ms) -> 1 ならイベントあり, 0 なら時間切れ。
     /// timeout_ms = 0 なら待たない、u32::MAX ならいつまでも待つ
@@ -186,7 +187,7 @@ pub mod nr {
     pub const FONT_DATA: u32 = 71;
     /// win_title(win, title, title_len) -> 0。ウィンドウのタイトルを変える（タイトルバーと上端のバーのボタン）
     pub const WIN_TITLE: u32 = 73;
-    /// icon16_data(name, name_len, buf: *mut [u8; 256]) -> 0。16 色の 16x16 のアイコン（色番号、透明は 0xFF）。
+    /// icon16_data(name, name_len, buf: *mut [u8; 256]) -> 0。16x16 のアイコン（色番号、透明は 0xFF。今の絵は黒と白だけ）。
     /// 無ければ -ENOENT
     pub const ICON16_DATA: u32 = 74;
 

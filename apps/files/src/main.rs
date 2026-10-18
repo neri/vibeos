@@ -42,7 +42,7 @@ struct App {
     folder: Id,
     dir: String,
     entries: Vec<Entry>,
-    /// 一覧のアイコン（名前 → 16 色の 16x16）。起動時にカーネルから 1 回取る
+    /// 一覧のアイコン（名前 → 白黒の 16x16）。起動時にカーネルから 1 回取る
     icons: Vec<(&'static str, Option<&'static [u8]>)>,
 }
 

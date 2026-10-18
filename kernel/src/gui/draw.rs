@@ -41,7 +41,7 @@ pub const SHADOW: i32 = 2;
 pub const MENU_SHADOW: i32 = 4;
 /// 背景の斜めの線の間隔
 const DESKTOP_STRIPE: usize = 6;
-/// 16 色のアイコンの透明な画素
+/// アイコンの透明な画素
 const CLEAR: u8 = vibe_gfx::icons::TRANSPARENT;
 
 pub(super) fn font() -> &'static Font {

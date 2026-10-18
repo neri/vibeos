@@ -226,7 +226,7 @@ impl TextField {
 /// 一覧（スクロールバー付き）
 pub struct List {
     items: Vec<String>,
-    /// 項目のアイコン（16 色の 16x16 の色番号、透明は `TRANSPARENT`。無ければアイコンの場所を空けない）
+    /// 項目のアイコン（16x16 の色番号、透明は `TRANSPARENT`。無ければアイコンの場所を空けない）
     icons: Vec<Option<&'static [u8]>>,
     /// 列: 項目の文字をタブで分け、i 番目を (左端, 寄せ方) の列に描く（左端は文字の場所の左からの位置。
     /// 列の右端は次の列の左端か、文字の場所の右端）。空なら 1 列
@@ -446,7 +446,7 @@ impl Widget {
         }
     }
 
-    /// 描く。`hover` はマウスが乗っている（ボタンを押していない）とき（16 色の見た目では使わない）
+    /// 描く。`hover` はマウスが乗っている（ボタンを押していない）とき（白黒の見た目では使わない）
     pub(crate) fn draw(&self, s: &mut Surface, r: Rect, focused: bool, pressed: bool, _hover: bool) {
         let t = draw::text();
         match self {
