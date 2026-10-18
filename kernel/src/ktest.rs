@@ -57,6 +57,7 @@ const TESTS: &[(&str, fn())] = &[
     ("vga16_assets", vga16_assets),
     // デスクトップにするので最後に
     ("gfx_frame_speed", gfx_frame_speed),
+    ("gfx_mono_output", gfx_mono_output),
 ];
 
 pub fn run_all() -> ! {
@@ -782,4 +783,36 @@ fn gfx_frame_speed() {
     klog!("bench: 640x480 frame with 4 windows: {changed} ms when the windows change ({cw} bytes written, {cs} skipped), {same} ms when nothing changes ({sw} written, {ss} skipped)");
     assert!(changed <= 100, "one frame took {changed} ms");
     assert_eq!(sw, 0, "an unchanged frame wrote to VRAM");
+}
+
+/// 白黒の画面（docs/plans/mono.md）: ウィンドウの色番号が、VRAM に書いたバイト（写し）で白黒の模様になっている。
+/// 濃い灰（8）は行ごとにずれる市松（0xAA・0x55）、白（15）と黒（0）はベタ。gfx_frame_speed の後（デスクトップ）
+fn gfx_mono_output() {
+    use crate::gui::SCREEN;
+    use vibe_gfx::palette::{BLACK, DARK_GRAY, WHITE};
+    let (x, y) = (16, 300);
+    let mut s = SCREEN.lock();
+    let id = s.create_window(64, 48, "mono", None, None, "app");
+    if let Some(mut surf) = s.window_surface(id) {
+        surf.fill_rect(0, 0, 64, 16, DARK_GRAY);
+        surf.fill_rect(0, 16, 64, 16, WHITE);
+        surf.fill_rect(0, 32, 64, 16, BLACK);
+    }
+    // カーソル（画面の真ん中）と重ならない所に置く
+    s.place_window(id, x, y);
+    s.present();
+    for row in 0..48 {
+        let line = crate::drivers::vga::shadow_row(y as usize + row);
+        let want = match row {
+            0..16 if (y as usize + row) % 2 == 0 => 0xAA,
+            0..16 => 0x55,
+            16..32 => 0xFF,
+            _ => 0x00,
+        };
+        for b in x as usize / 8..(x as usize + 64) / 8 {
+            assert_eq!(line[b], want, "row {row} byte {b}");
+        }
+    }
+    s.destroy_window(id);
+    s.present();
 }

@@ -1,6 +1,6 @@
-//! アイコンをまとめたファイル `.VIA`（ホストのツール `tools/vibe-icongen` が手で書いた SVG から作る）。
+//! アイコンをまとめたファイル `.VIA`（ホストのツール `tools/vibe-icongen` が手で描いた白黒の絵から作る）。
 //!
-//! VGA の 16 色の 16x16（`palette::VGA16` の番号、透明は `TRANSPARENT`）。すべてリトルエンディアン:
+//! 16x16 の色番号（`palette::VGA16` の番号、透明は `TRANSPARENT`。今の絵は黒と白だけ）。すべてリトルエンディアン:
 //!
 //! | 位置 | 大きさ | 中身 |
 //! |---|---|---|
@@ -74,33 +74,30 @@ impl<'a> IconSet<'a> {
     }
 }
 
-/// 成分の差がこれ以下の色は灰色とみなす（8bit）
-const GRAYISH: u8 = 48;
-
-/// アルファ付きのアイコン（事前に掛けたアルファの 0xAARRGGBB。SVG をラスタライズしたもの）を 16 色にする:
-/// アルファが半分より小さい画素は透明、ほかはアルファを戻した色に一番近い 16 色。灰色に近い色（青みのある暗い灰
-/// など）は黒・灰・白の中から選ぶ（そうしないと縁が紺や青緑の点になる）。誤差拡散はしない（小さな絵では点が
-/// ざらつくため）
-pub fn quantize16(px: &[u32]) -> Vec<u8> {
-    use crate::palette::{BLACK, DARK_GRAY, LIGHT_GRAY, VGA16, WHITE, nearest16};
-    px.iter()
-        .map(|&p| {
-            let a = p >> 24;
-            if a < 128 {
-                return TRANSPARENT;
-            }
-            let c: [u8; 3] = core::array::from_fn(|i| (((p >> (16 - 8 * i)) & 0xFF) * 255 / a).min(255) as u8);
-            let (lo, hi) = (c.iter().min().copied().unwrap_or(0), c.iter().max().copied().unwrap_or(0));
-            if hi - lo <= GRAYISH {
-                let v = (c[0] as i32 * 3 + c[1] as i32 * 4 + c[2] as i32 * 2) / 9 >> 2;
-                return *[BLACK, DARK_GRAY, LIGHT_GRAY, WHITE]
-                    .iter()
-                    .min_by_key(|&&g| (VGA16[g as usize][0] as i32 - v).abs())
-                    .unwrap_or(&BLACK);
-            }
-            nearest16(c.map(|v| v >> 2))
-        })
-        .collect()
+/// 手で描いた白黒の絵（1 行 `size` 文字 × `size` 行。`#` は黒、`.` は白、空白は透明）を色番号にする。
+/// 行の数・長さが違う、ほかの文字があるときは、その行の番号（1 から）を添えて Err
+pub fn parse_art(text: &str, size: usize) -> Result<Vec<u8>, String> {
+    use crate::palette::{BLACK, WHITE};
+    use alloc::format;
+    let rows: Vec<&str> = text.lines().collect();
+    if rows.len() != size {
+        return Err(format!("{} rows, expected {size}", rows.len()));
+    }
+    let mut px = Vec::with_capacity(size * size);
+    for (n, row) in rows.iter().enumerate() {
+        if row.chars().count() != size {
+            return Err(format!("row {}: {} columns, expected {size}", n + 1, row.chars().count()));
+        }
+        for c in row.chars() {
+            px.push(match c {
+                '#' => BLACK,
+                '.' => WHITE,
+                ' ' => TRANSPARENT,
+                _ => return Err(format!("row {}: unexpected {c:?}", n + 1)),
+            });
+        }
+    }
+    Ok(px)
 }
 
 /// `.VIA` を組み立てる（名前は 12 バイトまで。ホストのツールとテスト用）
@@ -140,12 +137,11 @@ mod tests {
     }
 
     #[test]
-    fn quantize16_thresholds_alpha_and_finds_colors() {
-        use crate::palette::{BLACK, BLUE, LIGHT_GRAY, WHITE};
-        // 透明・半分より薄い・白・半分の濃さの紺（事前に掛けたアルファ）・明るい灰
-        let px = [0x0000_0000, 0x7F7F_7F7F, 0xFFFF_FFFF, 0x8000_0040, 0xFFC0_C0C0];
-        assert_eq!(quantize16(&px), [TRANSPARENT, TRANSPARENT, WHITE, BLUE, LIGHT_GRAY]);
-        // 青みのある暗い灰は紺ではなく黒、青みのある明るい灰は明るい灰
-        assert_eq!(quantize16(&[0xFF28_3046, 0xFF9C_A8BC]), [BLACK, LIGHT_GRAY]);
+    fn parse_art_reads_black_white_and_clear() {
+        use crate::palette::{BLACK, WHITE};
+        assert_eq!(parse_art("#.\n .\n", 2).unwrap(), [BLACK, WHITE, TRANSPARENT, WHITE]);
+        assert!(parse_art("#.\n", 2).unwrap_err().contains("1 rows"));
+        assert!(parse_art("#.\n#\n", 2).unwrap_err().contains("row 2"));
+        assert!(parse_art("#x\n..\n", 2).unwrap_err().contains("'x'"));
     }
 }

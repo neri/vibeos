@@ -42,7 +42,8 @@ mouse-move 0 20
 mouse-move 0 20
 mouse-button left up
 sleep 300
-expect-pixel 222 168 128 0 0
+# えんじは画面では黒（docs/plans/mono.md §3.1）
+expect-pixel 222 168 0 0 0
 expect-screen paint-window 167 84 202 134
 key esc
 wait-serial paint: closed

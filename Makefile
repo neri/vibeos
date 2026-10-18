@@ -14,7 +14,7 @@
 #   make lzsa-bench  自作の LZSA と本家の圧縮後の大きさの表
 #   make lzsa-ref    本家の lzsa を GitHub から取ってきてビルドする（build/ext/lzsa。DECISIONS.md D-033）
 #   make size-report KERNEL.SYS の圧縮前後の大きさとフロッピーの空き
-#   make icons    assets/icons/ICONS.VIA（16 色の 16x16）を手で書いた SVG から作り直す（tools/vibe-icongen）
+#   make icons    assets/icons/ICONS.VIA（白黒の 16x16）を手で描いた絵（*.txt）から作り直す（tools/vibe-icongen）
 #   make COMPRESS=0  カーネルとアプリを圧縮しないイメージを作る（ローダは印の無い KERNEL.SYS を
 #                    そのまま写し、カーネルは gzip でない ELF をそのまま読む）。アプリは RAW_APPS だけ
 #   make clean
@@ -207,10 +207,10 @@ $(GEN_STAMP): $(shell find tools/mkassets -type f) assets/icons/ICONS.VIA Makefi
 	gzip -9 -n -c assets/icons/ICONS.VIA > $(GEN_ROOTFS)/SYSTEM/ICONS.VIA
 	touch $@
 
-# assets/icons/ICONS.VIA を手で書いた SVG（assets/icons/*.svg）から作り直す（tools/vibe-icongen。16 色の 16x16）
+# assets/icons/ICONS.VIA を手で描いた白黒の絵（assets/icons/*.txt）から作り直す（tools/vibe-icongen。16x16）
 icons:
 	$(CARGO) build -q --release -p vibe-icongen
-	target/release/vibe-icongen assets/icons/ICONS.VIA assets/icons/*.svg
+	target/release/vibe-icongen assets/icons/ICONS.VIA assets/icons/*.txt
 
 $(IMG): $(BUILD)/boot.bin $(BUILD)/loader.bin $(KERNEL_FILE) $(COMPRESS_STAMP) $(BUILD)/kernel.elf $(ROOTFS) $(GEN_STAMP) $(APPS_IMG_STAMP)
 	$(call make-image,$@,$(KERNEL_FILE),$(APPS_IMG_DIR))

@@ -28,6 +28,7 @@
 //!                         画面を tests/golden/NAME.png と比較する。矩形を指定するとその範囲だけ
 //!                         切り出して比較する（UPDATE_GOLDEN=1 のときは期待画像を更新する）
 //!   expect-pixel X Y R G B  画面の 1 点の色を確認する
+//!   expect-mono           画面の画素がすべて白か黒であることを確認する（白黒の画面。docs/plans/mono.md）
 //!   expect-change X Y W H MS  矩形の中身が MS ミリ秒の間に変わることを確認する（動き続けているものの確認）
 //!   key KEYS              キーを押す（例: `key a`, `key shift+a`, `key ret`。QEMU の qcode 名）
 //!   type TEXT             文字列を US 配列で打つ
@@ -383,7 +384,7 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
         let at = |e: String| format!("line {} `{} {}`: {e}", s.line, s.cmd, s.arg);
         // Bochs では画面を取れないので、画面を確かめる手順は飛ばす
         if vm.is_bochs()
-            && matches!(s.cmd.as_str(), "screendump" | "expect-screen" | "expect-pixel" | "expect-change" | "expect-running")
+            && matches!(s.cmd.as_str(), "screendump" | "expect-screen" | "expect-pixel" | "expect-mono" | "expect-change" | "expect-running")
         {
             continue;
         }
@@ -531,6 +532,15 @@ fn run_steps(vm: &mut Vm, steps: &[Step], name: &str, out: &Path) -> Result<()> 
                 let want = [v[2] as u8, v[3] as u8, v[4] as u8];
                 if got != want {
                     return Err(at(format!("pixel is {got:?}, want {want:?}")));
+                }
+            }
+            "expect-mono" => {
+                let shot = out.join(format!("{name}-mono.png"));
+                vm.screendump(&shot).map_err(at)?;
+                let img = Image::load(&shot).map_err(at)?;
+                if let Some(i) = img.rgb.chunks(3).position(|p| p != [0, 0, 0] && p != [255, 255, 255]) {
+                    let (x, y) = (i as u32 % img.width, i as u32 / img.width);
+                    return Err(at(format!("pixel at {x},{y} is {:?}, not black or white", img.pixel(x, y))));
                 }
             }
             "expect-change" => {

@@ -30,8 +30,10 @@ fn panic(info: &PanicInfo) -> ! {
     {
         let font = &FONT_8X8;
         let mut s = screen.surface();
-        s.clear(palette::RED);
-        s.draw_text(font, 8, 8, "KERNEL PANIC", palette::YELLOW, None);
+        // 黒い地に白い字。見出しは白い帯に黒い字
+        s.clear(palette::BLACK);
+        s.fill_rect(0, 4, s.width() as i32, font.height as i32 + 8, palette::WHITE);
+        s.draw_text(font, 8, 8, "KERNEL PANIC", palette::BLACK, None);
         let cols = (s.width() - 16) / font.width;
         let (mut col, mut y) = (0, 24);
         for ch in text.as_str().chars() {

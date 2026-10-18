@@ -57,9 +57,10 @@ wait-serial term: stopping clock.ELF
 wait-serial term: stopping life.ELF
 wait-serial term: closed terminal 2
 sleep 500
-# 端末 2 のタイトルバーのあった所（端末 1 の上）は背景（青緑）に戻る
-expect-pixel 300 47 0 128 128
-expect-pixel 600 47 0 128 128
+# 端末 2 のタイトルバーのあった所（端末 1 の上）は背景（斜めの線。301,47 は線の上、300,47 は線の無い所）に戻る
+expect-pixel 300 47 255 255 255
+expect-pixel 301 47 0 0 0
+expect-pixel 601 47 0 0 0
 # フォーカスは端末 1 に戻る
 type echo "still" here
 key ret

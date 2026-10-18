@@ -1,9 +1,9 @@
 //! ウィンドウの重ね合わせ（コンポジタ）と入力の振り分け
 //!
-//! 画面は VGA のモード 12h（640x480・16 色。docs/plans/vga16.md）で、2 つのモードがある:
+//! 画面は VGA のモード 12h（640x480）の白黒（docs/plans/mono.md）で、2 つのモードがある:
 //! - **全画面**: 起動直後とパニックのときだけ。最初の端末（コンソール）を画面いっぱいに出す
 //! - **デスクトップ**: 上端のバー（メニュー・ウィンドウのボタン。bar.rs）、背景、重なったウィンドウ（黒い枠と
-//!   タイトルバー付き）を出す。クリックで前に出す（フォーカス）、タイトルバーのドラッグで動かす（ドラッグの間は
+//!   タイトルバーと影付き）を出す。クリックで前に出す（フォーカス）、タイトルバーのドラッグで動かす（ドラッグの間は
 //!   枠だけ）、[_] で最小化、[x] で閉じる。Alt+Tab でウィンドウを順に前に出す。見た目は draw.rs
 //!
 //! 端末（シェルの画面）もウィンドウの 1 つ。0 番のウィンドウは最初の端末（コンソール）で、起動直後は静的な
@@ -12,8 +12,9 @@
 //! 描画は各ウィンドウのバッファに行い、`present` で書き換えた矩形の行だけを重ね合わせて VRAM に送る。
 //! マウスカーソルは重ね合わせのときに上に描く。
 //!
-//! 色: どのバッファも 1 ピクセル 1 バイトの色番号（`palette::VGA16` の 0〜15）。重ね合わせも色番号で行い、
-//! `vga::write_row4_span` が 4 枚の面に分けて書く（書き換えた x の範囲だけ）。
+//! 色: どのバッファも 1 ピクセル 1 バイトの色番号（`palette::VGA16` の 0〜15。アプリの API と同じ）。重ね合わせも
+//! 色番号で行い、`vga::write_row_mono` が白黒の模様（`vibe_gfx::mono`。0 と 15 はそのまま）にして書く
+//! （書き換えた x の範囲だけ）。
 //!
 //! 入力: キーはフォーカスのあるウィンドウに、マウスはその中の座標にして届ける。
 //! ウィンドウの持ち主はそれぞれのキューから読む（`read_key` / `poll_mouse`）。
@@ -40,9 +41,10 @@ use crate::util::ring::Ring;
 pub type WinId = u32;
 pub const CONSOLE: WinId = 0;
 
-/// タイトルバー（下の黒い線を含む）とデスクトップの上端のバーの高さ
+/// タイトルバー（下の黒い線を含む）とデスクトップの上端のバーの高さ、ウィンドウの枠の太さ
 pub const TITLE_H: usize = draw::TITLE_H;
 pub const BAR_H: usize = draw::BAR_H;
+const BORDER: i32 = draw::BORDER;
 /// タイトルバーのボタン（[_]・[x]）の押せる所の幅と、右端・ボタンどうしの間
 const BUTTON_W: usize = 20;
 const BUTTON_GAP: usize = 2;
@@ -294,7 +296,7 @@ pub fn start_desktop() {
     let (cw, ch) = s.desktop_terminal_size();
     s.console_w = cw;
     s.console_h = ch;
-    let y = (s.height - ch - 8).max(BAR_H + TITLE_H + 1) as i32;
+    let y = (s.height - ch - 8).max(BAR_H + TITLE_H + BORDER as usize) as i32;
     s.console_y = y as usize;
     if let Some(c) = s.windows.get_mut(&CONSOLE) {
         c.icon = crate::gfx::icons::get("terminal");
@@ -414,9 +416,10 @@ impl Screen {
             // 少しずつずらして置く。画面の幅いっぱいのもの（端末）は x = 0（左右の枠は画面の外）
             let n = (self.placed % 8) as i32;
             self.placed += 1;
-            let max_x = (self.width as i32 - w as i32 - 1).max(0);
+            let max_x = (self.width as i32 - w as i32 - BORDER).max(0);
             win.x = (120 + n * 24).min(max_x);
-            win.y = ((BAR_H + TITLE_H + 1) as i32 + 24 + n * 20).min((self.height as i32 - h as i32 - 1).max(30));
+            // 中身の上端は 65 から（枠の上端 43。上端のバーとの間に背景が見える）
+            win.y = ((BAR_H + TITLE_H) as i32 + 25 + n * 20).min((self.height as i32 - h as i32 - BORDER).max(30));
         }
         self.windows.insert(id, Box::new(win));
         self.order.push(id);
@@ -631,8 +634,7 @@ impl Screen {
             if w.minimized {
                 continue;
             }
-            let (left, right) = (w.x - 1, w.x + w.w as i32);
-            let (top, bottom) = (w.y - TITLE_H as i32 - 1, w.y + w.h as i32);
+            let (left, right, top, bottom) = w.frame();
             if x < left || x > right || y < top || y > bottom {
                 continue;
             }
@@ -651,14 +653,25 @@ impl Screen {
         None
     }
 
-    fn move_window(&mut self, id: WinId, x: i32, y: i32) {
+    /// 中身の左上を (x, y) に置くときの位置: タイトルバーが上端のバーの下に、少なくとも一部が画面に残るようにする
+    fn clamp_position(&self, w: &Window, x: i32, y: i32) -> (i32, i32) {
         let (sw, sh) = (self.width as i32, self.height as i32);
+        (x.clamp(-(w.w as i32) + 40, sw - 40), y.clamp((BAR_H + TITLE_H) as i32 + BORDER, sh - 4))
+    }
+
+    fn move_window(&mut self, id: WinId, x: i32, y: i32) {
+        let Some(win) = self.windows.get(&id) else { return };
+        let (nx, ny) = self.clamp_position(win, x, y);
         let Some(win) = self.windows.get_mut(&id) else { return };
-        let old = (win.y - TITLE_H as i32 - 1, win.y + win.h as i32 + 1);
-        // タイトルバーが上端のバーの下に、少なくとも一部が画面に残るようにする
-        win.x = x.clamp(-(win.w as i32) + 40, sw - 40);
-        win.y = y.clamp((BAR_H + TITLE_H + 1) as i32, sh - 4);
-        let new = (win.y - TITLE_H as i32 - 1, win.y + win.h as i32 + 1);
+        // 枠と影の行（影は太い方の分）
+        let rows = |w: &Window| {
+            let (_, _, top, bottom) = w.frame();
+            (top, bottom + 1 + draw::SHADOW_FOCUSED)
+        };
+        let old = rows(win);
+        win.x = nx;
+        win.y = ny;
+        let new = rows(win);
         for (a, b) in [old, new] {
             self.mark_rows(a.max(0) as usize, b.max(0) as usize);
         }
@@ -839,6 +852,12 @@ impl Screen {
         self.mark_rows(0, h);
     }
 
+    /// ウィンドウの中身の左上を (x, y) に動かす（ktest で決まった所に置くため）
+    #[cfg(feature = "qemu-test")]
+    pub fn place_window(&mut self, id: WinId, x: i32, y: i32) {
+        self.move_window(id, x, y);
+    }
+
     /// 画面全体を描き直すことにする（ktest で 1 枚の時間を測るため）
     #[cfg(feature = "qemu-test")]
     pub fn redraw_all(&mut self) {
@@ -863,7 +882,7 @@ impl Screen {
                 Mode::Desktop => self.compose_row(y, row, focused),
                 Mode::Fullscreen => self.compose_fullscreen_row(y, row),
             }
-            vga::write_row4_span(y, row, x0, x1);
+            vga::write_row_mono(y, row, x0, x1);
         }
         self.dirty_lo = 0;
         self.dirty_hi = 0;
@@ -935,6 +954,16 @@ fn push_mouse(w: &mut Window, ev: MouseEvent) {
 }
 
 impl Window {
+    /// 枠の外側の (左, 右, 上, 下)（画面の座標。どれも枠に含む）。影はこの右下の外
+    fn frame(&self) -> (i32, i32, i32, i32) {
+        (
+            self.x - BORDER,
+            self.x + self.w as i32 + BORDER - 1,
+            self.y - TITLE_H as i32 - BORDER,
+            self.y + self.h as i32 + BORDER - 1,
+        )
+    }
+
     /// タイトルバーの [x] の左端（中身の左端から）。閉じられなければ None
     fn close_box_x(&self) -> Option<i32> {
         self.closable.then(|| self.w as i32 - (BUTTON_W + BUTTON_GAP) as i32)

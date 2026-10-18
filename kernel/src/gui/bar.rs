@@ -24,15 +24,15 @@ pub(super) const BUTTON_GAP: i32 = 2;
 pub(super) const STATUS_PAD: i32 = 8;
 /// メニューのパネルの左端と上下の余白、画面の下に空ける高さ
 pub(super) const MENU_X: i32 = 2;
-pub(super) const MENU_PAD: usize = 2;
+pub(super) const MENU_PAD: usize = 3;
 const MENU_BOTTOM_GAP: usize = 8;
 /// メニューの項目の名前の位置（列の左端から）と、列の幅の最小
 const ITEM_TEXT_X: usize = 24;
 const COLUMN_MIN_W: usize = 130;
 
-/// メニューのパネルの上端（バーの下）
+/// メニューのパネルの上端（バーのすぐ下）
 pub(super) fn menu_y() -> usize {
-    BAR_H + 2
+    BAR_H
 }
 
 pub(super) struct Menu {
@@ -93,7 +93,7 @@ impl Screen {
     pub(super) fn open_menu(&mut self, items: Vec<String>) {
         let longest = items.iter().map(|i| text_width(i)).max().unwrap_or(0);
         let col_w = (longest as usize + ITEM_TEXT_X + 20).max(COLUMN_MIN_W);
-        let room = self.height - menu_y() - 2 * MENU_PAD - MENU_BOTTOM_GAP;
+        let room = self.height - menu_y() - 2 * MENU_PAD - MENU_BOTTOM_GAP - super::draw::MENU_SHADOW as usize;
         let rows = (room / MENU_ITEM_H).clamp(1, items.len().max(1));
         let cols = items.len().div_ceil(rows).max(1);
         let w = (cols * col_w).min(self.width);
@@ -105,7 +105,7 @@ impl Screen {
 
     pub(super) fn close_menu(&mut self) {
         if let Some(m) = self.menu.take() {
-            self.mark_rows(BAR_H, menu_y() + m.h);
+            self.mark_rows(BAR_H, menu_y() + m.h + super::draw::MENU_SHADOW as usize);
             self.bar_dirty = true;
         }
     }

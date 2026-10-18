@@ -1,6 +1,6 @@
-# Phase 49（VGA C1）: VGA のモード 12h（640x480・16 色）になる。端末の 16 色（ANSI の 40〜47・100〜107 の
-# 地と 30〜37・90〜97 の文字）が 16 色の表のとおりに出る。Phase 51（C3）からはデスクトップの端末 1 に出る
-# （中身は 0,72 から、8x16。行 r は y = 72 + 16r）
+# Phase 49（VGA C1）: VGA のモード 12h（640x480）になる。Phase 55（白黒 W1）から、端末の ANSI の色（40〜47・
+# 100〜107 の地と 30〜37・90〜97 の文字）は白黒にまとまる: 地が黒なら白い字、地が黒以外なら白い地に黒い字
+# （docs/plans/mono.md §3.3）。デスクトップの端末 1 に出る（中身は 0,72 から、8x16。行 r は y = 72 + 16r）
 disk-put tests/scripts/colors.txt /COLORS.TXT
 timeout 30
 wait-serial video: 640x480x4
@@ -10,8 +10,9 @@ type head /COLORS.TXT
 key ret
 sleep 1000
 expect-screen vga-console 0 72 400 80
-# 16 色の表の明るい灰（192）と濃い灰（128）が、そのままの値で出る（3 行目の 8 つ目と 9 つ目の地）
-expect-pixel 120 110 192 192 192
-expect-pixel 136 110 128 128 128
+# 3 行目の 8 つ目（明るい灰の地）と 9 つ目（濃い灰の地）は、どちらも白い地。画面は白と黒だけ
+expect-pixel 120 110 255 255 255
+expect-pixel 136 110 255 255 255
+expect-mono
 serial-absent paging: framebuffer
 serial-absent PANIC

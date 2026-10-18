@@ -10,8 +10,8 @@ extern crate alloc;
 pub mod bmp;
 pub mod dither;
 pub mod icons;
+pub mod mono;
 pub mod palette;
-pub mod planar;
 pub mod wallpaper;
 
 use vibe_font::Font;
@@ -171,6 +171,30 @@ impl<'a> Surface<'a> {
         }
     }
 
+    /// 角の丸い矩形を塗る（角は半径 `r` の円）
+    pub fn fill_round_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, color: u8) {
+        for j in 0..h.max(0) {
+            if let Some((l, rr)) = round_span(w, h, r, j) {
+                self.hline(x + l, y + j, rr - l, color);
+            }
+        }
+    }
+
+    /// 角の丸い矩形の太さ `t` の枠（中は塗らない）
+    pub fn round_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, t: i32, color: u8) {
+        for j in 0..h.max(0) {
+            let Some((l, rr)) = round_span(w, h, r, j) else { continue };
+            let inner = if j >= t && j < h - t { round_span(w - 2 * t, h - 2 * t, (r - t).max(0), j - t) } else { None };
+            match inner {
+                Some((il, ir)) => {
+                    self.hline(x + l, y + j, il + t - l, color);
+                    self.hline(x + ir + t, y + j, rr - ir - t, color);
+                }
+                None => self.hline(x + l, y + j, rr - l, color),
+            }
+        }
+    }
+
     /// 太さ `width` の直線（Bresenham の各点に `width` 四方の正方形を置く）
     pub fn thick_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, width: i32, color: u8) {
         if width <= 1 {
@@ -261,6 +285,26 @@ impl<'a> Surface<'a> {
         }
         self.fill_rect(x0 as i32, (y1 - dy) as i32, (x1 - x0) as i32, dy as i32, fill);
     }
+}
+
+/// 幅 `w`・高さ `h`・角の半径 `r` の角の丸い矩形の `j` 行目に塗る x の範囲 [l, r)（左上からの位置）
+fn round_span(w: i32, h: i32, r: i32, j: i32) -> Option<(i32, i32)> {
+    if w <= 0 || h <= 0 || j < 0 || j >= h {
+        return None;
+    }
+    let r = r.min(w / 2).min(h / 2).max(0);
+    let dy = if j < r { r - j } else if j > h - 1 - r { j - (h - 1 - r) } else { 0 };
+    // 角の円の中（中心からの距離の 2 乗が r² + 0.6r 以下）に入る横の広がり
+    let limit = r * r + r * 6 / 10 - dy * dy;
+    let mut k = r;
+    while k > 0 && k * k > limit {
+        k -= 1;
+    }
+    if limit < 0 {
+        return None;
+    }
+    let inset = r - k;
+    Some((inset, w - inset))
 }
 
 #[cfg(test)]
@@ -388,5 +432,35 @@ mod tests {
         }
         s.scroll_up(0, 0, 3, 4, 1, 9);
         assert_eq!(ascii(&s), ["222", "333", "444", "999"]);
+    }
+
+    #[test]
+    fn fill_round_rect_cuts_the_corners() {
+        let mut buf = [0u8; 64];
+        let mut s = Surface::new(&mut buf, 8, 8);
+        s.fill_round_rect(0, 0, 8, 6, 2, 1);
+        assert_eq!(
+            ascii(&s),
+            [".111111.", "11111111", "11111111", "11111111", "11111111", ".111111.", "........", "........"]
+        );
+    }
+
+    #[test]
+    fn round_rect_is_hollow() {
+        let mut buf = [0u8; 64];
+        let mut s = Surface::new(&mut buf, 8, 8);
+        s.round_rect(0, 0, 8, 7, 2, 2, 1);
+        assert_eq!(
+            ascii(&s),
+            [".111111.", "11111111", "11....11", "11....11", "11....11", "11111111", ".111111.", "........"]
+        );
+    }
+
+    #[test]
+    fn round_rect_with_zero_radius_is_a_rect() {
+        let mut buf = [0u8; 16];
+        let mut s = Surface::new(&mut buf, 4, 4);
+        s.round_rect(0, 0, 4, 4, 0, 1, 1);
+        assert_eq!(ascii(&s), ["1111", "1..1", "1..1", "1111"]);
     }
 }
