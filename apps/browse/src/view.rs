@@ -1,11 +1,11 @@
 //! 描き方: レイアウトした文書を本文の枠に描く。フォントの寸法（`Metrics`）もここ
 //!
 //! 文字は 8x16 の固定幅（VGA の BIOS のフォント）だけ。太字と見出しは重ね打ちで、見出しは行を高くする。
-//! 色は VGA の 16 色: 白い地に黒い文字、リンクは青に下線（乗せると紫）。
+//! 画面は白黒（docs/plans/mono.md）: 白い地に黒い文字、リンクは黒い字に下線（乗せると黒い地に白い字）。
 
 use vibe_rt::font::Font as Bitmap;
 use vibe_rt::gfx_lib::Surface;
-use vibe_rt::gfx_lib::palette::{BLACK, DARK_GRAY, LIGHT_BLUE, LIGHT_GRAY, MAGENTA, WHITE};
+use vibe_rt::gfx_lib::palette::{BLACK, DARK_GRAY, LIGHT_GRAY, WHITE};
 use vibe_ui::Rect;
 use vibe_web::layout::{Font, Layout, Metrics, PieceKind};
 
@@ -13,8 +13,10 @@ pub const PAGE_BG: u8 = WHITE;
 /// 画像の透明な所に重ねる色（`PAGE_BG` の 0x00RRGGBB）
 pub const PAGE_BG_RGB: u32 = 0x00FF_FFFF;
 pub const TEXT: u8 = BLACK;
-pub const LINK: u8 = LIGHT_BLUE;
-pub const LINK_HOVER: u8 = MAGENTA;
+pub const LINK: u8 = BLACK;
+/// 乗せたリンク: 黒い地に白い字
+pub const LINK_HOVER: u8 = WHITE;
+const LINK_HOVER_BG: u8 = BLACK;
 const RULE: u8 = DARK_GRAY;
 const RULE_LIGHT: u8 = LIGHT_GRAY;
 const IMAGE_FRAME: u8 = LIGHT_GRAY;
@@ -62,7 +64,7 @@ impl Metrics for Fonts {
 }
 
 /// 文書を `area` に描く（文書の y = `scroll` が枠の上端）。`hover` のリンクは色を変える。
-/// `image` は画像の番号から画素（16 色の番号, 幅, 高さ）。無ければ枠だけ
+/// `image` は画像の番号から画素（白黒の色番号, 幅, 高さ）。無ければ枠だけ
 pub fn draw_page<'a>(
     s: &mut Surface,
     fonts: &Fonts,
@@ -85,7 +87,10 @@ pub fn draw_page<'a>(
                     // 見出しも字の形は同じなので、基準線は 8x16 の字の基準線にそろえる
                     let top = ly + line.baseline - ASCENT;
                     let color = match link {
-                        Some(l) if Some(*l) == hover => LINK_HOVER,
+                        Some(l) if Some(*l) == hover => {
+                            s.fill_rect(x, top, p.w, 16, LINK_HOVER_BG);
+                            LINK_HOVER
+                        }
                         Some(_) => LINK,
                         None => TEXT,
                     };
@@ -113,8 +118,11 @@ pub fn draw_page<'a>(
                         None => s.rect(x, top, p.w, p.h, IMAGE_FRAME),
                     }
                     if link.is_some() {
-                        let color = if *link == hover { LINK_HOVER } else { LINK };
-                        s.rect(x - 1, top - 1, p.w + 2, p.h + 2, color);
+                        // 乗せた画像のリンクは 2 ピクセルの枠
+                        s.rect(x - 1, top - 1, p.w + 2, p.h + 2, LINK);
+                        if *link == hover {
+                            s.rect(x - 2, top - 2, p.w + 4, p.h + 4, LINK);
+                        }
                     }
                 }
             }

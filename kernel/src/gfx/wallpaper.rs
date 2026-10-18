@@ -1,4 +1,4 @@
-//! デスクトップの背景の画像（BMP を読んで 16 色に誤差拡散し、並べ方と一緒に gui に渡す。並べるのは gui が 1 行ずつ）
+//! デスクトップの背景の画像（BMP を読んで白黒に誤差拡散し、並べ方と一緒に gui に渡す。並べるのは gui が 1 行ずつ）
 //!
 //! BOOT.CFG の `wallpaper=PATH [tile|center]` で起動時に、シェルの `wallpaper` でその場で変える。
 
@@ -6,7 +6,6 @@ use alloc::format;
 use alloc::string::String;
 
 use vibe_gfx::bmp::Bmp;
-use vibe_gfx::dither::Lut16;
 use vibe_gfx::wallpaper::{self, Fit};
 
 use crate::gui::{self, SCREEN};
@@ -23,7 +22,7 @@ pub fn load(path: &str, fit: Fit) -> Result<(), String> {
     }
     let (w, h) = (bmp.width as usize, bmp.height as usize);
     // 読むときに 1 回だけ誤差拡散する（並べるときは色番号を写すだけ）
-    let pixels = bmp.to_vga16(&Lut16::new()).into_boxed_slice();
+    let pixels = bmp.to_mono().into_boxed_slice();
     let mut s = SCREEN.lock();
     s.set_wallpaper(Some(gui::Wallpaper { w, h, fit, pixels }));
     s.present();

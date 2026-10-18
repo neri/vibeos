@@ -1,13 +1,13 @@
 //! ページの中の画像（PNG と BMP）
 //!
 //! 中身の先頭で形式を見分ける（PNG の印・"BM"）。1 枚は 1024x1024 まで。透明な所はページの地の色にする。
-//! 読んだら VGA の 16 色に誤差拡散して持つ（描くときは色番号を写すだけ）。
+//! 読んだら白黒に誤差拡散して持つ（描くときは色番号を写すだけ）。
 //! 表示する大きさは `<img>` の width・height（片方だけなら縦横の比を保つ）、無ければ画像の大きさ。
 
 use alloc::vec::Vec;
 
 use vibe_rt::gfx_lib::bmp::Bmp;
-use vibe_rt::gfx_lib::dither::{self, Lut16};
+use vibe_rt::gfx_lib::dither;
 use vibe_web::doc;
 use vibe_web::png;
 
@@ -19,7 +19,7 @@ pub const MAX_SIDE: usize = 1024;
 pub struct Picture {
     pub w: usize,
     pub h: usize,
-    /// 16 色の番号
+    /// 白黒の色番号（0 か 15）
     pub pixels: Vec<u8>,
 }
 
@@ -31,7 +31,7 @@ pub fn decode(data: &[u8]) -> Result<Picture, &'static str> {
             return Err("image too large");
         }
         let (w, h) = (img.width, img.height);
-        let pixels = dither::to_vga16(w, h, &Lut16::new(), |x, y| {
+        let pixels = dither::to_mono(w, h, |x, y| {
             let p = img.pixels[y * w + x];
             [(p >> 16) as u8, (p >> 8) as u8, p as u8]
         });
@@ -43,7 +43,7 @@ pub fn decode(data: &[u8]) -> Result<Picture, &'static str> {
         if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE {
             return Err("image too large");
         }
-        return Ok(Picture { w, h, pixels: bmp.to_vga16(&Lut16::new()) });
+        return Ok(Picture { w, h, pixels: bmp.to_mono() });
     }
     Err("not a PNG or BMP image")
 }

@@ -17,7 +17,8 @@ wait-serial tasks: started
 sleep 1500
 # 見出しの行（毎回同じ）
 expect-screen tasks-header 148 89 312 20
-expect-pixel 250 47 128 128 128
+# 253,47 は life のタイトルバー（フォーカスが無いので白）
+expect-pixel 253 47 255 255 255
 # 一覧は番号の順。最後が tasks 自身、その 1 つ前が life
 key end
 key up
@@ -30,8 +31,8 @@ key ret
 wait-serial tasks: killed
 wait-serial (life.ELF)
 sleep 500
-# life のウィンドウが消えた（端末の上に見えていた life のタイトルバー（濃い灰色）の所が背景（青緑）に戻る）
-expect-pixel 250 47 0 128 128
+# life のウィンドウが消えた（端末の上に見えていた life のタイトルバー（白）の所が背景の斜めの線に戻る）
+expect-pixel 253 47 0 0 0
 # カーネルスレッドは止められない（先頭の boot か idle を選んで Delete キー）
 key home
 key delete

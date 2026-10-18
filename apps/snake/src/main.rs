@@ -88,22 +88,25 @@ impl Game {
     fn draw(&self, win: &mut Window) {
         let f = font16();
         let mut s = win.surface();
-        s.clear(palette::BLACK);
-        s.fill_rect(0, 0, WIDTH as i32, TOP - 2, palette::BLUE);
-        s.draw_text_bold(f, 4, 1, "SNAKE", palette::YELLOW);
+        // 白黒の画面（docs/plans/mono.md）: 白い地、上に黒い帯。頭は黒、体は市松（濃い灰）、えさは白抜きの丸
+        s.clear(palette::WHITE);
+        s.fill_rect(0, 0, WIDTH as i32, TOP - 2, palette::BLACK);
+        s.draw_text_bold(f, 4, 1, "SNAKE", palette::WHITE);
         let score = format!("SCORE {}", self.score);
         s.draw_text(f, WIDTH as i32 - 4 - score.len() as i32 * 8, 1, &score, palette::WHITE, None);
         let cell = |s: &mut vibe_rt::gfx_lib::Surface, p: P, c: u8| {
             s.fill_rect(p.0 * CELL + 1, TOP + p.1 * CELL + 1, CELL - 2, CELL - 2, c);
         };
-        cell(&mut s, self.food, palette::LIGHT_RED);
+        let (fx, fy) = (self.food.0 * CELL + CELL / 2, TOP + self.food.1 * CELL + CELL / 2);
+        s.circle(fx, fy, CELL / 2 - 1, palette::BLACK);
+        s.circle(fx, fy, CELL / 2 - 2, palette::BLACK);
         for (i, &b) in self.body.iter().enumerate() {
-            cell(&mut s, b, if i == 0 { palette::YELLOW } else { palette::LIGHT_GREEN });
+            cell(&mut s, b, if i == 0 { palette::BLACK } else { palette::DARK_GRAY });
         }
         if self.over {
             let msg = "GAME OVER - ENTER: again  ESC: quit";
             let x = (WIDTH as i32 - msg.len() as i32 * 8) / 2;
-            s.fill_rect(x - 4, 92, msg.len() as i32 * 8 + 8, 20, palette::RED);
+            s.fill_rect(x - 4, 92, msg.len() as i32 * 8 + 8, 20, palette::BLACK);
             s.draw_text(f, x, 94, msg, palette::WHITE, None);
         }
     }

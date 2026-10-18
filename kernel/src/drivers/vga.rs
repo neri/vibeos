@@ -1,14 +1,15 @@
-//! 画面のハードウェア（VGA のモード 12h: 640x480・16 色・4 枚の面。docs/plans/vga16.md）
+//! 画面のハードウェア（VGA のモード 12h: 640x480・4 枚の面。docs/plans/vga16.md・docs/plans/mono.md）
 //!
 //! モードの設定はローダ（`int 10h AX=0012h`）が済ませ、画面の大きさ・1 枚の面の 1 行のバイト数・VRAM の場所を
-//! ブート情報で渡す。ここは「1 行を 4 枚の面に分けて VRAM に書く」「書き込み方とパレットを決める」だけを
+//! ブート情報で渡す。ここは「1 行を白黒にして VRAM に書く」「書き込み方とパレットを決める」だけを
 //! 受け持ち、何をどこに描くかは `gui`（ウィンドウの重ね合わせ）が決める。
+//! 画素は白（15）と黒（0）だけ: 4 枚の面に同じバイトを 1 回で書く（マップマスクは 0x0F のまま）。
 //! VGA の BIOS の 8x16 のフォント（ローダが写したもの）もここで持つ。
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use vibe_font::Font;
-use vibe_gfx::{palette, planar};
+use vibe_gfx::{mono, palette};
 
 use crate::arch::port::{inb, outb};
 use crate::bootinfo::BootInfo;
@@ -29,6 +30,8 @@ const GC_INDEX: u16 = 0x3CE;
 const GC_DATA: u16 = 0x3CF;
 /// シーケンサのマップマスク（書き込む面）
 const SEQ_MAP_MASK: u8 = 2;
+/// 1 行のバイト数（1 バイトに 8 ピクセル）
+const ROW_BYTES: usize = MAX_WIDTH / 8;
 
 // 画面の情報（起動時に決まる）
 static WIDTH: AtomicUsize = AtomicUsize::new(MAX_WIDTH);
@@ -37,10 +40,9 @@ static HEIGHT: AtomicUsize = AtomicUsize::new(MAX_HEIGHT);
 static PITCH: AtomicUsize = AtomicUsize::new(MAX_WIDTH / 8);
 static VRAM: AtomicUsize = AtomicUsize::new(0);
 
-/// VRAM に今入っているバイトの写し（面ごとに 1 行 MAX_WIDTH / 8 バイト × MAX_HEIGHT 行）。同じバイトは書かない
-/// （ISA の VGA への書き込みは遅いため）。`init_planar` で VRAM を 0 にしてから使う
-const PLANE_BYTES: usize = MAX_WIDTH / 8 * MAX_HEIGHT;
-static SHADOW: BootCell<[u8; 4 * PLANE_BYTES]> = BootCell::new([0; 4 * PLANE_BYTES]);
+/// VRAM に今入っているバイトの写し（1 行 ROW_BYTES バイト × MAX_HEIGHT 行。4 枚の面はどれも同じ）。
+/// 同じバイトは書かない（ISA の VGA への書き込みは遅いため）。`init_planar` で VRAM を 0 にしてから使う
+static SHADOW: BootCell<[u8; ROW_BYTES * MAX_HEIGHT]> = BootCell::new([0; ROW_BYTES * MAX_HEIGHT]);
 /// 書いたバイトと、同じだったので書かなかったバイトの数（ktest で効き目を見る）
 static WRITTEN: AtomicUsize = AtomicUsize::new(0);
 static SKIPPED: AtomicUsize = AtomicUsize::new(0);
@@ -141,7 +143,8 @@ fn init_planar() {
             outb(DAC_DATA, c[2] & 0x3F);
         }
     }
-    // 4 枚の面を全部 0 にして、写し（0 で始まる）と合わせる（BIOS が消していることを当てにしない）
+    // 4 枚の面を全部 0 にして、写し（0 で始まる）と合わせる（BIOS が消していることを当てにしない）。
+    // マップマスクは 0x0F のまま（この後の書き込みも 4 枚の面に同時に入る）
     let vram = VRAM.load(Ordering::Relaxed);
     if vram != 0 {
         let len = PITCH.load(Ordering::Relaxed) * height();
@@ -159,9 +162,9 @@ pub fn write_stats() -> (usize, usize) {
 }
 
 /// 画面の `y` 行目の、x が [x0, x1) の所（8 ピクセル単位に広げる）を書く。`row` は画面の幅の 1 行全部の色番号。
-/// 4 枚の面に分け、面ごとにマップマスクを切り替えて書く。VRAM は読まず（ISA では遅い）、今入っているバイトの写し
-/// （`SHADOW`）と同じバイトは書かない。呼ぶのは画面のロック（`gui::SCREEN`）の中か、パニックのときだけ
-pub fn write_row4_span(y: usize, row: &[u8], x0: usize, x1: usize) {
+/// 色番号を白黒の模様にして（`mono`）、4 枚の面に同じバイトを書く。VRAM は読まず（ISA では遅い）、今入っている
+/// バイトの写し（`SHADOW`）と同じバイトは書かない。呼ぶのは画面のロック（`gui::SCREEN`）の中か、パニックのときだけ
+pub fn write_row_mono(y: usize, row: &[u8], x0: usize, x1: usize) {
     let vram = VRAM.load(Ordering::Relaxed);
     if vram == 0 || y >= height() {
         return;
@@ -171,42 +174,34 @@ pub fn write_row4_span(y: usize, row: &[u8], x0: usize, x1: usize) {
     if b0 >= b1 {
         return;
     }
-    let mut packed = [0u32; MAX_WIDTH / 8];
-    let n = planar::pack_row(&row[b0 * 8..(b1 * 8).min(row.len())], &mut packed);
+    let mut packed = [0u8; ROW_BYTES];
+    let n = mono::pack_row(&row[b0 * 8..(b1 * 8).min(row.len())], y, &mut packed);
     let dst = (vram + y * PITCH.load(Ordering::Relaxed) + b0) as *mut u8;
     // SAFETY: SHADOW は画面のロックの中（とパニックのとき）でだけ触る
     let shadow = unsafe { &mut *SHADOW.as_ptr() };
-    let (mut written, mut skipped) = (0, 0);
-    for plane in 0..4 {
-        let line = &mut shadow[plane * PLANE_BYTES + y * (MAX_WIDTH / 8) + b0..][..n];
-        if (0..n).all(|i| line[i] == planar::plane_byte(packed[i], plane)) {
-            skipped += n;
+    let line = &mut shadow[y * ROW_BYTES + b0..][..n];
+    let mut written = 0;
+    for (i, &b) in packed[..n].iter().enumerate() {
+        if line[i] == b {
             continue;
         }
-        // SAFETY: マップマスクを変えると、続く書き込みがその面にだけ入る
-        unsafe {
-            outb(SEQ_INDEX, SEQ_MAP_MASK);
-            outb(SEQ_DATA, 1 << plane);
-        }
-        for (i, &p) in packed[..n].iter().enumerate() {
-            let b = planar::plane_byte(p, plane);
-            if line[i] == b {
-                skipped += 1;
-                continue;
-            }
-            line[i] = b;
-            written += 1;
-            // SAFETY: b0 + i < width / 8 <= pitch（1 枚の面の 1 行のバイト数）。y は画面の中
-            unsafe { dst.add(i).write_volatile(b) };
-        }
+        line[i] = b;
+        written += 1;
+        // SAFETY: マップマスクは 0x0F（4 枚の面に同時に書く）。b0 + i < width / 8 <= pitch。y は画面の中
+        unsafe { dst.add(i).write_volatile(b) };
     }
     WRITTEN.fetch_add(written, Ordering::Relaxed);
-    SKIPPED.fetch_add(skipped, Ordering::Relaxed);
-    // SAFETY: 全部の面に書く状態に戻す
-    unsafe {
-        outb(SEQ_INDEX, SEQ_MAP_MASK);
-        outb(SEQ_DATA, 0x0F);
-    }
+    SKIPPED.fetch_add(n - written, Ordering::Relaxed);
+}
+
+/// VRAM の写しの `y` 行目（ktest で、書いたバイトが白黒の模様と一致するかを見る）
+#[cfg(feature = "qemu-test")]
+pub fn shadow_row(y: usize) -> [u8; ROW_BYTES] {
+    // SAFETY: SHADOW は画面のロックの中でだけ書く。呼ぶのは画面のロックを持っているときだけ
+    let shadow = unsafe { &*SHADOW.as_ptr() };
+    let mut r = [0u8; ROW_BYTES];
+    r.copy_from_slice(&shadow[y * ROW_BYTES..][..ROW_BYTES]);
+    r
 }
 
 /// 垂直帰線期間の始まりを待つ（VGA が応答しない場合に備えて上限付き）

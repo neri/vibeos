@@ -6,7 +6,7 @@ use vibe_gfx::Surface;
 
 use crate::dialog::{Dialog, wrap};
 use crate::dialog::{BUTTON_H, FIELD_H, MARGIN, line_h};
-use crate::draw::{DARK, FACE, FIELD, LIGHT, SELECT, SELECT_INACTIVE, SELECT_TEXT, SHADOW, TEXT};
+use crate::draw::{FACE, FIELD, LINE, SELECT, SELECT_TEXT, TEXT};
 use crate::widget::ROW_H;
 use crate::*;
 
@@ -391,17 +391,19 @@ fn draws_widgets() {
     ui.set_focus(l);
     ui.draw(&mut s);
     let px = |s: &Surface, x, y| s.get(x, y).unwrap();
-    // ボタンは出っ張り: 左上が白、右下が黒、中は地の色
-    assert_eq!(px(&s, 2, 2), LIGHT);
-    assert_eq!(px(&s, 41, 21), DARK);
-    assert_eq!(px(&s, 40, 20), SHADOW);
-    assert_eq!(px(&s, 6, 18), FACE);
-    // テキスト欄・表示欄はへこみ: 左上が濃い灰色、右下が白、中は白
-    assert_eq!(px(&s, 50, 2), SHADOW);
-    assert_eq!(px(&s, 109, 21), LIGHT);
+    // ボタン（2,2 から 40x20）: 本体は 38x18 で 2 ピクセルの黒い枠、右下に 2 ピクセルずらした黒い影
+    assert_eq!(px(&s, 2, 10), LINE);
+    assert_eq!(px(&s, 3, 10), LINE);
+    assert_eq!(px(&s, 4, 10), FACE);
+    assert_eq!(px(&s, 41, 12), LINE);
+    assert_eq!(px(&s, 2, 21), FACE);
+    assert_eq!(px(&s, 20, 21), LINE);
+    // テキスト欄・表示欄は 2 ピクセルの黒い枠、中は白
+    assert_eq!(px(&s, 50, 2), LINE);
+    assert_eq!(px(&s, 108, 20), LINE);
     assert_eq!(px(&s, 54, 18), FIELD);
     assert_eq!(px(&s, 124, 18), FIELD);
-    // 選んだ行（フォーカスがあるので紺）
+    // 選んだ行（フォーカスがあるので黒い地）
     assert_eq!(px(&s, 60, 33), SELECT);
     // 文字がどこかに描かれている
     let r = ui.rect(d);
@@ -412,31 +414,35 @@ fn draws_widgets() {
     assert!(sel, "selected row text");
     // 一覧の 2 行目は選んでいないので一覧の地
     assert_eq!(px(&s, 60, 32 + ROW_H + 10), FIELD);
-    // フォーカスを外すと選んだ行は明るい灰色
+    // フォーカスを外すと選んだ行は黒い枠だけ
     ui.set_focus(b);
     ui.draw(&mut s);
-    assert_eq!(px(&s, 60, 33), SELECT_INACTIVE);
+    assert_eq!(px(&s, 60, 32), LINE);
+    assert_eq!(px(&s, 60, 33), FIELD);
     let _ = t;
 }
 
 #[test]
-fn pressed_button_sinks_and_primary_has_black_border() {
+fn pressed_button_moves_into_its_shadow_and_primary_has_thicker_border() {
     let mut buf = vec![FACE; 80 * 60];
     let mut s = Surface::new(&mut buf, 80, 60);
     let mut ui = Ui::new();
     let b = ui.add(Rect::new(2, 2, 70, 24), Button::new("OK").primary());
     let n = ui.add(Rect::new(2, 30, 70, 24), Button::new("No"));
     ui.draw(&mut s);
-    // 既定のボタンは外側に黒い縁、その内側から出っ張り
+    // 既定のボタンの枠は 3 ピクセル、ふつうのボタンは 2 ピクセル
     let r = ui.rect(b);
-    assert_eq!(s.get(r.x, r.y), Some(DARK));
-    assert_eq!(s.get(r.x + 1, r.y + 1), Some(LIGHT));
-    // 押している間はへこむ（左上が黒）
+    assert_eq!(s.get(r.x + 2, r.y + 11), Some(LINE));
+    assert_eq!(s.get(r.x + 3, r.y + 11), Some(FACE));
     let r = ui.rect(n);
+    assert_eq!(s.get(r.x + 1, r.y + 11), Some(LINE));
+    assert_eq!(s.get(r.x + 2, r.y + 11), Some(FACE));
+    // 押している間は影の所（右下に 2 ピクセル）へずれて黒く塗る。元の左端は地の色になる
     ui.handle(Input::Mouse { x: r.x + 10, y: r.y + 10, buttons: 1 }, 0);
     ui.draw(&mut s);
-    assert_eq!(s.get(r.x, r.y), Some(DARK));
-    assert_eq!(s.get(r.x + r.w - 1, r.y + r.h - 1), Some(LIGHT));
+    assert_eq!(s.get(r.x, r.y + 11), Some(FACE));
+    assert_eq!(s.get(r.x + 8, r.y + 6), Some(LINE));
+    assert_eq!(s.get(r.x + r.w - 2, r.y + 11), Some(LINE));
 }
 
 #[test]
@@ -446,14 +452,23 @@ fn dialog_first_button_is_primary() {
     let mut buf = vec![0; w * h];
     let mut s = Surface::new(&mut buf, w, h);
     d.draw(&mut s);
-    // 最初のボタン（左）だけ黒い縁が 2 重（一番外の黒の内側が白ではなく黒の縁の内側に白）: ボタンの上端の行で、
-    // 黒が続いてから白になる所が 1 つ目のボタン
-    let y = h as i32 - MARGIN - BUTTON_H;
+    // 最初のボタン（左）だけ枠が 3 ピクセル（ほかは 2）。ボタンの上端から 4 行下（角の丸みより下）で、黒の続く所を
+    // 左から数える: 1 つ目のボタンの左の枠、右の枠と影、2 つ目のボタンの左の枠、…
+    let y = h as i32 - MARGIN - BUTTON_H + 4;
     let row: Vec<u8> = (0..w as i32).map(|x| s.get(x, y).unwrap()).collect();
-    let first = row.iter().position(|&p| p == DARK).expect("primary button border");
-    let second = row.iter().rposition(|&p| p == LIGHT).expect("second button");
-    assert!(first < second);
-    assert_eq!(s.get(first as i32 + 1, y + 1), Some(LIGHT));
+    let mut runs = Vec::new();
+    let mut n = 0;
+    for &p in &row {
+        if p == LINE {
+            n += 1;
+        } else if n > 0 {
+            runs.push(n);
+            n = 0;
+        }
+    }
+    assert!(runs.len() >= 4, "{runs:?}");
+    assert_eq!(runs[0], 3, "primary button border");
+    assert_eq!(runs[2], 2, "second button border");
 }
 
 #[test]

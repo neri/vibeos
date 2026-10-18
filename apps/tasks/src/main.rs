@@ -94,11 +94,10 @@ fn state_name(p: &ProcInfo) -> &'static str {
 impl App {
     fn new() -> App {
         let mut ui = Ui::new();
-        // 見出し（一覧の列と同じ位置。ラベルは中で 6 ピクセル空けて描く）
+        // 見出し（一覧の列と同じ位置。ラベルは中で 6 ピクセル空けて描く）。白黒の画面では灰色の字（市松）は
+        // 読みにくいので黒
         for (x0, x1, align, name) in COLUMNS {
-            let mut l = Label::new(name).align(align);
-            l.color = vibe_ui::draw::TEXT_DISABLED;
-            ui.add(Rect::new(TEXT_X + x0 - 6, 4, x1 - x0 + 12, 20), l);
+            ui.add(Rect::new(TEXT_X + x0 - 6, 4, x1 - x0 + 12, 20), Label::new(name).align(align));
         }
         let list = ui.add(Rect::new(8, 26, W as i32 - 16, H as i32 - 62), List::new(Vec::new()));
         ui.list_mut(list).set_columns(COLUMNS.iter().map(|c| (c.0, c.2)).collect());

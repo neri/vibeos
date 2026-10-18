@@ -46,18 +46,17 @@ impl Paint {
     fn toolbar(&self, s: &mut Surface) {
         let w = s.width() as i32;
         let sw = Self::swatch(w);
-        // 明るい灰色の地に、へこんだ枠の色の並び。選んだ色は黒と白の 2 重の枠
-        s.fill_rect(0, 0, w, TOOLBAR_H, palette::LIGHT_GRAY);
+        // 色の並び（白黒の画面では 16 色がそれぞれ明るさの模様に見える。docs/plans/mono.md）。1 ピクセルの黒い枠で
+        // 区切り、選んだ色は 2 ピクセルの黒い枠
+        s.fill_rect(0, 0, w, TOOLBAR_H, palette::WHITE);
         for i in 0..16 {
             s.fill_rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, i as u8);
+            s.rect(i * sw, 0, sw, TOOLBAR_H, palette::BLACK);
             if i as u8 == self.color {
-                s.rect(i * sw, 0, sw, TOOLBAR_H, palette::BLACK);
-                s.rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, palette::WHITE);
-            } else {
-                s.bevel(i * sw, 0, sw, TOOLBAR_H, palette::DARK_GRAY, palette::WHITE);
+                s.rect(i * sw + 1, 1, sw - 2, TOOLBAR_H - 2, palette::BLACK);
             }
         }
-        s.hline(0, TOOLBAR_H - 1, w, palette::DARK_GRAY);
+        s.hline(0, TOOLBAR_H - 1, w, palette::BLACK);
     }
 
     /// マウスの状態を 1 つ処理する。描き直したら true

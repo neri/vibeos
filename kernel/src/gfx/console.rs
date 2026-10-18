@@ -7,7 +7,9 @@
 //! 最初の端末（0 番のウィンドウ）は起動直後から使うので静的な領域に置く。ほかの端末はヒープに置く。
 //!
 //! 文字: デスクトップの端末は 8x16（VGA の BIOS のフォント。`vga::font16`）、起動直後とパニックの全画面は
-//! 8x8 のビットマップのフォント。色は 16 色の番号（ANSI の色は CGA の並び）。
+//! 8x8 のビットマップのフォント。色は ANSI の色を CGA の並びの 16 色の番号で覚え、描くときは白黒にする
+//! （地が黒なら白い字、地が黒以外なら白い地に黒い字。色付きの字を模様にすると欠けて読めないため。
+//! docs/plans/mono.md §3.3）。
 //!
 //! カーソルの左右移動（`\x08`, `ESC [ n D` / `C`）は行をまたいで前後の行へ回り込む。
 //! 行をまたいだ入力行の編集（シェル）を相対移動だけで書けるようにするため。
@@ -36,8 +38,21 @@ const TAB_WIDTH: usize = 4;
 
 /// ANSI の色番号（黒 赤 緑 黄 青 紫 水 白）→ CGA パレット
 const ANSI_TO_CGA: [u8; 8] = [0, 4, 2, 6, 1, 5, 3, 7];
-const DEFAULT_FG: u8 = palette::LIGHT_GRAY;
+/// ANSI の既定の色（CGA の並び）
+const ANSI_DEFAULT_FG: u8 = palette::LIGHT_GRAY;
+const ANSI_DEFAULT_BG: u8 = palette::BLACK;
+/// 描く色の既定（白黒）
+const DEFAULT_FG: u8 = palette::WHITE;
 const DEFAULT_BG: u8 = palette::BLACK;
+
+/// ANSI の色（CGA の並びの 16 色）を描く色（白黒）にする
+fn mono_colors(fg: u8, bg: u8) -> (u8, u8) {
+    match (fg, bg) {
+        (palette::BLACK, palette::BLACK) => (palette::BLACK, palette::BLACK),
+        (_, palette::BLACK) => (palette::WHITE, palette::BLACK),
+        _ => (palette::BLACK, palette::WHITE),
+    }
+}
 
 pub struct Terminal {
     /// 端末のウィンドウ（端末の番号としても使う）
@@ -50,8 +65,12 @@ pub struct Terminal {
     /// 0..=cols。cols は「行末まで書いた（次の文字で改行する）」状態
     col: usize,
     row: usize,
+    /// 描く色（白黒）
     fg: u8,
     bg: u8,
+    /// ANSI で指定された色（CGA の並び。太字で明るくするのに使う）
+    ansi_fg: u8,
+    ansi_bg: u8,
     bold: bool,
     parser: Parser,
     cursor_drawn: bool,
@@ -82,6 +101,8 @@ impl Terminal {
             row: 0,
             fg: DEFAULT_FG,
             bg: DEFAULT_BG,
+            ansi_fg: ANSI_DEFAULT_FG,
+            ansi_bg: ANSI_DEFAULT_BG,
             bold: false,
             parser: Parser::new(),
             cursor_drawn: false,
@@ -140,11 +161,12 @@ pub fn init() {
     c.fit(&s);
 }
 
-/// 最初の端末の文字色と背景色（パレット番号）を直接設定する
+/// 最初の端末の文字色と背景色（16 色の番号。描くときは白黒）を直接設定する
 pub fn set_color(fg: u8, bg: u8) {
     let mut c = CONSOLE.lock();
-    c.fg = fg;
-    c.bg = bg;
+    c.ansi_fg = fg;
+    c.ansi_bg = bg;
+    (c.fg, c.bg) = mono_colors(fg, bg);
 }
 
 /// 今のタスクの端末に書く。端末が閉じていれば捨てる（シリアルには print が出している）
@@ -330,29 +352,30 @@ impl Terminal {
     fn graphics(&mut self, sgr: Sgr) {
         match sgr {
             Sgr::Reset => {
-                self.fg = DEFAULT_FG;
-                self.bg = DEFAULT_BG;
+                self.ansi_fg = ANSI_DEFAULT_FG;
+                self.ansi_bg = ANSI_DEFAULT_BG;
                 self.bold = false;
             }
             Sgr::Bold => {
                 self.bold = true;
-                if self.fg < 8 {
-                    self.fg += 8;
+                if self.ansi_fg < 8 {
+                    self.ansi_fg += 8;
                 }
             }
             Sgr::Normal => {
                 self.bold = false;
-                if (8..16).contains(&self.fg) {
-                    self.fg -= 8;
+                if (8..16).contains(&self.ansi_fg) {
+                    self.ansi_fg -= 8;
                 }
             }
             Sgr::Foreground(c, bright) => {
-                self.fg = ANSI_TO_CGA[c as usize & 7] + if bright || self.bold { 8 } else { 0 };
+                self.ansi_fg = ANSI_TO_CGA[c as usize & 7] + if bright || self.bold { 8 } else { 0 };
             }
-            Sgr::DefaultForeground => self.fg = DEFAULT_FG,
-            Sgr::Background(c, bright) => self.bg = ANSI_TO_CGA[c as usize & 7] + if bright { 8 } else { 0 },
-            Sgr::DefaultBackground => self.bg = DEFAULT_BG,
+            Sgr::DefaultForeground => self.ansi_fg = ANSI_DEFAULT_FG,
+            Sgr::Background(c, bright) => self.ansi_bg = ANSI_TO_CGA[c as usize & 7] + if bright { 8 } else { 0 },
+            Sgr::DefaultBackground => self.ansi_bg = ANSI_DEFAULT_BG,
         }
+        (self.fg, self.bg) = mono_colors(self.ansi_fg, self.ansi_bg);
     }
 
     /// 左へ n 文字（行頭なら前の行の末尾へ）

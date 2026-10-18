@@ -32,7 +32,8 @@ mouse-button left down
 mouse-move 0 20
 mouse-button left up
 sleep 300
-expect-pixel 230 131 128 0 128
+# 紫は画面では 25% の模様（docs/plans/mono.md §3.1）。230,131 は模様の黒い所
+expect-pixel 230 131 0 0 0
 expect-screen paint-lines 119 44 322 234
 key esc
 wait-serial paint: closed

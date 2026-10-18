@@ -19,7 +19,6 @@ pub fn start() -> bool {
     if RUNNING.swap(true, Ordering::Relaxed) {
         return false;
     }
-    let colors = [palette::LIGHT_RED, palette::LIGHT_GREEN, palette::LIGHT_CYAN];
     let tty = sched::current_tty();
     let ids: Vec<_> = (0..3)
         .map(|i| {
@@ -35,7 +34,7 @@ pub fn start() -> bool {
                     let x = (w - text.len() * FONT_8X8.width) as i32;
                     let y = (i * FONT_8X8.height) as i32;
                     if let Some(mut px) = s.window_surface(tty) {
-                        px.draw_text(&FONT_8X8, x, y, &text, colors[i], Some(palette::BLACK));
+                        px.draw_text(&FONT_8X8, x, y, &text, palette::WHITE, Some(palette::BLACK));
                     }
                     s.mark_window_dirty(tty, y as usize, y as usize + FONT_8X8.height);
                     s.present();

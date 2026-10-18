@@ -1,5 +1,5 @@
-# Phase 51（VGA C3）: 16 色の画面のデスクトップの端末 2 つ・クリップボード・背景の画像
-# 端末 1 の中身は 0,72 から（8x16 の 80x25。行 r は y = 72 + 16r、桁 c は x = 8c）。メニューの Terminal は 24〜41。
+# Phase 51（VGA C3）: デスクトップの端末 2 つ・クリップボード・背景の画像（Phase 55 から白黒）
+# 端末 1 の中身は 0,72 から（8x16 の 80x25。行 r は y = 72 + 16r、桁 c は x = 8c）。メニューの Terminal は 23〜40。
 # 端末 2 は中身 0,65 から（タイトルバー 45〜64）。端末 1 のタイトルバーは 52〜71
 timeout 30
 wait-serial gui: desktop 640x480
@@ -39,14 +39,16 @@ type echo two
 key ret
 wait-serial two
 sleep 300
-expect-pixel 400 50 128 0 128
+# フォーカスのある端末 2 のタイトルバーは黒
+expect-pixel 400 50 0 0 0
 expect-screen vga-terminal2 0 0 380 480
 # Alt+Tab で端末 1 が前に出る
 key alt+tab
 sleep 300
-expect-pixel 400 60 128 0 128
-expect-pixel 400 50 128 128 128
-# 背景の画像（16 色に誤差拡散して敷き詰める）。バーとタイトルバーの間に見える
+# 端末 1 のタイトルバーは黒、後ろの端末 2 のタイトルバー（端末 1 の枠の上端 50 より上）は白
+expect-pixel 400 60 0 0 0
+expect-pixel 400 47 255 255 255
+# 背景の画像（16 色に誤差拡散して敷き詰め、画面では白黒の模様）。バーとタイトルバーの間に見える
 type wallpaper /IMAGES/PLASMA.BMP tile
 key ret
 sleep 1500

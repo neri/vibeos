@@ -179,7 +179,7 @@ pub fn font_data(kind: u32, buf: &mut [u8]) -> i32 {
     syscall(nr::FONT_DATA, kind, buf.as_mut_ptr() as u32, buf.len() as u32, 0, 0)
 }
 
-/// 16 色の 16x16 のアイコン（色番号、透明は 0xFF）
+/// 16x16 のアイコン（色番号、透明は 0xFF）
 pub fn icon16_data(name: &str, buf: &mut [u8; vibe_abi::ICON_SIZE * vibe_abi::ICON_SIZE]) -> i32 {
     syscall(nr::ICON16_DATA, name.as_ptr() as u32, name.len() as u32, buf.as_mut_ptr() as u32, 0, 0)
 }

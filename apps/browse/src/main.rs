@@ -30,7 +30,7 @@ use alloc::vec::Vec;
 
 use vibe_rt::abi::{KeyEvent, key};
 use vibe_rt::gfx::{Event, Window};
-use vibe_rt::gfx_lib::palette::{DARK_GRAY, WHITE};
+use vibe_rt::gfx_lib::palette::BLACK;
 use vibe_ui::draw::FACE;
 use vibe_rt::{println, sys};
 use vibe_ui::{Action, Button, Id, Input, Rect, ScrollBar, TextField, Ui};
@@ -253,15 +253,15 @@ impl App {
         self.sb.draw(&mut c, track);
         // 上の道具の並びと下の行（本文の上に描く。はみ出した文字を隠す）
         c.fill_rect(0, 0, w, TOOLBAR_H, FACE);
-        c.hline(0, TOOLBAR_H - 1, w, DARK_GRAY);
+        c.fill_rect(0, TOOLBAR_H - 2, w, 2, BLACK);
         let sy = h - STATUS_H;
         c.fill_rect(0, sy, w, STATUS_H, FACE);
-        c.hline(0, sy, w, WHITE);
+        c.fill_rect(0, sy, w, 2, BLACK);
         let status = match (self.hover, &self.page) {
             (Some(l), Some(p)) => p.link_text(l),
             _ => self.status.clone(),
         };
-        c.draw_text(vibe_rt::gfx::font16(), STATUS_X, sy + 3, &status, DARK_GRAY, None);
+        c.draw_text(vibe_rt::gfx::font16(), STATUS_X, sy + 3, &status, BLACK, None);
         self.ui.draw(&mut c);
         win.present();
     }
@@ -716,8 +716,8 @@ fn draw_status(win: &mut Window, msg: &str) {
     let (w, h) = (win.width() as i32, win.height() as i32);
     let mut c = win.surface();
     let sy = h - STATUS_H;
-    c.fill_rect(0, sy + 1, w, STATUS_H - 1, FACE);
-    c.draw_text(vibe_rt::gfx::font16(), STATUS_X, sy + 3, msg, DARK_GRAY, None);
+    c.fill_rect(0, sy + 2, w, STATUS_H - 2, FACE);
+    c.draw_text(vibe_rt::gfx::font16(), STATUS_X, sy + 3, msg, BLACK, None);
     win.present();
 }
 

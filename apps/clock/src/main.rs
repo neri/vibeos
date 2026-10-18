@@ -53,14 +53,14 @@ fn main() -> i32 {
 }
 
 fn draw(win: &mut Window, now: u32) {
-    use vibe_rt::gfx_lib::palette::{BLACK, DARK_GRAY, LIGHT_GRAY, LIGHT_RED, WHITE};
+    use vibe_rt::gfx_lib::palette::{BLACK, DARK_GRAY, WHITE};
     let t = vibe_rt::time::DateTime::from_unix(now as u64);
     let mut s = win.surface();
-    s.clear(LIGHT_GRAY);
+    s.clear(WHITE);
     let (cx, cy) = (W as i32 / 2, R + 8);
-    // 文字盤: 白い円に黒い縁、5 分ごとの太い目盛り（黒）と 1 分ごとの点（濃い灰色）
-    s.fill_circle(cx, cy, R, WHITE);
+    // 文字盤（白黒の画面。docs/plans/mono.md）: 白い円に 2 ピクセルの黒い縁、5 分ごとの太い目盛りと 1 分ごとの点
     s.circle(cx, cy, R, BLACK);
+    s.circle(cx, cy, R - 1, BLACK);
     let at = |pos: i32, len: i32| {
         let (dx, dy) = dir(pos);
         (cx + (dx * len + 500 * dx.signum()) / 1000, cy + (dy * len + 500 * dy.signum()) / 1000)
@@ -72,7 +72,7 @@ fn draw(win: &mut Window, now: u32) {
             s.thick_line(x0, y0, x1, y1, 2, BLACK);
         } else {
             let (x, y) = at(i, R - 5);
-            s.put_pixel(x, y, DARK_GRAY);
+            s.put_pixel(x, y, BLACK);
         }
     }
     let hand = |s: &mut vibe_rt::gfx_lib::Surface, pos: i32, len: i32, width: i32, color| {
@@ -82,8 +82,8 @@ fn draw(win: &mut Window, now: u32) {
     let hour_pos = (t.hour as i32 % 12) * 5 + t.minute as i32 / 12;
     hand(&mut s, hour_pos, R * 5 / 10, 3, BLACK);
     hand(&mut s, t.minute as i32, R * 8 / 10, 2, BLACK);
-    hand(&mut s, t.second as i32, R * 9 / 10, 1, LIGHT_RED);
-    s.fill_circle(cx, cy, 2, LIGHT_RED);
+    hand(&mut s, t.second as i32, R * 9 / 10, 1, BLACK);
+    s.fill_circle(cx, cy, 3, BLACK);
     let text = vibe_rt::format_fixed::<20>(format_args!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second));
     let date = vibe_rt::format_fixed::<20>(format_args!("{:04}-{:02}-{:02}", t.year, t.month, t.day));
     vibe_rt::gfx::draw_text16_centered(&mut s, 0, W as i32, cy + R + 4, &text, BLACK, true);
