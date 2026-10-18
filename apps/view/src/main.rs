@@ -1,12 +1,11 @@
 //! 画像ビューア: BMP を画像の大きさのウィンドウに表示し、キーか [x] で閉じる。
-//! 色は VGA の 16 色に誤差拡散する（8 ビットの画像も。`Bmp::to_vga16`）
+//! 画面は白黒なので、明るさで白黒に誤差拡散する（8 ビットの画像も。`Bmp::to_mono`）
 
 #![no_std]
 #![no_main]
 
 use vibe_rt::gfx::{Event, Window};
 use vibe_rt::gfx_lib::bmp::Bmp;
-use vibe_rt::gfx_lib::dither::Lut16;
 use vibe_rt::println;
 
 vibe_rt::entry!(main);
@@ -40,7 +39,7 @@ fn main() -> i32 {
     0
 }
 
-/// 画像の大きさのウィンドウに 16 色に誤差拡散して出し、キーか [x] を待つ（画面に入りきらなければ左上の部分）。
+/// 画像の大きさのウィンドウに白黒に誤差拡散して出し、キーか [x] を待つ（画面に入りきらなければ左上の部分）。
 /// ウィンドウを開けなければ false
 fn show_window(path: &str, bmp: &Bmp) -> bool {
     let info = vibe_rt::sys::sys_info();
@@ -49,7 +48,7 @@ fn show_window(path: &str, bmp: &Bmp) -> bool {
     let (ww, wh) = (w.min(info.screen_width as usize - 8).min(640), h.min(info.screen_height as usize - 60).min(480));
     let title = path.rsplit('/').next().unwrap_or(path);
     let Some(mut win) = Window::open(ww.max(1), wh.max(1), title) else { return false };
-    let pixels = bmp.to_vga16(&Lut16::new());
+    let pixels = bmp.to_mono();
     win.surface().blit(0, 0, &pixels, w, None);
     win.present();
     loop {

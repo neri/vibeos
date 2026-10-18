@@ -11,9 +11,7 @@ use vibe_games::blocks::{self, Blocks, Move};
 use vibe_rt::abi::key;
 use vibe_rt::gfx::{Event, Window, draw_text16_centered, font16};
 use vibe_rt::gfx_lib::Surface;
-use vibe_rt::gfx_lib::palette::{
-    BLACK, DARK_GRAY, LIGHT_BLUE, LIGHT_CYAN, LIGHT_GRAY, LIGHT_GREEN, LIGHT_MAGENTA, LIGHT_RED, MAGENTA, WHITE, YELLOW,
-};
+use vibe_rt::gfx_lib::palette::{BLACK, DARK_GRAY, WHITE};
 use vibe_rt::{format_fixed, println, sys};
 
 vibe_rt::entry!(main);
@@ -25,10 +23,9 @@ const PANEL_X: i32 = BOARD_X + blocks::W as i32 * CELL + 10;
 const W: usize = 152;
 const H: usize = (BOARD_Y * 2 + blocks::H as i32 * CELL) as usize;
 
-/// 形ごとの色（I O T S Z J L）
-const COLORS: [u8; 7] = [LIGHT_CYAN, YELLOW, LIGHT_MAGENTA, LIGHT_GREEN, LIGHT_RED, LIGHT_BLUE, LIGHT_GRAY];
-/// 盤面の地と、止まる位置の影
-const BOARD: u8 = BLACK;
+/// 盤面の地と、止まる位置の影（濃い灰の 1 ピクセルの枠は画面では点線）。白黒の画面（docs/plans/mono.md）なので、
+/// 形（I O T S Z J L）は色ではなくマスの中の模様で見分ける（`block`）
+const BOARD: u8 = WHITE;
 const GHOST: u8 = DARK_GRAY;
 
 fn main() -> i32 {
@@ -91,27 +88,45 @@ fn main() -> i32 {
     0
 }
 
-/// 1 マス（7x7）: 色の塗りに、左と上の縁を白、右と下の縁を濃い灰色
-fn block(s: &mut Surface, px: i32, py: i32, color: u8) {
-    s.fill_rect(px, py, CELL - 1, CELL - 1, color);
-    s.bevel(px, py, CELL - 1, CELL - 1, WHITE, DARK_GRAY);
+/// 1 マス（7x7）: 黒い枠と、形 `kind`（0〜6 = I O T S Z J L）ごとの中（5x5）の模様:
+/// ベタ・白抜き・市松・横縞・縦縞・真ん中の点・斜め
+fn block(s: &mut Surface, px: i32, py: i32, kind: u8) {
+    let n = CELL - 1;
+    s.fill_rect(px, py, n, n, WHITE);
+    s.rect(px, py, n, n, BLACK);
+    for dy in 1..n - 1 {
+        for dx in 1..n - 1 {
+            let on = match kind {
+                0 => true,
+                1 => false,
+                2 => (dx + dy) % 2 == 0,
+                3 => dy % 2 == 1,
+                4 => dx % 2 == 1,
+                5 => (2..=4).contains(&dx) && (2..=4).contains(&dy),
+                _ => (dx + dy) % 3 == 0,
+            };
+            if on {
+                s.put_pixel(px + dx, py + dy, BLACK);
+            }
+        }
+    }
 }
 
-fn cell(s: &mut Surface, x: i32, y: i32, color: u8) {
-    block(s, BOARD_X + x * CELL, BOARD_Y + y * CELL, color);
+fn cell(s: &mut Surface, x: i32, y: i32, kind: u8) {
+    block(s, BOARD_X + x * CELL, BOARD_Y + y * CELL, kind);
 }
 
 fn draw(s: &mut Surface, g: &Blocks, paused: bool) {
     let f = font16();
-    s.clear(LIGHT_GRAY);
+    s.clear(WHITE);
     let (bw, bh) = (blocks::W as i32 * CELL, blocks::H as i32 * CELL);
     s.fill_rect(BOARD_X - 1, BOARD_Y - 1, bw + 2, bh + 2, BOARD);
-    s.bevel(BOARD_X - 2, BOARD_Y - 2, bw + 4, bh + 4, DARK_GRAY, WHITE);
+    s.round_rect(BOARD_X - 3, BOARD_Y - 3, bw + 6, bh + 6, 0, 2, BLACK);
     for y in 0..blocks::H {
         for x in 0..blocks::W {
             let v = g.cell(x, y);
             if v != 0 {
-                cell(s, x as i32, y as i32, COLORS[v as usize - 1]);
+                cell(s, x as i32, y as i32, v - 1);
             }
         }
     }
@@ -125,22 +140,22 @@ fn draw(s: &mut Surface, g: &Blocks, paused: bool) {
         let (cells, color) = g.piece();
         for (x, y) in cells {
             if y >= 0 {
-                cell(s, x, y, COLORS[color as usize - 1]);
+                cell(s, x, y, color - 1);
             }
         }
     }
     // 右側: 次の形・点数・列・レベル
-    s.draw_text(f, PANEL_X, BOARD_Y - 4, "NEXT", DARK_GRAY, None);
+    s.draw_text(f, PANEL_X, BOARD_Y - 4, "NEXT", BLACK, None);
     s.fill_rect(PANEL_X, BOARD_Y + 14, 40, 24, BOARD);
-    s.bevel(PANEL_X - 1, BOARD_Y + 13, 42, 26, DARK_GRAY, WHITE);
+    s.round_rect(PANEL_X - 2, BOARD_Y + 12, 44, 28, 0, 2, BLACK);
     let next = g.next_kind();
     for (x, y) in blocks::shape_cells(next, 0) {
-        block(s, PANEL_X + 4 + x * CELL, BOARD_Y + 18 + y * CELL, COLORS[next as usize]);
+        block(s, PANEL_X + 4 + x * CELL, BOARD_Y + 18 + y * CELL, next);
     }
     let rows = [("SCORE", g.score()), ("LINES", g.lines()), ("LEVEL", g.level())];
     for (i, (label, value)) in rows.iter().enumerate() {
         let y = BOARD_Y + 44 + i as i32 * 36;
-        s.draw_text(f, PANEL_X, y, label, DARK_GRAY, None);
+        s.draw_text(f, PANEL_X, y, label, BLACK, None);
         s.draw_text_bold(f, PANEL_X, y + f.height as i32, &format_fixed::<12>(format_args!("{value}")), BLACK);
     }
     let banner = if g.is_over() {
@@ -152,8 +167,8 @@ fn draw(s: &mut Surface, g: &Blocks, paused: bool) {
     };
     if let Some((big, small)) = banner {
         let y = BOARD_Y + bh / 2 - 20;
-        s.fill_rect(BOARD_X, y, bw, 40, MAGENTA);
+        s.fill_rect(BOARD_X, y, bw, 40, BLACK);
         draw_text16_centered(s, BOARD_X, bw, y + 3, big, WHITE, true);
-        draw_text16_centered(s, BOARD_X, bw, y + 21, small, LIGHT_GRAY, false);
+        draw_text16_centered(s, BOARD_X, bw, y + 21, small, WHITE, false);
     }
 }

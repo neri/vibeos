@@ -131,10 +131,9 @@ impl<'a> Bmp<'a> {
         out
     }
 
-    /// VGA の 16 色（`palette::VGA16`）の番号に変換した画素（左上から）。8 ビットの画像も含めて誤差拡散する
-    /// （16 色では色ごとの置き換えだけだと段差が大きいため）
-    pub fn to_vga16(&self, lut: &crate::dither::Lut16) -> Vec<u8> {
-        crate::dither::to_vga16(self.width as usize, self.height as usize, lut, |x, y| self.rgb(x as u32, y as u32))
+    /// 白黒の色番号（0 か 15）に誤差拡散した画素（左上から。`dither::to_mono`）
+    pub fn to_mono(&self) -> Vec<u8> {
+        crate::dither::to_mono(self.width as usize, self.height as usize, |x, y| self.rgb(x as u32, y as u32))
     }
 }
 
@@ -182,9 +181,10 @@ mod tests {
         assert_eq!(b.index(1, 0), 1);
         assert_eq!(b.rgb(1, 0), [255, 0, 0]);
         assert_eq!(b.rgb(0, 1), [0, 0, 255]);
-        let px = b.to_vga16(&crate::dither::Lut16::new());
-        assert_eq!(px[1], palette::LIGHT_RED);
-        assert_eq!(px[0], palette::BLACK);
+        // 白黒にすると、黒と暗い赤は黒、上の行の青も黒
+        let px = b.to_mono();
+        assert_eq!(&px[..3], [palette::BLACK; 3]);
+        assert!(px.iter().all(|&c| c == palette::BLACK || c == palette::WHITE));
     }
 
     #[test]
@@ -194,7 +194,7 @@ mod tests {
         let b = Bmp::parse(&data).unwrap();
         assert_eq!(b.rgb(0, 0), [255, 0, 0]);
         assert_eq!(b.rgb(0, 1), [255, 255, 255]);
-        assert_eq!(b.to_vga16(&crate::dither::Lut16::new())[1], palette::WHITE);
+        assert_eq!(b.to_mono()[1], palette::WHITE);
     }
 
     #[test]

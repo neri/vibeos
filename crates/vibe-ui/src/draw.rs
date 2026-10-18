@@ -1,36 +1,38 @@
-//! 描画の共通部分（色・文字・立体の枠）
+//! 描画の共通部分（色・文字・枠）
 //!
-//! 部品は 8 ビットの `Surface` に VGA の 16 色（`palette::VGA16` の番号）で描く。Windows 3.x 風: 明るい灰色の
-//! 地に、白と濃い灰色の縁の立体のボタン。テキスト欄・一覧・表示欄は白い地にへこんだ枠。フォーカスは黒の点線の
-//! 枠、選んだものは紺の地に白い文字（docs/plans/vga16.md、D-072）。
-//! 文字は固定幅のビットマップのフォント（`set_font` でアプリが 1 回渡す。16 色の画面では 8x16）。
+//! 部品は 8 ビットの `Surface` に色番号で描く。画面は白黒（docs/plans/mono.md、D-077）なので、使う色は黒・白と
+//! 濃い灰（画面では 50% の市松。使えない字）だけ。見た目は「今風の 1 ビット」: 白い地に 2 ピクセルの黒い枠、
+//! ボタンは角の丸い枠と右下にずらした黒い影（押している間は影の所へずれて白黒が入れ替わる）。選んだものは
+//! 黒い地に白い字（フォーカスが無ければ黒い枠だけ）、フォーカスは黒の点線の枠。部品の大きさは前のまま。
+//! 文字は固定幅のビットマップのフォント（`set_font` でアプリが 1 回渡す。白黒の画面では 8x16）。
 //! 渡されていなければ 8x8（ホストのテストもこちら）。太字は 1 ピクセル右にずらして重ねる。
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use vibe_font::{FONT_8X8, Font};
 use vibe_gfx::Surface;
-use vibe_gfx::palette::{BLACK, BLUE, DARK_GRAY, LIGHT_GRAY, WHITE};
+use vibe_gfx::palette::{BLACK, DARK_GRAY, WHITE};
 
 use crate::{Align, Rect};
 
 /// ウィンドウ・ボタンの地
-pub const FACE: u8 = LIGHT_GRAY;
+pub const FACE: u8 = WHITE;
 /// テキスト欄・一覧・表示欄の地
 pub const FIELD: u8 = WHITE;
 pub const TEXT: u8 = BLACK;
+/// 使えない字（画面では 50% の市松）
 pub const TEXT_DISABLED: u8 = DARK_GRAY;
-/// 立体の縁: 光の当たる側・影の側（内側）・一番外の影
-pub const LIGHT: u8 = WHITE;
-pub const SHADOW: u8 = DARK_GRAY;
-pub const DARK: u8 = BLACK;
+/// 枠と影
+pub const LINE: u8 = BLACK;
+/// 枠の太さ、ボタンの角の丸み、ボタンの影（右下にずらす量）
+pub const LINE_W: i32 = 2;
+pub const BUTTON_RADIUS: i32 = 3;
+pub const BUTTON_SHADOW: i32 = 2;
 /// フォーカスの点線の枠・チェックボックスの印
 pub const FOCUS: u8 = BLACK;
-/// 選んだもの（一覧の行・テキスト欄の全体の選択）: 紺の地に白い文字。一覧にフォーカスが無ければ明るい灰色の地に
-/// ふつうの文字
-pub const SELECT: u8 = BLUE;
+/// 選んだもの（一覧の行・テキスト欄の全体の選択）: 黒い地に白い字。一覧にフォーカスが無ければ黒い枠だけ
+pub const SELECT: u8 = BLACK;
 pub const SELECT_TEXT: u8 = WHITE;
-pub const SELECT_INACTIVE: u8 = LIGHT_GRAY;
 
 static FONT: AtomicPtr<Font> = AtomicPtr::new(core::ptr::null_mut());
 
@@ -114,22 +116,36 @@ impl Text {
     }
 }
 
-/// 出っ張った立体の枠（2 ピクセル。外は白と黒、内は地と濃い灰色）。中は塗らない
-pub fn raised(s: &mut Surface, r: Rect) {
-    s.bevel(r.x, r.y, r.w, r.h, LIGHT, DARK);
-    s.bevel(r.x + 1, r.y + 1, r.w - 2, r.h - 2, FACE, SHADOW);
+/// テキスト欄・一覧・表示欄の枠（2 ピクセルの黒）。中は塗らない
+pub fn frame(s: &mut Surface, r: Rect) {
+    s.round_rect(r.x, r.y, r.w, r.h, 0, LINE_W, LINE);
 }
 
-/// 押したボタンの枠（2 ピクセル。外は黒と白、内は濃い灰色と地）
-pub fn pressed(s: &mut Surface, r: Rect) {
-    s.bevel(r.x, r.y, r.w, r.h, DARK, LIGHT);
-    s.bevel(r.x + 1, r.y + 1, r.w - 2, r.h - 2, SHADOW, FACE);
+/// ボタンの見た目の状態
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ButtonLook {
+    Normal,
+    /// 既定のボタン（枠が 1 ピクセル太い）
+    Primary,
+    /// 押している間
+    Pressed,
 }
 
-/// へこんだ欄の枠（2 ピクセル。外は濃い灰色と白、内は黒と地）。中は塗らない
-pub fn sunken(s: &mut Surface, r: Rect) {
-    s.bevel(r.x, r.y, r.w, r.h, SHADOW, LIGHT);
-    s.bevel(r.x + 1, r.y + 1, r.w - 2, r.h - 2, DARK, FACE);
+/// ボタンの枠と影を `r` の中に描き、字を置く矩形（ボタンの本体）を返す。本体は `r` から影の分だけ小さく、
+/// 押している間は影の所へずれて黒く塗る
+pub fn button(s: &mut Surface, r: Rect, look: ButtonLook) -> Rect {
+    s.fill_rect(r.x, r.y, r.w, r.h, FACE);
+    let (w, h) = (r.w - BUTTON_SHADOW, r.h - BUTTON_SHADOW);
+    if look == ButtonLook::Pressed {
+        let body = Rect::new(r.x + BUTTON_SHADOW, r.y + BUTTON_SHADOW, w, h);
+        s.fill_round_rect(body.x, body.y, w, h, BUTTON_RADIUS, LINE);
+        return body;
+    }
+    s.fill_round_rect(r.x + BUTTON_SHADOW, r.y + BUTTON_SHADOW, w, h, BUTTON_RADIUS, LINE);
+    s.fill_round_rect(r.x, r.y, w, h, BUTTON_RADIUS, FACE);
+    let t = if look == ButtonLook::Primary { LINE_W + 1 } else { LINE_W };
+    s.round_rect(r.x, r.y, w, h, BUTTON_RADIUS, t, LINE);
+    Rect::new(r.x, r.y, w, h)
 }
 
 /// フォーカスの点線の枠（1 つおきの点）

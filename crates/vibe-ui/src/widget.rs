@@ -7,7 +7,7 @@ use vibe_abi::key;
 use vibe_gfx::Surface;
 use vibe_gfx::icons::TRANSPARENT;
 
-use crate::draw::{self, DARK, FACE, FIELD, FOCUS, SELECT, SELECT_INACTIVE, SELECT_TEXT, TEXT, TEXT_DISABLED, Text};
+use crate::draw::{self, ButtonLook, FACE, FIELD, FOCUS, LINE, SELECT, SELECT_TEXT, TEXT, TEXT_DISABLED, Text};
 use crate::{Action, Id, KeyEvent, Rect};
 
 /// 一覧の 1 行の高さ・スクロールバーの幅
@@ -453,7 +453,7 @@ impl Widget {
             Widget::Label(l) => {
                 if l.sunken {
                     s.fill_rect(r.x, r.y, r.w, r.h, l.bg.unwrap_or(FIELD));
-                    draw::sunken(s, r);
+                    draw::frame(s, r);
                 } else if let Some(bg) = l.bg {
                     s.fill_rect(r.x, r.y, r.w, r.h, bg);
                 }
@@ -468,34 +468,31 @@ impl Widget {
                 }
             }
             Widget::Button(b) => {
-                let down = b.enabled && pressed;
-                s.fill_rect(r.x, r.y, r.w, r.h, FACE);
-                // 既定のボタンは外側に黒い縁を足す
-                let body = if b.primary && b.enabled {
-                    s.rect(r.x, r.y, r.w, r.h, DARK);
-                    Rect::new(r.x + 1, r.y + 1, r.w - 2, r.h - 2)
+                let look = if b.enabled && pressed {
+                    ButtonLook::Pressed
+                } else if b.primary && b.enabled {
+                    ButtonLook::Primary
                 } else {
-                    r
+                    ButtonLook::Normal
                 };
-                if down {
-                    draw::pressed(s, body);
-                } else {
-                    draw::raised(s, body);
-                }
-                // 押している間は文字を 1 ピクセル右下へ
-                let off = if down { 1 } else { 0 };
-                let inner = Rect::new(body.x + off, body.y + off, body.w, body.h);
-                let color = if b.enabled { TEXT } else { TEXT_DISABLED };
-                t.draw_in(s, inner, &b.text, Align::Center, color);
-                if focused {
+                let body = draw::button(s, r, look);
+                let color = match look {
+                    ButtonLook::Pressed => SELECT_TEXT,
+                    _ if b.enabled => TEXT,
+                    _ => TEXT_DISABLED,
+                };
+                // 既定のボタンの字は太字
+                let tt = if look == ButtonLook::Primary { draw::bold() } else { t };
+                tt.draw_in(s, body, &b.text, Align::Center, color);
+                if focused && look != ButtonLook::Pressed {
                     let w = t.width(&b.text).min(body.w - 8);
-                    let fr = Rect::new(inner.x + (body.w - w) / 2 - 3, inner.y + (body.h - t.height()) / 2 - 1, w + 6, t.height() + 2);
+                    let fr = Rect::new(body.x + (body.w - w) / 2 - 3, body.y + (body.h - t.height()) / 2 - 1, w + 6, t.height() + 2);
                     draw::focus_rect(s, fr);
                 }
             }
             Widget::TextField(f) => {
                 s.fill_rect(r.x, r.y, r.w, r.h, FIELD);
-                draw::sunken(s, r);
+                draw::frame(s, r);
                 let mut f2 = TextField {
                     text: f.text.clone(),
                     cursor: f.cursor,
@@ -520,23 +517,27 @@ impl Widget {
             }
             Widget::List(l) => {
                 s.fill_rect(r.x, r.y, r.w, r.h, FIELD);
-                draw::sunken(s, r);
+                draw::frame(s, r);
                 let rows = List::rows_in(r);
                 let top = l.top.min(l.items.len().saturating_sub(rows));
                 let scroll = l.items.len() > rows;
                 let text_w = r.w - 4 - if scroll { SCROLLBAR_W + 2 } else { 0 };
                 for (row, i) in (top..l.items.len()).take(rows).enumerate() {
                     let y = r.y + 2 + row as i32 * ROW_H;
-                    let color = if l.selected == Some(i) {
-                        let bg = if focused { SELECT } else { SELECT_INACTIVE };
-                        s.fill_rect(r.x + 2, y, text_w, ROW_H, bg);
-                        if focused { SELECT_TEXT } else { TEXT }
+                    // 選んだ行: フォーカスがあれば黒い地に白い字（アイコンも白黒を入れ替える）、無ければ黒い枠だけ
+                    let inverted = l.selected == Some(i) && focused;
+                    let color = if inverted {
+                        s.fill_rect(r.x + 2, y, text_w, ROW_H, SELECT);
+                        SELECT_TEXT
                     } else {
+                        if l.selected == Some(i) {
+                            s.rect(r.x + 2, y, text_w, ROW_H, LINE);
+                        }
                         TEXT
                     };
                     let mut x = r.x + PAD;
                     if let Some(icon) = l.icons.get(i).copied().flatten() {
-                        s.blit(x, y + (ROW_H - ICON) / 2, icon, ICON as usize, Some(TRANSPARENT));
+                        draw_icon(s, x, y + (ROW_H - ICON) / 2, icon, inverted);
                         x += ICON + 6;
                     }
                     let area = Rect::new(x, y, r.x + text_w - PAD - x, ROW_H);
@@ -561,7 +562,7 @@ impl Widget {
             Widget::Checkbox(cb) => {
                 let bx = Rect::new(r.x, r.y + (r.h - 13) / 2, 13, 13);
                 s.fill_rect(bx.x, bx.y, bx.w, bx.h, FIELD);
-                draw::sunken(s, bx);
+                draw::frame(s, bx);
                 if cb.checked {
                     // チェックの印（黒、2 ピクセルの太さ）
                     for d in 0..2 {
@@ -580,10 +581,20 @@ impl Widget {
     }
 }
 
-/// スクロールバー: 溝（明るい灰色）と、出っ張った立体のつまみ
+/// スクロールバー: 白い溝の左に 2 ピクセルの黒い線、つまみは黒い角丸
 pub(crate) fn draw_scrollbar(s: &mut Surface, track: Rect, ty: i32, th: i32) {
     s.fill_rect(track.x, track.y, track.w, track.h, FACE);
-    let thumb = Rect::new(track.x, ty, track.w, th);
-    s.fill_rect(thumb.x, thumb.y, thumb.w, thumb.h, FACE);
-    draw::raised(s, thumb);
+    s.fill_rect(track.x, track.y, draw::LINE_W, track.h, LINE);
+    let (x, w) = (track.x + draw::LINE_W + 1, track.w - draw::LINE_W - 2);
+    s.fill_round_rect(x, ty, w, th, 2, LINE);
+}
+
+/// 一覧の 16x16 のアイコン（透明の画素は描かない）。`invert` なら白黒を入れ替える（黒い地の選んだ行）
+fn draw_icon(s: &mut Surface, x: i32, y: i32, icon: &[u8], invert: bool) {
+    for (i, &c) in icon.iter().enumerate().take((ICON * ICON) as usize) {
+        if c != TRANSPARENT {
+            let c = if invert { vibe_gfx::mono::invert(c) } else { c };
+            s.put_pixel(x + i as i32 % ICON, y + i as i32 / ICON, c);
+        }
+    }
 }

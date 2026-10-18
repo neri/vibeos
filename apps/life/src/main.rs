@@ -108,11 +108,12 @@ fn main() -> i32 {
 
 fn draw(win: &mut Window, life: &Life) {
     let mut s = win.surface();
-    s.clear(palette::BLACK);
+    // 白黒の画面（docs/plans/mono.md）: 白い地に黒いセル
+    s.clear(palette::WHITE);
     for y in 0..ROWS {
         for x in 0..COLS {
             if life.cells[y * COLS + x] {
-                s.fill_rect((x * CELL) as i32, (y * CELL) as i32, CELL as i32 - 1, CELL as i32 - 1, palette::LIGHT_GREEN);
+                s.fill_rect((x * CELL) as i32, (y * CELL) as i32, CELL as i32 - 1, CELL as i32 - 1, palette::BLACK);
             }
         }
     }

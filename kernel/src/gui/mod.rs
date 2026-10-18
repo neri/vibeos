@@ -86,7 +86,7 @@ const NO_KEY: KeyEvent = KeyEvent {
     ch: None,
 };
 
-/// デスクトップの背景の画像（16 色に誤差拡散した色番号の w × h と並べ方）
+/// デスクトップの背景の画像（白黒に誤差拡散した色番号（0 か 15）の w × h と並べ方）
 pub struct Wallpaper {
     pub w: usize,
     pub h: usize,

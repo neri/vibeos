@@ -10,10 +10,7 @@ use vibe_games::mines::{Mines, State};
 use vibe_rt::abi::key;
 use vibe_rt::gfx::{Event, Window, draw_text16_centered, font16};
 use vibe_rt::gfx_lib::Surface;
-use vibe_rt::gfx_lib::palette::{
-    BLACK, BLUE as NAVY, CYAN as TEAL, DARK_GRAY, GREEN, LIGHT_BLUE as BLUE, LIGHT_GRAY, LIGHT_RED as RED,
-    RED as MAROON, WHITE, YELLOW,
-};
+use vibe_rt::gfx_lib::palette::{BLACK, DARK_GRAY, WHITE};
 use vibe_rt::{format_fixed, println, sys};
 
 vibe_rt::entry!(main);
@@ -30,12 +27,11 @@ const W: usize = (COLS as i32 * CELL + 2 * MARGIN) as usize;
 const H: usize = (BOARD_Y + ROWS as i32 * CELL + MARGIN) as usize;
 const FACE_X: i32 = W as i32 / 2 - 12;
 
-/// 数字の色（1〜8。Windows のマインスイーパと同じ並び）
-const NUMBER_COLORS: [u8; 8] = [BLUE, GREEN, RED, NAVY, MAROON, TEAL, BLACK, DARK_GRAY];
-/// 開いたマスの地と区切りの線、負けたマスの地
-const OPENED: u8 = LIGHT_GRAY;
+/// 開いたマスの地と区切りの線（濃い灰の 1 ピクセルの線は画面では点線）。白黒の画面（docs/plans/mono.md）
+/// なので、数字は全部黒の太字、負けたマスは黒い地に白い地雷
+const OPENED: u8 = WHITE;
 const GRID: u8 = DARK_GRAY;
-const LOST: u8 = RED;
+const LOST: u8 = BLACK;
 
 struct Game {
     mines: Mines,
@@ -112,28 +108,26 @@ fn main() -> i32 {
     0
 }
 
-/// 立体の出っ張り（2 ピクセル。外は白と濃い灰色、内は明るい灰色と濃い灰色）
+/// 開いていないマス・顔のボタン: 黒い枠の白い箱と、右下に 1 ピクセルずらした黒い影
 fn raised(s: &mut Surface, x: i32, y: i32, w: i32, h: i32) {
-    s.bevel(x, y, w, h, WHITE, DARK_GRAY);
-    s.bevel(x + 1, y + 1, w - 2, h - 2, WHITE, DARK_GRAY);
+    s.fill_rect(x + 1, y + 1, w - 1, h - 1, BLACK);
+    s.fill_rect(x, y, w - 1, h - 1, WHITE);
+    s.rect(x, y, w - 1, h - 1, BLACK);
 }
 
-/// 3 桁の数を黒い地に赤で出す
+/// 3 桁の数を黒い角丸に白い太字で出す
 fn counter(s: &mut Surface, x: i32, value: i32) {
-    s.fill_rect(x, MARGIN, 40, PANEL_H, BLACK);
-    s.bevel(x, MARGIN, 40, PANEL_H, DARK_GRAY, WHITE);
+    s.fill_round_rect(x, MARGIN, 40, PANEL_H, 4, BLACK);
     let v = value.clamp(-99, 999);
     let text = format_fixed::<8>(format_args!("{v:03}"));
     let top = MARGIN + (PANEL_H - font16().height as i32) / 2;
-    draw_text16_centered(s, x, 40, top, &text, RED, true);
+    draw_text16_centered(s, x, 40, top, &text, WHITE, true);
 }
 
-/// 顔のボタン（立体のボタンに、黄色の丸に目と口）
+/// 顔のボタン（白い箱に、白い丸に目と口）
 fn face(s: &mut Surface, state: State) {
-    s.fill_rect(FACE_X, MARGIN, 24, PANEL_H, LIGHT_GRAY);
     raised(s, FACE_X, MARGIN, 24, PANEL_H);
-    let (cx, cy) = (FACE_X + 12, MARGIN + 12);
-    s.fill_circle(cx, cy, 7, YELLOW);
+    let (cx, cy) = (FACE_X + 11, MARGIN + 11);
     s.circle(cx, cy, 7, BLACK);
     let ink = BLACK;
     match state {
@@ -168,7 +162,7 @@ fn face(s: &mut Surface, state: State) {
 }
 
 fn draw(s: &mut Surface, g: &Game) {
-    s.clear(LIGHT_GRAY);
+    s.clear(WHITE);
     counter(s, MARGIN, g.mines.mines_left());
     counter(s, W as i32 - MARGIN - 40, g.seconds().min(999) as i32);
     face(s, g.mines.state());
@@ -177,13 +171,12 @@ fn draw(s: &mut Surface, g: &Game) {
             let (x, y) = (BOARD_X + cx as i32 * CELL, BOARD_Y + cy as i32 * CELL);
             let cell = g.mines.cell(cx, cy);
             if !cell.open {
-                s.fill_rect(x, y, CELL, CELL, LIGHT_GRAY);
                 raised(s, x, y, CELL, CELL);
                 if cell.flag {
-                    // 旗: 黒い棒と台、赤い三角
+                    // 旗: 黒い棒と台、黒い三角
                     s.vline(x + 8, y + 3, 9, BLACK);
                     for (i, w) in [2, 3, 5, 3, 2].into_iter().enumerate() {
-                        s.hline(x + 8 - w, y + 3 + i as i32, w, RED);
+                        s.hline(x + 8 - w, y + 3 + i as i32, w, BLACK);
                     }
                     s.hline(x + 4, y + 12, 8, BLACK);
                 }
@@ -195,16 +188,16 @@ fn draw(s: &mut Surface, g: &Game) {
             s.hline(x, y + CELL - 1, CELL, GRID);
             s.vline(x + CELL - 1, y, CELL, GRID);
             if cell.mine {
-                let ink = BLACK;
+                let ink = if lost_here { WHITE } else { BLACK };
                 for (dx, dy) in [(5, 0), (0, 5), (4, 4), (4, -4)] {
                     s.line(x + 7 - dx, y + 7 - dy, x + 7 + dx, y + 7 + dy, ink);
                 }
                 s.fill_circle(x + 7, y + 7, 4, ink);
-                s.fill_rect(x + 5, y + 5, 2, 2, WHITE);
+                s.fill_rect(x + 5, y + 5, 2, 2, if lost_here { BLACK } else { WHITE });
             } else if cell.around > 0 {
                 let ch = (b'0' + cell.around) as char;
                 let text = format_fixed::<2>(format_args!("{ch}"));
-                draw_text16_centered(s, x, CELL - 1, y, &text, NUMBER_COLORS[cell.around as usize - 1], true);
+                draw_text16_centered(s, x, CELL - 1, y, &text, BLACK, true);
             }
         }
     }

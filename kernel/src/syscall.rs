@@ -251,9 +251,8 @@ fn call(user: &UserRef, n: u32, a: u32, b: u32, c: u32, d: u32, e: u32) -> SysRe
             // SAFETY: 上で今のプロセスが読めるページだと確かめた（4 バイトにそろっている）
             let src = unsafe { core::slice::from_raw_parts(a as *const u32, n as usize) };
             let (w, h) = (b as usize, c as usize);
-            // 1 回だけ 16 色に誤差拡散して色番号で持つ
-            let lut = vibe_gfx::dither::Lut16::new();
-            let pixels = vibe_gfx::dither::to_vga16(w, h, &lut, |x, y| {
+            // 1 回だけ白黒に誤差拡散して色番号で持つ
+            let pixels = vibe_gfx::dither::to_mono(w, h, |x, y| {
                 let p = src[y * w + x];
                 [(p >> 16) as u8, (p >> 8) as u8, p as u8]
             });
