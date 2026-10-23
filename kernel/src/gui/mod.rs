@@ -26,6 +26,7 @@
 mod bar;
 mod deco;
 mod dock;
+mod glass;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -173,6 +174,10 @@ struct Window {
     closable: bool,
     /// タイトルバー（32 ビット、幅 × TITLE_H）
     titlebar: Vec<u32>,
+    /// すりガラス: タイトルバーの後ろをぼかして色を重ねたもの（幅 × TITLE_H。blur=off なら空）
+    glass: Vec<u32>,
+    /// 動いたのでガラスを計算し直す
+    glass_stale: bool,
     /// タイトルバー・上端のバーのボタンに出すアイコン（16x16）
     icon: Option<&'static [u32]>,
     /// 独自のパレット（全画面で前に出ている間だけ使う）
@@ -297,6 +302,10 @@ pub struct Screen {
     dock: Option<Box<dock::Dock>>,
     /// 最後にマウスの動きを届けたウィンドウ（出たときに知らせる）
     mouse_in: Option<WinId>,
+    /// すりガラスのタイトルバーの作業用（BOOT.CFG の blur=on のとき）
+    glass: Option<Box<glass::Glass>>,
+    /// 次の `present` までに変わった所（ガラスを計算し直すかを決める）
+    damage: vibe_gfx::glass::Damage,
 }
 
 /// 画面。コンソール（gfx::console の CONSOLE）と両方取るときはコンソールを先に取ること
@@ -330,6 +339,8 @@ pub static SCREEN: IrqMutex<Screen> = IrqMutex::new(Screen {
     hover: None,
     dock: None,
     mouse_in: None,
+    glass: None,
+    damage: vibe_gfx::glass::Damage::new(),
 });
 
 /// キー・マウス・閉じる要求が届いたら起こされる
@@ -372,12 +383,19 @@ pub fn start_desktop() -> bool {
     if vga::bpp() != 32 || vga::width() < 640 || vga::height() < 400 {
         return false;
     }
-    // ドックの項目（ファイルを読むのでロックの外で）
+    // ドックの項目・すりガラスの設定（ファイルを読むのでロックの外で）
     let dock_items = dock::load();
+    let blur = glass::enabled_in_config();
     let mut s = SCREEN.lock();
     s.mode = Mode::Desktop;
     let (w, h) = (s.width, s.height);
     s.dock = dock::Dock::new(dock_items, w, h).map(Box::new);
+    if blur {
+        s.glass = Some(Box::new(glass::Glass::new(w)));
+        klog!("gui: blur on (k={})", theme::GLASS_BLUR_K);
+    } else {
+        klog!("gui: blur off");
+    }
     // 端末は作業領域（ドックの上）の左下
     let (cw, ch) = s.desktop_terminal_size();
     s.console_w = cw;
@@ -436,6 +454,8 @@ fn new_window(
         kill_on_close,
         closable,
         titlebar: Vec::new(),
+        glass: Vec::new(),
+        glass_stale: false,
         icon: None,
         palette: None,
         lut: None,
@@ -623,6 +643,10 @@ impl Screen {
             None if id == CONSOLE => self.console_y as i32,
             None => return,
         };
+        if let Some(win) = self.windows.get(&id) {
+            let rect = (win.x, top + y0 as i32, win.w as i32, y1 as i32 - y0 as i32);
+            self.damage_window(id, rect);
+        }
         let bottom = top + y1 as i32;
         if bottom > 0 {
             self.mark_rows((top + y0 as i32).max(0) as usize, bottom as usize);
@@ -633,6 +657,7 @@ impl Screen {
     pub fn set_wallpaper(&mut self, wallpaper: Option<Wallpaper>) {
         self.wallpaper = wallpaper.filter(|w| w.pixels.len() == w.w * w.h).map(Box::new);
         self.bar_dirty = true;
+        self.damage.add_all();
         let h = self.height;
         self.mark_rows(0, h);
     }
@@ -699,6 +724,7 @@ impl Screen {
         win.title = String::from(title);
         let y = win.y;
         self.refresh_titlebars();
+        self.damage_titlebar(id);
         self.bar_dirty = true;
         self.mark_rows((y - TITLE_H as i32).max(0) as usize, y.max(0) as usize);
     }
@@ -713,6 +739,7 @@ impl Screen {
             }
         }
         win.lut = Some(Box::new(palette::lut32(pal)));
+        self.damage.add_all();
         let h = self.height;
         self.mark_rows(0, h);
         if self.focused() == Some(id) {
@@ -813,6 +840,8 @@ impl Screen {
 
     /// 重なりの順やフォーカスが変わった: タイトルバー・パレット・バーを直して全体を描き直す
     fn focus_changed(&mut self) {
+        // 重なりの順・影の濃さが変わるので、すりガラスは全部計算し直す
+        self.damage.add_all();
         self.refresh_titlebars();
         self.refresh_dock();
         self.apply_palette();
@@ -880,13 +909,17 @@ impl Screen {
         let Some(win) = self.windows.get_mut(&id) else { return };
         // 影の分も描き直す
         let m = deco::SHADOW_MARGIN;
-        let old = (win.y - TITLE_H as i32 - 1 - m, win.y + win.h as i32 + 1 + m);
+        // 影を含む矩形（前と後）。手前のすりガラスのために変わった所にも足す
+        let area = |w: &Window| (w.x - 1 - m, w.y - TITLE_H as i32 - 1 - m, w.w as i32 + 2 + 2 * m, w.h as i32 + TITLE_H as i32 + 2 + 2 * m);
+        let old = area(win);
         // タイトルバーが上端のバーの下に、少なくとも一部が画面に残るようにする
         win.x = x.clamp(-(win.w as i32) + 40, sw - 40);
         win.y = y.clamp((BAR_H + TITLE_H + 1) as i32, sh - 4);
-        let new = (win.y - TITLE_H as i32 - 1 - m, win.y + win.h as i32 + 1 + m);
-        for (a, b) in [old, new] {
-            self.mark_rows(a.max(0) as usize, b.max(0) as usize);
+        win.glass_stale = true;
+        let new = area(win);
+        for r in [old, new] {
+            self.mark_rows(r.1.max(0) as usize, (r.1 + r.3).max(0) as usize);
+            self.damage_window(id, r);
         }
     }
 
@@ -1018,10 +1051,11 @@ impl Screen {
             let Some(w) = self.windows.get_mut(&id) else { continue };
             let part = hover.filter(|h| h.0 == id).map(|h| h.1);
             render_titlebar(w, focused == Some(id), part, deco);
-            *slot = Some(((w.y - TITLE_H as i32).max(0) as usize, w.y.max(0) as usize));
+            *slot = Some((id, (w.y - TITLE_H as i32).max(0) as usize, w.y.max(0) as usize));
         }
-        for (top, bottom) in rows.into_iter().flatten() {
+        for (id, top, bottom) in rows.into_iter().flatten() {
             self.mark_rows(top, bottom);
+            self.damage_titlebar(id);
         }
     }
 
@@ -1109,6 +1143,8 @@ impl Screen {
         if self.bar_dirty && self.mode == Mode::Desktop {
             self.render_bar();
         }
+        // すりガラスは行を合成する前に（上下の行も要るので）
+        self.update_glass();
         if self.dirty_lo >= self.dirty_hi {
             return;
         }
@@ -1362,6 +1398,7 @@ fn render_titlebar(w: &mut Window, focused: bool, hover: Option<Part>, deco: &de
     let close_x = w.close_box_x();
     let min_x = w.minimize_box_x();
     w.titlebar.resize(w.w * TITLE_H, 0);
+    let glass = w.glass.len() == w.titlebar.len();
     let mut c = Canvas::new(&mut w.titlebar, w.w, TITLE_H);
     let h = TITLE_H as i32;
     let (bg, fg, fg_dim, button_bg, button_hover) = if w.terminal {
@@ -1370,7 +1407,17 @@ fn render_titlebar(w: &mut Window, focused: bool, hover: Option<Part>, deco: &de
         (theme::FACE, theme::TEXT, theme::TEXT_DIM, theme::SUBTLE, theme::HOVER)
     };
     let ink = if focused { fg } else { fg_dim };
-    c.clear(bg);
+    // すりガラス（blur=on）なら後ろをぼかしたものを地に、ボタンの丸は半透明（明るい地は黒、暗い地は白を重ねる）
+    if glass {
+        c.blit(0, 0, &w.glass, w.w);
+    } else {
+        c.clear(bg);
+    }
+    let (glass_ink, (glass_alpha, glass_hover_alpha)) = if w.terminal {
+        (canvas::rgb(255, 255, 255), theme::GLASS_DARK_BUTTON_ALPHA)
+    } else {
+        (canvas::rgb(0, 0, 0), theme::GLASS_BUTTON_ALPHA)
+    };
     let mut tx = 8;
     if let Some(icon) = w.icon {
         let s = crate::gfx::icons::SIZE as i32;
@@ -1384,12 +1431,14 @@ fn render_titlebar(w: &mut Window, focused: bool, hover: Option<Part>, deco: &de
     let d = BUTTON_W as i32;
     let by = (h - d) / 2;
     let button = |c: &mut Canvas, x: i32, part: Part| -> canvas::Color {
-        let (fill, col) = match hover {
-            Some(p) if p == part && part == Part::Close => (theme::CLOSE_HOVER, canvas::rgb(255, 255, 255)),
-            Some(p) if p == part => (button_hover, ink),
-            _ => (button_bg, ink),
+        let (fill, alpha, col) = match hover {
+            Some(p) if p == part && part == Part::Close => (theme::CLOSE_HOVER, 255, canvas::rgb(255, 255, 255)),
+            Some(p) if p == part && glass => (glass_ink, glass_hover_alpha, ink),
+            Some(p) if p == part => (button_hover, 255, ink),
+            _ if glass => (glass_ink, glass_alpha, ink),
+            _ => (button_bg, 255, ink),
         };
-        c.fill_round_rect(x, by, d, d, &deco.button, fill, 255);
+        c.fill_round_rect(x, by, d, d, &deco.button, fill, alpha);
         col
     };
     let (gx, gy) = ((d - 8) / 2, by + (d - 8) / 2);

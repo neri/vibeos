@@ -1,0 +1,57 @@
+# G1（すりガラスのタイトルバー。docs/plans/title-blur.md）: BOOT.CFG の blur=on で、タイトルバーの後ろ（背景・奥の
+# ウィンドウ）をぼかして色を重ねる。奥が描き変わる・前後が入れ替わる・奥のウィンドウが消えると、ガラスも変わる。
+# 端末のタイトルバーは 8,270 から 640x24。calc は中身 120,73 に 156x172（タイトルバー y=49〜72、[_] は 232〜251）。
+# カーソルは 512,384 から
+boot-config video=1024x768
+boot-config blur=on
+timeout 30
+wait-serial gui: blur on
+wait-serial gui: desktop 1024x768
+wait-serial VibeOS shell
+# 奥に何も無い端末のタイトルバー（暗いガラス。フォーカスあり）
+expect-screen blur-terminal 8 270 640 24
+# 5 秒後に端末の 8 行目（y=406〜421）に長い行を出す（sleep の報告はファイルへ）
+type sh -c "sleep 5000 > /SLEEP.TXT; echo glass$((6*7))-glass-glass-glass-glass-glass-glass-glass" &
+key ret
+type calc &
+key ret
+wait-serial calc: started
+sleep 500
+# 背景の円の上の calc のタイトルバー（明るいガラス）
+expect-screen blur-calc 120 49 156 24
+# calc のタイトルバー（→ 170,61）をつかんで (+100, +353) へ: タイトルバーが 220,402 から（端末の 8 行目の上）
+mouse-move -342 -323
+mouse-button left down
+mouse-move 100 353
+mouse-button left up
+# カーソルをどける（→ 900,150）
+mouse-move 630 -264
+sleep 300
+expect-screen blur-over-term 220 402 156 24
+# 奥の端末に行が出ると、上の calc のタイトルバーが変わる
+wait-serial glass42
+sleep 300
+expect-screen blur-over-text 220 402 156 24
+# calc を上へ（→ 270,414 をつかんで -170）: 中身が端末のタイトルバーの後ろに重なる
+mouse-move -630 264
+mouse-button left down
+mouse-move 0 -170
+mouse-button left up
+# 端末の中身（→ 600,600）を押して前に出す: 端末のタイトルバーに calc の白い中身が透ける
+mouse-move 330 356
+mouse-button left down
+mouse-button left up
+sleep 300
+expect-screen blur-term-raised 8 270 640 24
+# 端末の [_]（→ 635,282）に乗せると半透明の丸が濃くなる
+mouse-move 35 -318
+sleep 300
+expect-screen blur-term-hover 600 270 48 24
+# calc の [_]（→ 342,244。端末より上に見えている）で最小化すると、端末のタイトルバーは初めと同じに戻る
+mouse-move -293 -38
+mouse-button left down
+mouse-button left up
+mouse-move 558 -94
+sleep 300
+expect-screen blur-terminal 8 270 640 24
+serial-absent PANIC
