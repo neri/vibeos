@@ -46,6 +46,8 @@ pub(super) struct Dock {
     /// パネルの中身（layout.w × layout.h）
     buf: Vec<u32>,
     tip: Option<Tip>,
+    /// すりガラス: パネルの後ろをぼかして色を重ねたもの（layout.w × layout.h。blur=off なら空）
+    pub(super) glass: Vec<u32>,
 }
 
 /// 乗せた項目の名前のパネル
@@ -91,7 +93,7 @@ impl Dock {
         let layout = Layout::new(items.len(), sw as i32, sh as i32)?;
         let running = vec![false; items.len()];
         let buf = vec![0; (layout.w * layout.h) as usize];
-        Some(Dock { items, layout, hover: None, running, buf, tip: None })
+        Some(Dock { items, layout, hover: None, running, buf, tip: None, glass: Vec::new() })
     }
 
     /// 重ね合わせで描き直す行（影を含む）
@@ -129,12 +131,22 @@ impl Screen {
         })
     }
 
+    /// ドックのパネルの矩形（ツールチップは含まない）
+    pub(super) fn dock_rect(&self) -> Option<(i32, i32, i32, i32)> {
+        self.dock.as_ref().map(|d| (d.layout.x, d.layout.y, d.layout.w, d.layout.h))
+    }
+
     /// ドック（とツールチップ）の中身を描き直す
     pub(super) fn render_dock(&mut self) {
         let (Some(d), Some(deco)) = (&mut self.dock, &self.deco) else { return };
         let (w, h) = (d.layout.w as usize, d.layout.h as usize);
         let mut c = Canvas::new(&mut d.buf, w, h);
-        c.clear(theme::DOCK);
+        // すりガラス（blur=on）なら後ろをぼかしたものを地に
+        if d.glass.len() == w * h {
+            c.blit(0, 0, &d.glass, w);
+        } else {
+            c.clear(theme::DOCK);
+        }
         for i in 0..d.layout.count {
             let (tx, ty) = (PAD + i as i32 * (TILE + GAP), PAD);
             let bg = if d.hover == Some(i) { theme::FACE } else { theme::ACCENT_LIGHT };
@@ -161,7 +173,11 @@ impl Screen {
             Tip { x, y: d.layout.y - TIP_GAP - TIP_H, w: tw, buf }
         });
         let (a, b) = d.rows();
+        let r = (d.layout.x, d.layout.y, d.layout.w, d.layout.h);
         self.mark_rows(a, b);
+        // メニューのすりガラスはドックを透かして見る（ドックはすべてのウィンドウより手前）
+        let depth = self.order.len() as i32;
+        self.damage.add(r, depth);
     }
 
     /// マウスの下の項目を目立たせる（`over` が None ならどれも目立たせない）

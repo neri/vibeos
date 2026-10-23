@@ -1,4 +1,4 @@
-//! すりガラスのタイトルバー（BOOT.CFG の `blur=on`。docs/plans/title-blur.md）
+//! すりガラスのタイトルバー・ドック・メニュー（BOOT.CFG の `blur=on`。docs/plans/title-blur.md）
 //!
 //! タイトルバーの後ろにある物（背景と、そのウィンドウより奥のウィンドウ）を、タイトルバーの矩形を上下左右に
 //! ぼかしの届く幅だけ広げた範囲で 1 行ずつ合成し、ガウスぼかし（`vibe_gfx::blur`）をかけて、白（端末は暗い色）を
@@ -8,6 +8,10 @@
 //! 奥から順に計算する。奥のタイトルバーもガラスなので、奥から順にすれば手前は計算し直した奥を透かして見る。
 //! 計算し直すのは、変わった所の一覧（`vibe_gfx::glass::Damage`）に「奥の物がぼかしの届く範囲で変わった」もの
 //! があるとき・ウィンドウが動いたとき・まだ作っていないときだけ。
+//!
+//! ドックのパネル（すべてのウィンドウより手前。深さはウィンドウの数）とメニューのパネル（ドックより手前）も同じ:
+//! 後ろはそれぞれ「背景とすべてのウィンドウ」「それとドック」。ドックは地の濃い紫を、メニューは白を重ね、
+//! `render_dock`・`render_menu` がガラスを地にして描く。ツールチップは不透明のまま。
 
 use alloc::vec::Vec;
 
@@ -38,6 +42,12 @@ impl Glass {
     fn margin(&self) -> i32 {
         self.blur.reach() as i32
     }
+}
+
+/// ガラスの後ろにある物: 重なりの順で奥から `windows` 個のウィンドウと、`dock` ならドック
+struct Behind {
+    windows: usize,
+    dock: bool,
 }
 
 /// BOOT.CFG の `blur=` を読む（ファイルを読むので SCREEN のロックの外で）。既定は off
@@ -99,10 +109,14 @@ impl Screen {
             if !stale && !self.damage.affects(reach, i as i32) {
                 continue;
             }
-            let dark = w.terminal;
+            let tint = if w.terminal {
+                (theme::TERMINAL[0], theme::GLASS_DARK_TINT_ALPHA)
+            } else {
+                (theme::FACE, theme::GLASS_TINT_ALPHA)
+            };
             let Some(win) = self.windows.get_mut(&id) else { continue };
             let mut out = core::mem::take(&mut win.glass);
-            self.compute(&mut g, i, tb, dark, &mut out);
+            self.compute(&mut g, tb, Behind { windows: i, dock: false }, tint, &mut out);
             let hover = self.hover.filter(|h| h.0 == id).map(|h| h.1);
             let (Some(win), Some(deco)) = (self.windows.get_mut(&id), self.deco.as_deref()) else { continue };
             win.glass = out;
@@ -112,21 +126,44 @@ impl Screen {
             self.damage.add(tb, i as i32);
             self.mark_rows(tb.1.max(0) as usize, (tb.1 + tb.3).max(0) as usize);
         }
+        // ドック（すべてのウィンドウより手前）とメニュー（ドックより手前）。描き直すとき（render_dock・render_menu）に
+        // 描き直す行に入れ、ドックは手前のメニューのために変わった所にも足す
+        let n = self.order.len();
+        let reach = |r: Rect| (r.0 - m, r.1 - m, r.2 + 2 * m, r.3 + 2 * m);
+        if let Some(r) = self.dock_rect() {
+            let have = self.dock.as_ref().map_or(0, |d| d.glass.len());
+            if have != (r.2 * r.3) as usize || self.damage.affects(reach(r), n as i32) {
+                let mut out = self.dock.as_mut().map(|d| core::mem::take(&mut d.glass)).unwrap_or_default();
+                self.compute(&mut g, r, Behind { windows: n, dock: false }, (theme::DOCK, theme::GLASS_DOCK_TINT_ALPHA), &mut out);
+                if let Some(d) = &mut self.dock {
+                    d.glass = out;
+                }
+                self.render_dock();
+            }
+        }
+        if let Some(r) = self.menu_rect() {
+            let have = self.menu.as_ref().map_or(0, |m| m.glass.len());
+            if have != (r.2 * r.3) as usize || self.damage.affects(reach(r), n as i32 + 1) {
+                let mut out = self.menu.as_mut().map(|m| core::mem::take(&mut m.glass)).unwrap_or_default();
+                self.compute(&mut g, r, Behind { windows: n, dock: true }, (theme::FACE, theme::GLASS_TINT_ALPHA), &mut out);
+                if let Some(m) = &mut self.menu {
+                    m.glass = out;
+                }
+                self.render_menu();
+            }
+        }
         self.glass = Some(g);
         self.damage.clear();
     }
 
-    /// 重なりの順で `depth` 番目のウィンドウのタイトルバー `tb` のガラスを `out` に作る
-    fn compute(&self, g: &mut Glass, depth: usize, tb: Rect, dark: bool, out: &mut Vec<u32>) {
+    /// 矩形 `tb`（タイトルバー・ドック・メニューのパネル）のガラスを `out` に作る。後ろは背景と `behind` の物。
+    /// `tint` は重ねる色と濃さ
+    fn compute(&self, g: &mut Glass, tb: Rect, behind: Behind, tint: (u32, u8), out: &mut Vec<u32>) {
         let (sw, sh) = (self.width as i32, self.height as i32);
         let m = g.margin();
         let (x0, x1) = ((tb.0 - m).max(0), (tb.0 + tb.2 + m).min(sw));
         let (y0, y1) = ((tb.1 - m).max(0), (tb.1 + tb.3 + m).min(sh));
-        let (tint, alpha) = if dark {
-            (theme::TERMINAL[0], theme::GLASS_DARK_TINT_ALPHA)
-        } else {
-            (theme::FACE, theme::GLASS_TINT_ALPHA)
-        };
+        let (tint, alpha) = tint;
         out.clear();
         if x0 >= x1 || y0 >= y1 {
             // 画面の外（ここには来ないはず）: 重ねる色だけ
@@ -136,25 +173,28 @@ impl Screen {
         let (rw, rh) = ((x1 - x0) as usize, (y1 - y0) as usize);
         g.src.resize(rw * rh, 0);
         g.tmp.resize(2 * rw.max(rh), 0);
-        // 後ろの画像: 背景と、このウィンドウより奥のウィンドウ（上端のバーの行は背景だけ）
+        // 後ろの画像: 背景と、後ろにある物（上端のバーの行は背景だけ）
         let focused = self.focused();
         for (r, y) in (y0..y1).enumerate() {
             let row = &mut g.row[..self.width];
             self.background_row(y as usize, row);
             if y >= BAR_H as i32 {
-                for &id in &self.order[..depth] {
+                for &id in &self.order[..behind.windows] {
                     self.draw_window_row(id, y, row, focused == Some(id));
+                }
+                if behind.dock {
+                    self.draw_dock_row(y as usize, row);
                 }
             }
             g.src[r * rw..(r + 1) * rw].copy_from_slice(&row[x0 as usize..x1 as usize]);
         }
-        // ぼかす（タイトルバーの所だけ正しく計算する）
+        // ぼかす（ガラスの所だけ正しく計算する）
         let tx = ((tb.0.max(x0) - x0) as usize, ((tb.0 + tb.2).min(x1) - x0).max(0) as usize);
         let ty = ((tb.1.max(y0) - y0) as usize, ((tb.1 + tb.3).min(y1) - y0).max(0) as usize);
         if tx.0 < tx.1 && ty.0 < ty.1 {
             g.blur.apply_region(&mut g.src, rw, rh, &mut g.tmp, (tx.0, ty.0, tx.1, ty.1));
         }
-        // タイトルバーの大きさに切り出して色を重ねる（画面の外の列は端の色）
+        // ガラスの大きさに切り出して色を重ねる（画面の外の列は端の色）
         out.reserve((tb.2 * tb.3) as usize);
         for y in tb.1..tb.1 + tb.3 {
             let sy = (y.clamp(y0, y1 - 1) - y0) as usize;

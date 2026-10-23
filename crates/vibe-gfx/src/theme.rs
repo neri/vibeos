@@ -81,6 +81,8 @@ pub const SHADOW_FAR_DY: i32 = 10;
 pub const GLASS_BLUR_K: usize = 6;
 pub const GLASS_TINT_ALPHA: u8 = 128;
 pub const GLASS_DARK_TINT_ALPHA: u8 = 204;
+/// メニューのパネルは白をタイトルバーと同じ濃さで、ドックのパネルは地の色（DOCK）を 70% 重ねる
+pub const GLASS_DOCK_TINT_ALPHA: u8 = 179;
 /// ガラスの上のタイトルバーのボタンの丸（ふつう, 乗せたとき）: 明るい地は黒を 7%・17%、暗い地は白を 10%・18% 重ねる
 pub const GLASS_BUTTON_ALPHA: (u8, u8) = (18, 43);
 pub const GLASS_DARK_BUTTON_ALPHA: (u8, u8) = (26, 46);
