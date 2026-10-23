@@ -178,6 +178,9 @@ struct Window {
     glass: Vec<u32>,
     /// 動いたのでガラスを計算し直す
     glass_stale: bool,
+    /// 後ろが変わったが、間引いて後回しにした / ガラスを計算した刻み
+    glass_deferred: bool,
+    glass_at: u32,
     /// タイトルバー・上端のバーのボタンに出すアイコン（16x16）
     icon: Option<&'static [u32]>,
     /// 独自のパレット（全画面で前に出ている間だけ使う）
@@ -425,6 +428,10 @@ pub fn start_desktop() -> bool {
     let h = s.height;
     s.mark_rows(0, h);
     s.present();
+    drop(s);
+    if blur {
+        glass::start_thread();
+    }
     true
 }
 
@@ -456,6 +463,8 @@ fn new_window(
         titlebar: Vec::new(),
         glass: Vec::new(),
         glass_stale: false,
+        glass_deferred: false,
+        glass_at: 0,
         icon: None,
         palette: None,
         lut: None,

@@ -7,13 +7,15 @@
 //! 1 行ずつの重ね合わせの中では上下の行が無いので、`present` で行を合成する前に、計算し直す必要のあるものを
 //! 奥から順に計算する。奥のタイトルバーもガラスなので、奥から順にすれば手前は計算し直した奥を透かして見る。
 //! 計算し直すのは、変わった所の一覧（`vibe_gfx::glass::Damage`）に「奥の物がぼかしの届く範囲で変わった」もの
-//! があるとき・ウィンドウが動いたとき・まだ作っていないときだけ。
+//! があるとき・ウィンドウが動いたとき・まだ作っていないときだけ。後ろが変わっただけのときは 50ms に 1 回までに
+//! 間引き、後回しにした分は `glass` のスレッドが間をおいて描き直す。
 //!
 //! ドックのパネル（すべてのウィンドウより手前。深さはウィンドウの数）とメニューのパネル（ドックより手前）も同じ:
 //! 後ろはそれぞれ「背景とすべてのウィンドウ」「それとドック」。ドックは地の濃い紫を、メニューは白を重ね、
 //! `render_dock`・`render_menu` がガラスを地にして描く。ツールチップは不透明のまま。
 
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use vibe_gfx::blur::Blur;
 use vibe_gfx::canvas::blend;
@@ -21,6 +23,8 @@ use vibe_gfx::glass::{self, Rect};
 use vibe_gfx::theme;
 
 use super::{BAR_H, Mode, Screen, TITLE_H, WinId, render_titlebar};
+use crate::drivers::pit;
+use crate::task::wait::WaitQueue;
 
 /// ぼかしの作業用のバッファ（デスクトップにするときに作る。blur=off なら作らない）
 pub(super) struct Glass {
@@ -50,10 +54,29 @@ struct Behind {
     dock: bool,
 }
 
-/// BOOT.CFG の `blur=` を読む（ファイルを読むので SCREEN のロックの外で）。既定は off
+/// 後ろが変わっただけのガラスを計算し直す間隔の下限（刻み。50ms）
+const INTERVAL_TICKS: u32 = 5;
+
+/// 後回しにしたガラスがある（`glass` のスレッドが間をおいて `present` する）
+static DEFERRED: AtomicBool = AtomicBool::new(false);
+static DEFERRED_WAIT: WaitQueue = WaitQueue::new();
+
+/// 後回しにしたガラスを描き直すスレッドを動かす（blur=on でデスクトップにした後、ロックの外で）
+pub(super) fn start_thread() {
+    crate::task::spawn("glass", || {
+        loop {
+            DEFERRED_WAIT.wait_until(|| DEFERRED.load(Ordering::Acquire));
+            DEFERRED.store(false, Ordering::Release);
+            pit::sleep_ms(INTERVAL_TICKS * 1000 / pit::TICK_HZ);
+            super::SCREEN.lock().present();
+        }
+    });
+}
+
+/// BOOT.CFG の `blur=` を読む（ファイルを読むので SCREEN のロックの外で）。既定は on
 pub(super) fn enabled_in_config() -> bool {
     let text = crate::fs::read_file("/BOOT.CFG").unwrap_or_default();
-    let Some(value) = glass::from_config(core::str::from_utf8(&text).unwrap_or("")) else { return false };
+    let Some(value) = glass::from_config(core::str::from_utf8(&text).unwrap_or("")) else { return true };
     glass::parse_setting(value).unwrap_or_else(|| {
         klog!("gui: cannot read blur={value}, using on");
         true
@@ -85,7 +108,9 @@ impl Screen {
         }
     }
 
-    /// 計算し直す必要のあるガラスを奥から順に計算し、タイトルバーを描き直す（`present` の最初に呼ぶ）
+    /// 計算し直す必要のあるガラスを奥から順に計算し、タイトルバーを描き直す（`present` の最初に呼ぶ）。
+    /// 後ろが変わっただけのガラスは、前に計算してから `INTERVAL_TICKS` たっていなければ後回しにし、
+    /// `glass` のスレッドが間をおいて描き直す（端末が 1 文字ずつ出すたびにドックを計算し直すと遅すぎるため）
     pub(super) fn update_glass(&mut self) {
         if self.mode != Mode::Desktop {
             self.damage.clear();
@@ -97,6 +122,19 @@ impl Screen {
         };
         let focused = self.focused();
         let m = g.margin();
+        let now = pit::ticks();
+        let mut deferred = false;
+        // 計算するか: まだ無い・動いた（stale）ならすぐ、後ろが変わった・後回しにしていたなら間をおいて
+        let mut decide = |stale: bool, changed: bool, at: u32| -> Option<bool> {
+            if stale || (changed && now.wrapping_sub(at) >= INTERVAL_TICKS) {
+                Some(true)
+            } else if changed {
+                deferred = true;
+                Some(false)
+            } else {
+                None
+            }
+        };
         for i in 0..self.order.len() {
             let id = self.order[i];
             let w = &self.windows[&id];
@@ -106,8 +144,16 @@ impl Screen {
             let tb = (w.x, w.y - TITLE_H as i32, w.w as i32, TITLE_H as i32);
             let reach = (tb.0 - m, tb.1 - m, tb.2 + 2 * m, tb.3 + 2 * m);
             let stale = w.glass_stale || w.glass.len() != w.w * TITLE_H;
-            if !stale && !self.damage.affects(reach, i as i32) {
-                continue;
+            let changed = w.glass_deferred || self.damage.affects(reach, i as i32);
+            match decide(stale, changed, w.glass_at) {
+                None => continue,
+                Some(false) => {
+                    if let Some(win) = self.windows.get_mut(&id) {
+                        win.glass_deferred = true;
+                    }
+                    continue;
+                }
+                Some(true) => {}
             }
             let tint = if w.terminal {
                 (theme::TERMINAL[0], theme::GLASS_DARK_TINT_ALPHA)
@@ -120,7 +166,7 @@ impl Screen {
             let hover = self.hover.filter(|h| h.0 == id).map(|h| h.1);
             let (Some(win), Some(deco)) = (self.windows.get_mut(&id), self.deco.as_deref()) else { continue };
             win.glass = out;
-            win.glass_stale = false;
+            (win.glass_stale, win.glass_deferred, win.glass_at) = (false, false, now);
             render_titlebar(win, focused == Some(id), hover, deco);
             // 手前のガラスはこのタイトルバーを透かして見る
             self.damage.add(tb, i as i32);
@@ -130,30 +176,56 @@ impl Screen {
         // 描き直す行に入れ、ドックは手前のメニューのために変わった所にも足す
         let n = self.order.len();
         let reach = |r: Rect| (r.0 - m, r.1 - m, r.2 + 2 * m, r.3 + 2 * m);
-        if let Some(r) = self.dock_rect() {
-            let have = self.dock.as_ref().map_or(0, |d| d.glass.len());
-            if have != (r.2 * r.3) as usize || self.damage.affects(reach(r), n as i32) {
-                let mut out = self.dock.as_mut().map(|d| core::mem::take(&mut d.glass)).unwrap_or_default();
-                self.compute(&mut g, r, Behind { windows: n, dock: false }, (theme::DOCK, theme::GLASS_DOCK_TINT_ALPHA), &mut out);
-                if let Some(d) = &mut self.dock {
-                    d.glass = out;
+        if let (Some(r), Some(d)) = (self.dock_rect(), self.dock.as_ref()) {
+            let stale = d.glass.len() != (r.2 * r.3) as usize;
+            let changed = d.glass_deferred || self.damage.affects(reach(r), n as i32);
+            match decide(stale, changed, d.glass_at) {
+                Some(true) => {
+                    let mut out = self.dock.as_mut().map(|d| core::mem::take(&mut d.glass)).unwrap_or_default();
+                    let tint = (theme::DOCK, theme::GLASS_DOCK_TINT_ALPHA);
+                    self.compute(&mut g, r, Behind { windows: n, dock: false }, tint, &mut out);
+                    if let Some(d) = &mut self.dock {
+                        d.glass = out;
+                        (d.glass_deferred, d.glass_at) = (false, now);
+                    }
+                    self.render_dock();
                 }
-                self.render_dock();
+                Some(false) => {
+                    if let Some(d) = &mut self.dock {
+                        d.glass_deferred = true;
+                    }
+                }
+                None => {}
             }
         }
-        if let Some(r) = self.menu_rect() {
-            let have = self.menu.as_ref().map_or(0, |m| m.glass.len());
-            if have != (r.2 * r.3) as usize || self.damage.affects(reach(r), n as i32 + 1) {
-                let mut out = self.menu.as_mut().map(|m| core::mem::take(&mut m.glass)).unwrap_or_default();
-                self.compute(&mut g, r, Behind { windows: n, dock: true }, (theme::FACE, theme::GLASS_TINT_ALPHA), &mut out);
-                if let Some(m) = &mut self.menu {
-                    m.glass = out;
+        if let (Some(r), Some(menu)) = (self.menu_rect(), self.menu.as_ref()) {
+            let stale = menu.glass.len() != (r.2 * r.3) as usize;
+            let changed = menu.glass_deferred || self.damage.affects(reach(r), n as i32 + 1);
+            match decide(stale, changed, menu.glass_at) {
+                Some(true) => {
+                    let mut out = self.menu.as_mut().map(|m| core::mem::take(&mut m.glass)).unwrap_or_default();
+                    let tint = (theme::FACE, theme::GLASS_TINT_ALPHA);
+                    self.compute(&mut g, r, Behind { windows: n, dock: true }, tint, &mut out);
+                    if let Some(menu) = &mut self.menu {
+                        menu.glass = out;
+                        (menu.glass_deferred, menu.glass_at) = (false, now);
+                    }
+                    self.render_menu();
                 }
-                self.render_menu();
+                Some(false) => {
+                    if let Some(menu) = &mut self.menu {
+                        menu.glass_deferred = true;
+                    }
+                }
+                None => {}
             }
         }
         self.glass = Some(g);
         self.damage.clear();
+        if deferred {
+            DEFERRED.store(true, Ordering::Release);
+            DEFERRED_WAIT.notify_all();
+        }
     }
 
     /// 矩形 `tb`（タイトルバー・ドック・メニューのパネル）のガラスを `out` に作る。後ろは背景と `behind` の物。

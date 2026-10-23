@@ -1,4 +1,6 @@
 # M4・A1: タイトルバーのボタンは薄い地の丸。マウスを乗せると地の色が変わる（[x] は赤、[_] は濃い灰色）。離れると戻る
+# G3: タイトルバーはすりガラス（後ろの背景をぼかして白を 50%。ここは約 158,154,196）で、ボタンの丸は黒を 7%、
+# 乗せると 17% 重ねる半透明（不透明の前の色は 76-blur-off で見る）
 # clock のウィンドウは中身 120,73 に 136x156。[_] は 212〜231、[x] は 234〜253（タイトルバー y=49〜72、
 # 丸は y=51〜70。記号は真ん中の 8x8 なので、丸の左寄りの 215,60 と 237,60 で見る）。カーソルは 512,384 から
 timeout 30
@@ -9,20 +11,20 @@ key ret
 wait-serial clock: started
 sleep 300
 # 乗せる前は薄い地
-expect-pixel 237 60 241 239 232
-expect-pixel 215 60 241 239 232
+expect-pixel 237 60 147 143 182
+expect-pixel 215 60 147 143 182
 # [x] に乗せる（→ 243,60）
 mouse-move -269 -324
 sleep 300
 expect-pixel 237 60 226 67 72
-expect-pixel 215 60 241 239 232
+expect-pixel 215 60 147 143 182
 # [_] に移る（→ 222,60）
 mouse-move -21 0
 sleep 300
-expect-pixel 237 60 241 239 232
-expect-pixel 215 60 211 209 199
+expect-pixel 237 60 147 143 182
+expect-pixel 215 60 131 128 163
 # 離れる（→ 222,200: 時計の中身）
 mouse-move 0 140
 sleep 300
-expect-pixel 215 60 241 239 232
+expect-pixel 215 60 147 143 182
 serial-absent PANIC

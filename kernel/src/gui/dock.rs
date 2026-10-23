@@ -46,8 +46,11 @@ pub(super) struct Dock {
     /// パネルの中身（layout.w × layout.h）
     buf: Vec<u32>,
     tip: Option<Tip>,
-    /// すりガラス: パネルの後ろをぼかして色を重ねたもの（layout.w × layout.h。blur=off なら空）
+    /// すりガラス: パネルの後ろをぼかして色を重ねたもの（layout.w × layout.h。blur=off なら空）と、
+    /// 後回しにした・計算した刻み
     pub(super) glass: Vec<u32>,
+    pub(super) glass_deferred: bool,
+    pub(super) glass_at: u32,
 }
 
 /// 乗せた項目の名前のパネル
@@ -93,7 +96,7 @@ impl Dock {
         let layout = Layout::new(items.len(), sw as i32, sh as i32)?;
         let running = vec![false; items.len()];
         let buf = vec![0; (layout.w * layout.h) as usize];
-        Some(Dock { items, layout, hover: None, running, buf, tip: None, glass: Vec::new() })
+        Some(Dock { items, layout, hover: None, running, buf, tip: None, glass: Vec::new(), glass_deferred: false, glass_at: 0 })
     }
 
     /// 重ね合わせで描き直す行（影を含む）

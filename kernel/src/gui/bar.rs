@@ -48,8 +48,10 @@ pub(super) struct Menu {
     rows: usize,
     col_w: usize,
     buf: Vec<u32>,
-    /// すりガラス: 後ろをぼかして色を重ねたもの（w × h。blur=off なら空）
+    /// すりガラス: 後ろをぼかして色を重ねたもの（w × h。blur=off なら空）と、後回しにした・計算した刻み
     pub(super) glass: Vec<u32>,
+    pub(super) glass_deferred: bool,
+    pub(super) glass_at: u32,
 }
 
 /// バーのどこを押したか
@@ -151,7 +153,7 @@ impl Screen {
         let cols = items.len().div_ceil(rows).max(1);
         let w = (cols * col_w).min(self.width);
         let h = rows * ITEM_H + 2 * MENU_PAD;
-        self.menu = Some(Menu { items, hover: None, w, h, rows, col_w, buf: vec![0; w * h], glass: Vec::new() });
+        self.menu = Some(Menu { items, hover: None, w, h, rows, col_w, buf: vec![0; w * h], glass: Vec::new(), glass_deferred: false, glass_at: 0 });
         self.render_menu();
         self.bar_dirty = true;
     }

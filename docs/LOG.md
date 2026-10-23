@@ -744,3 +744,15 @@
 - 詰まったこと:
   - メニューを開くはずのクリックで calc が最小化された。カーソルを一度に 880 ピクセル動かすと一部しか届かず、バーの Calc のボタンを押していた（blur=off でも同じ）。500 ピクセルほどまでに分けて間に 200ms 待つようにした
   - メニューの期待画像が 6 回に 1 回ほど合わなかった。後ろに透ける端末の文字の、シェルの「/> 」と calc の「calc: started」の出る順が毎回同じとは限らないため。端末を前に出して `clear` してから進めるようにした（8 回続けて通った）。`74-title-blur` は透ける範囲にその行の左端が入らないので揺れない（6 回続けて通った）
+
+## 2026-10-23 すりガラス G3: 既定を on に（ブランチ `test/blur`）
+
+- オーナーが G2 の画像を見て「この見た目で G3 に進んで」
+- BOOT.CFG に `blur=` が無ければ on にした。`rootfs/BOOT.CFG` には書き足していない（大きさが変わると `files` などの期待画像も変わるため）
+- 期待画像の作り直し（26 枚。前と後を並べて 1 枚ずつ目で確かめた。変わったのはタイトルバー・ドック・メニューだけ。ブラウザの 12 枚はタイトルバーの行だけ）: bar-menu, browse-chunked, browse-dir, browse-hover, browse-http-index, browse-https, browse-https-redirect, browse-image-page, browse-images, browse-index, browse-lists, browse-scrolled, browse-text, calc-46, desktop-moved, desktop-terminal, dock-hover, dock-icons16, dock-open, dock-start, files-images, fonts-fallback, paint-window, terminals-two, view-window-gradient, view-window-plasma
+- 色の値を直したシナリオ: `28-desktop`（端末の暗いガラス 33,33,55、mandel の明るいガラス 158,154,196 と、動かした後の 169,164,218）、`66-title-hover`（ボタンの丸が黒 7% で 147,143,182、乗せると 17% で 131,128,163。[x] の赤は前のまま）、`69-dock-missing`（端末の暗いガラス）
+- `76-blur-off`（新）: `blur=off` で、前の `dock-start`・`bar-menu` の写し（`blur-off-dock`・`blur-off-menu`）と、前の `66-title-hover` の色で通る
+- マウスの動きをまとめて渡すようにした（`kernel/src/input.rs`）: すりガラスを既定にすると `71-browse-local` で、カーソルを 532 ピクセル動かしてからのダブルクリックが届かなくなった。G2 で見つけた「大きく動かすと動きが一部しか届かない」と同じで、マウスのスレッドがパケットごとに gui に渡し、gui が毎回描き直すので、間に合わずに生のバイトのリング（256 バイト）があふれていた。溜まったパケットの動きはまとめて最後の位置を 1 回だけ渡し、ボタンが変わったパケットはそれまでの動きの後に順に渡すようにした。お絵かきの線は届いた位置の間を直線で結ぶので、速く動かしたときの線は前より直線に近くなる（`paint-window` の期待画像は変わらなかった）
+- README のスクリーンショットを `make screenshots` で撮り直した（構図は D-069 のまま）。D-055 のとおり、オーナーが確認するまでコミットしない
+- すりガラスを既定にした後の `make test` で `71-browse-local` のダブルクリックが 6 回に 4 回届かなかった（blur=off では 4 回とも通った）。ガラスを計算し直すたびに klog に出して調べると、端末が 1 文字出すたびにドックのガラスを計算し直していた（端末の一番下の行がドックのぼかしの届く範囲に入る。1 回約 10ms）。後ろが変わっただけのガラスは 50ms に 1 回までに間引き、後回しにした分は `glass` のスレッドが描き直すようにした（D-072）。その後 6 回続けて通った
+

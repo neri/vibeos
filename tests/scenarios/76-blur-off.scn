@@ -1,0 +1,40 @@
+# G3（すりガラス。docs/plans/title-blur.md）: BOOT.CFG の blur=off で、すりガラスを入れる前の見た目に戻る。
+# 期待画像は、すりガラスを既定にする前の `dock-start`（68-dock）・`bar-menu`（46-desktop-bar）の写し。
+# タイトルバーのボタンの色は前の 66-title-hover と同じ値。カーソルは 512,384 から
+boot-config video=1024x768
+boot-config blur=off
+timeout 30
+wait-serial gui: blur off
+wait-serial gui: desktop 1024x768
+wait-serial VibeOS shell
+sleep 300
+# 不透明のドック（端末のタイルの下に点）
+expect-screen blur-off-dock 196 680 632 88
+# 「VibeOS」（→ 20,10）で開く不透明のメニュー
+mouse-move -492 -374
+mouse-button left down
+mouse-button left up
+sleep 300
+expect-screen blur-off-menu 0 0 260 768
+# もう一度押して閉じる
+mouse-button left down
+mouse-button left up
+sleep 300
+# clock のタイトルバーのボタン（66-title-hover と同じ。[_] は 212〜231、[x] は 234〜253、y=49〜72）は不透明の薄い地
+type clock &
+key ret
+wait-serial clock: started
+sleep 300
+expect-pixel 237 60 241 239 232
+expect-pixel 215 60 241 239 232
+# [x] に乗せる（→ 243,60）と赤
+mouse-move 223 50
+sleep 300
+expect-pixel 237 60 226 67 72
+expect-pixel 215 60 241 239 232
+# [_] に移る（→ 222,60）と濃い灰色
+mouse-move -21 0
+sleep 300
+expect-pixel 237 60 241 239 232
+expect-pixel 215 60 211 209 199
+serial-absent PANIC
