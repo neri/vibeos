@@ -1,0 +1,60 @@
+# G2（すりガラスのメニュー・ドック。docs/plans/title-blur.md）: BOOT.CFG の blur=on で、ドックのパネルは後ろ（背景と
+# すべてのウィンドウ）を、メニューのパネルは後ろ（それとドック）をぼかして色を重ねる。タイルとツールチップは不透明のまま。
+# ドックは 221〜803, 702〜756。calc は中身 120,73 に 156x172（タイトルバー y=49〜72）。メニューは 2,26 から（1 項目 22）。
+# 長い距離を一度に動かすとマウスの動きが一部しか届かないことがあるので、500 ピクセルほどまでに分ける。カーソルは 512,384 から
+boot-config video=1024x768
+boot-config blur=on
+timeout 30
+wait-serial gui: blur on
+wait-serial gui: desktop 1024x768
+wait-serial VibeOS shell
+# 背景と端末の影の上のドック
+expect-screen panel-dock 200 690 624 78
+type calc &
+key ret
+wait-serial calc: started
+sleep 500
+# メニューの後ろに透ける端末の文字をそろえる（シェルの「/> 」と calc の出力の順は毎回同じとは限らない）:
+# 端末の中身（→ 500,500）を押して前に出し、clear
+mouse-move -12 116
+mouse-button left down
+mouse-button left up
+type clear
+key ret
+sleep 500
+# calc のタイトルバー（→ 170,61）をつかんで (+300, +520) へ: 中身が 420,593 からでドックの後ろに入る
+mouse-move -330 -439
+mouse-button left down
+mouse-move 300 520
+mouse-button left up
+# カーソルをどける（→ 900,150）
+mouse-move 430 -431
+sleep 300
+expect-screen panel-dock-calc 200 690 624 78
+# ドックの files のタイル（→ 296,730）に乗せる: タイルが白くなり、上に不透明のツールチップ
+mouse-move -302 290
+sleep 200
+mouse-move -302 290
+sleep 300
+expect-screen panel-dock-hover 200 650 624 118
+# 「VibeOS」（→ 20,10）でメニューを開く: 端末・calc・ドックの左の端が透ける（カーソルの写る上の 8 行は除く）
+mouse-move -138 -360
+sleep 200
+mouse-move -138 -360
+mouse-button left down
+mouse-button left up
+sleep 500
+expect-screen panel-menu 0 34 300 710
+# calc の項目（→ 50,150）に乗せる
+mouse-move 30 140
+sleep 300
+expect-screen panel-menu-hover 0 128 150 44
+# 背景（→ 900,150）を押して閉じる: ドックは calc を後ろにしたときのまま
+mouse-move 425 0
+sleep 200
+mouse-move 425 0
+mouse-button left down
+mouse-button left up
+sleep 300
+expect-screen panel-dock-calc 200 690 624 78
+serial-absent PANIC

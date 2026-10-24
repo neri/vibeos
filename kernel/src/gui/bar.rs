@@ -48,6 +48,10 @@ pub(super) struct Menu {
     rows: usize,
     col_w: usize,
     buf: Vec<u32>,
+    /// すりガラス: 後ろをぼかして色を重ねたもの（w × h。blur=off なら空）と、後回しにした・計算した刻み
+    pub(super) glass: Vec<u32>,
+    pub(super) glass_deferred: bool,
+    pub(super) glass_at: u32,
 }
 
 /// バーのどこを押したか
@@ -149,7 +153,7 @@ impl Screen {
         let cols = items.len().div_ceil(rows).max(1);
         let w = (cols * col_w).min(self.width);
         let h = rows * ITEM_H + 2 * MENU_PAD;
-        self.menu = Some(Menu { items, hover: None, w, h, rows, col_w, buf: vec![0; w * h] });
+        self.menu = Some(Menu { items, hover: None, w, h, rows, col_w, buf: vec![0; w * h], glass: Vec::new(), glass_deferred: false, glass_at: 0 });
         self.render_menu();
         self.bar_dirty = true;
     }
@@ -161,12 +165,22 @@ impl Screen {
         }
     }
 
-    fn render_menu(&mut self) {
+    /// 開いているメニューのパネルの矩形
+    pub(super) fn menu_rect(&self) -> Option<(i32, i32, i32, i32)> {
+        self.menu.as_ref().map(|m| (MENU_X, MENU_Y as i32, m.w as i32, m.h as i32))
+    }
+
+    pub(super) fn render_menu(&mut self) {
         let Some(deco) = &self.deco else { return };
         let Some(m) = &mut self.menu else { return };
         let (w, h) = (m.w, m.h);
         let mut c = Canvas::new(&mut m.buf, w, h);
-        c.clear(theme::FACE);
+        // すりガラス（blur=on）なら後ろをぼかしたものを地に
+        if m.glass.len() == w * h {
+            c.blit(0, 0, &m.glass, w);
+        } else {
+            c.clear(theme::FACE);
+        }
         for (i, item) in m.items.iter().enumerate() {
             let x = (i / m.rows * m.col_w) as i32;
             let y = (MENU_PAD + i % m.rows * ITEM_H) as i32;

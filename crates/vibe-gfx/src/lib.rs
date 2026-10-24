@@ -8,9 +8,11 @@
 extern crate alloc;
 
 pub mod backdrop;
+pub mod blur;
 pub mod bmp;
 pub mod canvas;
 pub mod dock;
+pub mod glass;
 pub mod icons;
 pub mod palette;
 pub mod panel;

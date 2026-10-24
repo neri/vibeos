@@ -55,6 +55,7 @@ const TESTS: &[(&str, fn())] = &[
     ("fdc_read_matches_ramdisk", fdc_read_matches_ramdisk),
     ("fs_write_and_sync", fs_write_and_sync),
     ("gfx_compose_speed", gfx_compose_speed),
+    ("glass_speed", glass_speed),
     ("fonts_loaded", fonts_loaded),
 ];
 
@@ -771,6 +772,65 @@ fn gfx_compose_speed() {
     klog!("bench: compose 1024x768 with 4 windows: {} ms per frame", ms);
     assert!(screen[W * H / 2] != 0);
     assert!(ms <= 100, "composing one frame took {ms} ms");
+}
+
+/// すりガラスのタイトルバー 1 本（幅 1024）の計算: 後ろの 60 行（タイトルバー 24 行 + 上下にぼかしの届く 18 行）を
+/// 背景と奥のウィンドウ 2 つで合成し、ぼかして白を重ねる（gui/glass.rs と同じ手順。docs/plans/title-blur.md G1）
+fn glass_speed() {
+    use vibe_gfx::canvas::{Corner, Shadow, blend};
+    use vibe_gfx::panel::{PanelStyle, ShadowLayer, panel_row};
+    use vibe_gfx::theme;
+    const W: usize = 1024;
+    const H: usize = 768;
+    const TH: usize = 24;
+    const ROUNDS: u32 = 20;
+    let k = theme::GLASS_BLUR_K;
+    let m = 3 * k;
+    let (top, rows) = (300 - m, TH + 2 * m);
+    let lut = vibe_gfx::palette::lut32(&vibe_gfx::palette::standard());
+    let client = vec![7u8; 500 * 300];
+    let corner = Corner::new(theme::RADIUS);
+    let (near, far) = (Shadow::new(theme::SHADOW_NEAR_BLUR), Shadow::new(theme::SHADOW_FAR_BLUR));
+    let shadows = [
+        ShadowLayer { shadow: &far, dy: theme::SHADOW_FAR_DY, alpha: theme::SHADOW_ALPHA.1 },
+        ShadowLayer { shadow: &near, dy: theme::SHADOW_NEAR_DY, alpha: theme::SHADOW_ALPHA.0 },
+    ];
+    let style = PanelStyle { corner: &corner, shadows: &shadows, shadow_color: theme::SHADOW_COLOR, border: None };
+    let mut row = vec![0u32; W];
+    let mut src = vec![0u32; W * rows];
+    let mut tmp = vec![0u32; 2 * W];
+    let mut out = vec![0u32; W * TH];
+    let blur = vibe_gfx::blur::Blur::new(k);
+    let start = pit::ticks();
+    for _ in 0..ROUNDS {
+        for r in 0..rows {
+            let y = top + r;
+            vibe_gfx::backdrop::fill_row(&mut row, y, H, theme::DESKTOP, &theme::DESKTOP_CIRCLES);
+            for (x, wy) in [(100i32, 200i32), (400, 260)] {
+                panel_row(&mut row, y as i32, (x, wy, 500, 300), &style, |x0, span| {
+                    let cr = y as i32 - wy;
+                    let (s0, s1) = ((x0 - x).max(0) as usize, ((x0 + span.len() as i32 - x) as usize).min(500));
+                    if s0 >= s1 {
+                        return;
+                    }
+                    let d = &mut span[(x + s0 as i32 - x0) as usize..(x + s1 as i32 - x0) as usize];
+                    for (p, &c) in d.iter_mut().zip(&client[cr as usize * 500 + s0..cr as usize * 500 + s1]) {
+                        *p = lut[c as usize];
+                    }
+                });
+            }
+            src[r * W..(r + 1) * W].copy_from_slice(&row);
+        }
+        blur.apply_region(&mut src, W, rows, &mut tmp, (0, m, W, m + TH));
+        for (o, &c) in out.iter_mut().zip(&src[m * W..(m + TH) * W]) {
+            *o = blend(c, theme::FACE, theme::GLASS_TINT_ALPHA);
+        }
+    }
+    let us = pit::ticks().wrapping_sub(start) as u64 * 1_000_000 / pit::TICK_HZ as u64 / ROUNDS as u64;
+    klog!("bench: glass title bar 1024 wide: {} us", us);
+    // 白を 50% 重ねたので、どこも 128 以上
+    assert!(out.iter().all(|&c| (c >> 16) & 0xFF >= 127 && c & 0xFF >= 127));
+    assert!(us <= 10_000, "one glass title bar took {us} us");
 }
 
 /// /SYSTEM/FONTS のフォント（gzip）を起動時に読み込めた（M3）

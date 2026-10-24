@@ -76,6 +76,16 @@ pub const SHADOW_NEAR_BLUR: usize = 3;
 pub const SHADOW_NEAR_DY: i32 = 1;
 pub const SHADOW_FAR_BLUR: usize = 20;
 pub const SHADOW_FAR_DY: i32 = 10;
+/// すりガラス（BOOT.CFG の blur=on。docs/plans/title-blur.md・D-071）: 後ろを幅 2k + 1 の箱 3 回（σ ≈ 6.5）で
+/// ぼかし、タイトルバーは白を 50%、端末の暗いタイトルバーは端末の地の色を 80% 重ねる
+pub const GLASS_BLUR_K: usize = 6;
+pub const GLASS_TINT_ALPHA: u8 = 128;
+pub const GLASS_DARK_TINT_ALPHA: u8 = 204;
+/// メニューのパネルは白をタイトルバーと同じ濃さで、ドックのパネルは地の色（DOCK）を 70% 重ねる
+pub const GLASS_DOCK_TINT_ALPHA: u8 = 179;
+/// ガラスの上のタイトルバーのボタンの丸（ふつう, 乗せたとき）: 明るい地は黒を 7%・17%、暗い地は白を 10%・18% 重ねる
+pub const GLASS_BUTTON_ALPHA: (u8, u8) = (18, 43);
+pub const GLASS_DARK_BUTTON_ALPHA: (u8, u8) = (26, 46);
 /// フォーカスの無いウィンドウの遠い影は下へのずれが小さい（低く浮いて見える）
 pub const SHADOW_FAR_DY_INACTIVE: i32 = 6;
 /// 影の濃さ（近い影, 遠い影）。フォーカスのあるウィンドウ・メニューと、フォーカスの無いウィンドウ

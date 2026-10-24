@@ -6,8 +6,8 @@ wait-serial dock: /SYSTEM/DOCK.CFG is not available
 wait-serial gui: desktop 1024x768
 wait-serial VibeOS shell
 sleep 300
-# ドックのあった所（真ん中の下）は背景、端末のタイトルバーはドックがあるときより下
+# ドックのあった所（真ん中の下）は背景、端末のタイトルバー（暗いすりガラス）はドックがあるときより下
 expect-pixel 900 730 60 52 137
-expect-pixel 100 357 26 28 34
+expect-pixel 100 357 33 33 55
 serial-absent dock: launch
 serial-absent PANIC
